@@ -11,49 +11,6 @@ from faster_whisper import WhisperModel
 import librosa
 import noisereduce as nr
 import torch
-from huggingface_hub import snapshot_download
-from speechbrain.inference import SpeakerRecognition
-import speechbrain.utils.fetching as sb_fetch
-import speechbrain.inference.interfaces as sb_interfaces
-
-# --- Patch SpeechBrain symlink/custom.py behavior (كما في app.py) ---
-def _force_copy(fetched_file, destination, local_strategy=None):
-    destination = pathlib.Path(destination)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(fetched_file, destination)
-    return destination
-sb_fetch.link_with_strategy = _force_copy
-sb_interfaces.link_with_strategy = _force_copy
-
-DUMMY_FILE = pathlib.Path("pretrained_models/_dummy_custom.py")
-DUMMY_FILE.parent.mkdir(parents=True, exist_ok=True)
-if not DUMMY_FILE.exists():
-    DUMMY_FILE.write_text("# dummy custom.py\n", encoding="utf-8")
-
-_original_fetch_fetching = sb_fetch.fetch
-_original_fetch_interfaces = sb_interfaces.fetch
-
-def _expected_name_key(func):
-    try:
-        names = func.__code__.co_varnames
-        return "filename" if "filename" in names else "save_filename"
-    except Exception:
-        return "save_filename"
-
-def _wrap_fetch(original_func):
-    key = _expected_name_key(original_func)
-    alt_key = "save_filename" if key == "filename" else "filename"
-    def wrapper(*args, **kwargs):
-        name = kwargs.get(key, kwargs.get(alt_key, None))
-        if name is None:
-            return DUMMY_FILE
-        kwargs[key] = name
-        kwargs.pop(alt_key, None)
-        return original_func(*args, **kwargs)
-    return wrapper
-
-sb_fetch.fetch = _wrap_fetch(_original_fetch_fetching)
-sb_interfaces.fetch = _wrap_fetch(_original_fetch_interfaces)
 
 # -------- إعدادات --------
 MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3"]
@@ -83,10 +40,60 @@ def get_model(name: str, device: str = None, compute_type: str = None):
         _MODEL_CACHE[key] = WhisperModel(name, device=dev, compute_type=ctp)
     return _MODEL_CACHE[key]
 
+def _force_copy(fetched_file, destination, local_strategy=None):
+    """بديل للـ symlink: نسخ فعلي للملف المطلوب إلى المسار المحدد."""
+    destination = pathlib.Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(fetched_file, destination)
+    return destination
+
 def get_spkrec():
-    """تحميل ECAPA محليًا بدون symlink وبدون custom.py."""
+    """تحميل ECAPA (SpeechBrain) محليًا بدون symlink وبدون custom.py — Lazy imports."""
     global _SPKRECOG
     if _SPKRECOG is None:
+        # استيرادات ثقيلة تُنفَّذ عند الحاجة فقط
+        from huggingface_hub import snapshot_download
+        import speechbrain.utils.fetching as sb_fetch
+        import speechbrain.inference.interfaces as sb_interfaces
+        from speechbrain.inference import SpeakerRecognition
+
+        # ملف dummy يُستخدم عندما لا تُمرَّر أسماء ملفات مخصّصة للـ fetch
+        DUMMY_FILE = pathlib.Path("pretrained_models/_dummy_custom.py")
+        DUMMY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if not DUMMY_FILE.exists():
+            DUMMY_FILE.write_text("# dummy custom.py\n", encoding="utf-8")
+
+        # ترقيع link_with_strategy لاستخدام النسخ بدل الروابط
+        sb_fetch.link_with_strategy = _force_copy
+        sb_interfaces.link_with_strategy = _force_copy
+
+        # احتفظ بالنسخ الأصلية ثم لفّها بحيث تُعيد DUMMY_FILE إذا لم يصل اسم ملف
+        _original_fetch_fetching = sb_fetch.fetch
+        _original_fetch_interfaces = sb_interfaces.fetch
+
+        def _expected_name_key(func):
+            try:
+                names = func.__code__.co_varnames
+                return "filename" if "filename" in names else "save_filename"
+            except Exception:
+                return "save_filename"
+
+        def _wrap_fetch(original_func):
+            key = _expected_name_key(original_func)
+            alt_key = "save_filename" if key == "filename" else "filename"
+            def wrapper(*args, **kwargs):
+                name = kwargs.get(key, kwargs.get(alt_key, None))
+                if name is None:
+                    return DUMMY_FILE
+                kwargs[key] = name
+                kwargs.pop(alt_key, None)
+                return original_func(*args, **kwargs)
+            return wrapper
+
+        sb_fetch.fetch = _wrap_fetch(_original_fetch_fetching)
+        sb_interfaces.fetch = _wrap_fetch(_original_fetch_interfaces)
+
+        # تنزيل النموذج وتشغيله على CPU
         local_dir = "pretrained_models/spkrec_ecapa_cpu"
         snapshot_download(repo_id="speechbrain/spkrec-ecapa-voxceleb", local_dir=local_dir)
         _SPKRECOG = SpeakerRecognition.from_hparams(
