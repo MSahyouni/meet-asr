@@ -1,10 +1,10 @@
-# api.py
+
 import os, tempfile, shutil, pathlib
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
-
+from fastapi import FastAPI
 from asr_core import process, process_many, MODEL_CHOICES, DEFAULT_MODEL, _HAS_CUDA
 
 app = FastAPI(title="Arabic ASR API", version="0.1.0")
