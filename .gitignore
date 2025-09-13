@@ -69,3 +69,30 @@ lib/generated_plugin_registrant.dart
 *.env
 *.keystore
 *.jks
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.dist/
+build/
+.eggs/
+.cache/
+.mypy_cache/
+.pytest_cache/
+.venv/
+venv/
+
+# Project artifacts
+outputs/
+pretrained_models/
+voices/
+*.gradio*
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+
