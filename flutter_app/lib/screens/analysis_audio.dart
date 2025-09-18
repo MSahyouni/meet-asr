@@ -1,0 +1,146 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
+class AnalysisAudioScreen extends StatefulWidget {
+  const AnalysisAudioScreen({super.key});
+
+  @override
+  State<AnalysisAudioScreen> createState() => _AnalysisAudioScreenState();
+}
+
+class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
+  bool isLoading = false;
+
+  // قائمة لتخزين نتائج التحليل لكل الملفات
+  List<Map<String, String>> transcriptionSegments = [];
+
+  // دالة تحليل ملف واحد
+  Future<List<Map<String, String>>> sendAudio(File file) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('https://your-backend.com/analyze'), // ضع رابط الباك-إند  هنا
+    );
+    request.files.add(await http.MultipartFile.fromPath('audio', file.path));
+
+    final response = await request.send();
+
+    if (response.statusCode == 200) {
+      final respStr = await response.stream.bytesToString();
+      final decoded = json.decode(respStr);
+
+      return List<Map<String, String>>.from(decoded['transcription']);
+    } else {
+      throw Exception('فشل في تحليل الملف ${file.path.split('/').last}');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // استقبال قائمة الملفات (يمكن أن يكون ملف واحد أو أكثر)
+    final List<File> files =
+        (GoRouterState.of(context).extra as List<File>? ?? []);
+
+    if (files.isEmpty) {
+      return const Scaffold(body: Center(child: Text('لا يوجد ملف صوتي')));
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('تحليل الصوت'),
+        backgroundColor: Colors.blueAccent,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+                backgroundColor: const Color.fromARGB(200, 68, 138, 255),
+              ),
+              onPressed: () async {
+                setState(() {
+                  isLoading = true;
+                  transcriptionSegments.clear();
+                });
+
+                try {
+                  for (final file in files) {
+                    final result = await sendAudio(file);
+
+                    // إضافة اسم الملف كبداية
+                    transcriptionSegments.add({
+                      'speaker': ' الملف: ${file.path.split('/').last}',
+                      'text': '',
+                    });
+
+                    transcriptionSegments.addAll(result);
+                  }
+                } catch (e) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
+                } finally {
+                  setState(() {
+                    isLoading = false;
+                  });
+                }
+              },
+              icon: const Icon(Icons.play_arrow, color: Colors.white, size: 35),
+              label: const Text(
+                'إرسال وتحويل الصوت إلى نص',
+                style: TextStyle(color: Colors.white, fontSize: 20),
+              ),
+            ),
+            const SizedBox(height: 20),
+            if (isLoading)
+              const Center(child: CircularProgressIndicator())
+            else
+              Expanded(
+                child: ListView.builder(
+                  itemCount: transcriptionSegments.length,
+                  itemBuilder: (context, index) {
+                    final segment = transcriptionSegments[index];
+                    final speaker = segment['speaker'] ?? '';
+                    final text = segment['text'] ?? '';
+
+                    return Container(
+                      margin: const EdgeInsets.symmetric(vertical: 5),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.2),
+                        borderRadius: BorderRadius.only(
+                          topLeft: const Radius.circular(12),
+                          topRight: const Radius.circular(12),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment:
+                            speaker.contains('المتحدث')
+                                ? CrossAxisAlignment.start
+                                : CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            speaker,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(text, style: const TextStyle(fontSize: 16)),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
