@@ -96,3 +96,17 @@ voices/
 .DS_Store
 Thumbs.db
 
+/flutter_app/android
+/flutter_app/.metadata
+/flutter_app/.idea
+/flutter_app/.vscode
+/flutter_app/.gitignore
+/flutter_app/analysis_options.yaml
+/flutter_app/README.md
+/flutter_app/pubspec.yaml
+/flutter_app/Web
+/flutter_app/test/widget_test.dart
+/flutter_app/assets/images
+
+
+
