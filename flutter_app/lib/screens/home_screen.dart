@@ -51,13 +51,11 @@ class _HomeScreen extends State<HomeScreen> {
                 fit: BoxFit.contain,
               ),
             ),
-            Gap(10),
+            Gap(55),
             Text(
               "الجمهورية العربية السورية  \n        وزارة الدفاع ",
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
-
-            IconButton(onPressed: () {}, icon: Icon(Icons.more_vert, size: 30)),
           ],
         ),
       ),
