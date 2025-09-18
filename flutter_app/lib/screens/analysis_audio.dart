@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -49,7 +50,21 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('تحليل الصوت'),
+        title: Row(
+          children: [
+            const Text(
+              'تحليل الصوت',
+              style: TextStyle(color: Colors.white, fontSize: 25),
+            ),
+            Gap(130),
+            IconButton(
+              onPressed: () {
+                //SOON
+              },
+              icon: Icon(Icons.more_vert, size: 30, color: Colors.white),
+            ),
+          ],
+        ),
         backgroundColor: Colors.blueAccent,
       ),
       body: Padding(
