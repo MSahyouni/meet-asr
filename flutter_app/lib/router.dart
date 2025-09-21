@@ -1,6 +1,7 @@
 import 'package:flutter_app/screens/analysis_audio.dart';
 import 'package:flutter_app/screens/home_screen.dart';
 import 'package:flutter_app/screens/splash_screen.dart';
+import 'package:flutter_app/screens/summary_page.dart';
 import 'package:go_router/go_router.dart';
 
 final GoRouter router = GoRouter(
@@ -12,6 +13,13 @@ final GoRouter router = GoRouter(
     GoRoute(
       path: "/analysis_audio",
       builder: (context, state) => AnalysisAudioScreen(),
+    ),
+    GoRoute(
+      path: '/summary',
+      builder: (context, state) {
+        final text = state.extra as String? ?? '';
+        return SummaryScreen(text: text);
+      },
     ),
   ],
 );
