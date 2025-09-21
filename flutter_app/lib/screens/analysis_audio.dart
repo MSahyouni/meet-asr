@@ -18,7 +18,6 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
   // قائمة لتخزين نتائج التحليل لكل الملفات
   List<Map<String, String>> transcriptionSegments = [];
 
-  // دالة تحليل ملف واحد
   Future<List<Map<String, String>>> sendAudio(File file) async {
     final request = http.MultipartRequest(
       'POST',
@@ -40,7 +39,6 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // استقبال قائمة الملفات (يمكن أن يكون ملف واحد أو أكثر)
     final List<File> files =
         (GoRouterState.of(context).extra as List<File>? ?? []);
 
@@ -50,6 +48,35 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        actions: [
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_vert, size: 30, color: Colors.white),
+            onSelected: (value) {
+              if (value == 'summary') {
+                if (transcriptionSegments.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        ' لم يتم إدخال أي نص بعد، الرجاء التحليل أولاً',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+
+                final allText = transcriptionSegments
+                    .map((e) => e['text'])
+                    .join(' ');
+                context.push('/summary', extra: allText);
+              }
+            },
+            itemBuilder:
+                (context) => [
+                  const PopupMenuItem(value: 'summary', child: Text('summary')),
+                  // PopupMenuItem(child: Text('تنقية الصوت')),
+                ],
+          ),
+        ],
         title: Row(
           children: [
             const Text(
@@ -57,12 +84,6 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
               style: TextStyle(color: Colors.white, fontSize: 25),
             ),
             Gap(130),
-            IconButton(
-              onPressed: () {
-                //SOON
-              },
-              icon: Icon(Icons.more_vert, size: 30, color: Colors.white),
-            ),
           ],
         ),
         backgroundColor: Colors.blueAccent,
