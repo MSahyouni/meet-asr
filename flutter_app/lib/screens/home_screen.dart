@@ -18,8 +18,15 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreen extends State<HomeScreen> {
   File? recordedFile; // Variable to hold the recorded audio file locally
   File? selectedAudioFile;
-  String recordedAudioBlobUrl =
-      ""; // Variable to hold the recorded audio blob URL
+  String recordedAudioBlobUrl = "";
+  final List<String> modelLevels = [
+    'small',
+    'tiny',
+    'large-v3',
+    'medium',
+    'base',
+  ];
+  String? selectedModel;
 
   late final VoiceNotePlayerController playerController;
 
@@ -39,7 +46,7 @@ class _HomeScreen extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 130,
+        toolbarHeight: 140,
         title: Row(
           children: [
             ClipRRect(
@@ -47,11 +54,11 @@ class _HomeScreen extends State<HomeScreen> {
               child: Image.asset(
                 "assets/images/image5.png",
                 height: 80,
-                width: 80,
+                width: 90,
                 fit: BoxFit.contain,
               ),
             ),
-            Gap(55),
+            Gap(45),
             Text(
               "الجمهورية العربية السورية  \n        وزارة الدفاع ",
               style: TextStyle(fontWeight: FontWeight.bold),
@@ -59,30 +66,47 @@ class _HomeScreen extends State<HomeScreen> {
           ],
         ),
       ),
+
       body: SingleChildScrollView(
         child: Column(
           children: [
+            Divider(
+              color: const Color.fromARGB(255, 204, 200, 200), // لون الخط
+              thickness: 1.5,
+              indent: 20,
+              endIndent: 20,
+            ),
+
             Padding(
               padding: EdgeInsets.all(30),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: InkWell(
                   onTap: () {
-                    if (recordedFile != null) {
+                    if (recordedFile != null && selectedModel != null) {
                       context.push(
                         "/analysis_audio",
-                        extra: <File>[recordedFile!], // نرسل الملف نفسه
+                        extra: {
+                          "files": <File>[recordedFile!],
+                          "model": selectedModel,
+                        },
                       );
-                    } else {
+                    } else if (recordedFile == null) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('الرجاء تسجيل صوت أولاً')),
+                      );
+                    } else if (selectedModel == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('الرجاء اختيار نموذج التحليل أولاً'),
+                        ),
                       );
                     }
                   },
 
                   child: Container(
-                    width: 600,
-                    height: 110,
+                    width: 400,
+                    height: 100,
 
                     color: Colors.blue,
                     child: Row(
@@ -129,8 +153,7 @@ class _HomeScreen extends State<HomeScreen> {
                 ),
               ),
             ),
-
-            Gap(20),
+            Gap(5),
             Row(
               children: [
                 Gap(10),
@@ -144,8 +167,8 @@ class _HomeScreen extends State<HomeScreen> {
                     selectedAudioFile = newFile;
                   },
                   child: Container(
-                    width: 180,
-                    height: 114,
+                    width: 170,
+                    height: 110,
                     child: Image.asset("assets/images/image6.png"),
                   ),
                 ),
@@ -153,18 +176,34 @@ class _HomeScreen extends State<HomeScreen> {
                 Gap(15),
                 InkWell(
                   onTap: () async {
+                    if (selectedModel == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text("الرجاء اختيار نموذج التحليل أولاً"),
+                        ),
+                      );
+                      return;
+                    }
+
                     final result1 = await FilePicker.platform.pickFiles(
                       type: FileType.custom,
                       allowedExtensions: ['mp3', 'wav', 'm4a', 'aac'],
                       allowMultiple: true,
                     );
                     if (result1 == null) return;
+
                     final files =
                         result1.files
                             .where((f) => f.path != null)
                             .map((f) => File(f.path!))
                             .toList();
-                    context.push("/analysis_audio", extra: files);
+
+                    if (files.isEmpty) return;
+
+                    context.push(
+                      "/analysis_audio",
+                      extra: {"files": files, "model": selectedModel},
+                    );
                   },
                   child: Container(
                     width: 185,
@@ -175,31 +214,68 @@ class _HomeScreen extends State<HomeScreen> {
               ],
             ),
             Gap(25),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Color.fromARGB(200, 68, 138, 255),
-              ),
-              onPressed: () {
-                if (selectedAudioFile != null) {
-                  context.push(
-                    "/analysis_audio",
-                    extra: <File>[selectedAudioFile!],
-                  );
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("الرجاء رفع الملف الصوتي أولاًً")),
-                  );
-                }
-              },
-              child: Text(
-                "قم بتحويل الملف الصوتي إلى نص ",
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+            Row(
+              children: [
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Color.fromARGB(200, 68, 138, 255),
+                    fixedSize: Size(250, 30),
+                  ),
+                  onPressed: () {
+                    if (selectedAudioFile == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text("الرجاء رفع الملف الصوتي أولاًً"),
+                        ),
+                      );
+                      return;
+                    }
+                    if (selectedModel == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text("الرجاء اختيار نموذج التحليل أولاً"),
+                        ),
+                      );
+                      return;
+                    }
+
+                    context.push(
+                      "/analysis_audio",
+                      extra: {
+                        "files": <File>[selectedAudioFile!],
+                        "model": selectedModel,
+                      },
+                    );
+                  },
+                  child: Text(
+                    "قم بتحويل الملف الصوتي إلى نص ",
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
-              ),
+                Gap(25),
+                DropdownButton<String>(
+                  hint: Text('اختر نموذجًا'),
+                  value: selectedModel,
+                  items:
+                      modelLevels.map((String model) {
+                        return DropdownMenuItem<String>(
+                          value: model,
+                          child: Text(model),
+                        );
+                      }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      selectedModel = newValue;
+                    });
+                  },
+                ),
+              ],
             ),
+
             Gap(50),
             VoiceRecorderWidget(
               showTimerText: true,

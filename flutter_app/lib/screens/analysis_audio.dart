@@ -18,13 +18,13 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
   // قائمة لتخزين نتائج التحليل لكل الملفات
   List<Map<String, String>> transcriptionSegments = [];
 
-  Future<List<Map<String, String>>> sendAudio(File file) async {
+  Future<List<Map<String, String>>> sendAudio(File file, String model) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse('https://your-backend.com/analyze'), // ضع رابط الباك-إند  هنا
     );
     request.files.add(await http.MultipartFile.fromPath('audio', file.path));
-
+    request.fields['model'] = model;
     final response = await request.send();
 
     if (response.statusCode == 200) {
@@ -39,8 +39,13 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final extra = GoRouterState.of(context).extra as Map<String, dynamic>?;
+
     final List<File> files =
-        (GoRouterState.of(context).extra as List<File>? ?? []);
+        (extra?["files"] as List<dynamic>?)?.map((e) => e as File).toList() ??
+        [];
+
+    final String? selectedModel = extra?["model"];
 
     if (files.isEmpty) {
       return const Scaffold(body: Center(child: Text('لا يوجد ملف صوتي')));
@@ -105,15 +110,16 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
                 try {
                   for (final file in files) {
-                    final result = await sendAudio(file);
+                    if (selectedModel != null) {
+                      final result = await sendAudio(file, selectedModel);
 
-                    // إضافة اسم الملف كبداية
-                    transcriptionSegments.add({
-                      'speaker': ' الملف: ${file.path.split('/').last}',
-                      'text': '',
-                    });
+                      transcriptionSegments.add({
+                        'speaker': ' الملف: ${file.path.split('/').last}',
+                        'text': '',
+                      });
 
-                    transcriptionSegments.addAll(result);
+                      transcriptionSegments.addAll(result);
+                    }
                   }
                 } catch (e) {
                   ScaffoldMessenger.of(
@@ -155,7 +161,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                       ),
                       child: Column(
                         crossAxisAlignment:
-                            speaker.contains('المتحدث')
+                            speaker.contains('متكلم')
                                 ? CrossAxisAlignment.start
                                 : CrossAxisAlignment.end,
                         children: [
