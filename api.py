@@ -21,8 +21,8 @@ _HAS_CUDA = False
 def _get_core():
     """استيراد كسول لتفادي فشل import api في بيئات CI."""
     try:
-        import asr_core  # يُستورد فقط عند الحاجة
-        return asr_core
+        import my_asr  # يُستورد فقط عند الحاجة
+        return my_asr
     except Exception as e:
         # في التشغيل الحقيقي يجب توفر المتطلبات؛ في CI يكفي نجاح import api
         raise HTTPException(status_code=503, detail=f"ASR core unavailable: {e}")
@@ -31,11 +31,11 @@ def _get_core():
 def health():
     # نحاول قراءة معلومات حقيقية من asr_core، وإلا نعيد الافتراضيات الخفيفة
     try:
-        import asr_core
+        import my_asr
         return {
             "status": "ok",
-            "model_default": getattr(asr_core, "DEFAULT_MODEL", _DEFAULT_MODEL),
-            "cuda": getattr(asr_core, "_HAS_CUDA", _HAS_CUDA),
+            "model_default": getattr(my_asr, "DEFAULT_MODEL", _DEFAULT_MODEL),
+            "cuda": getattr(my_asr, "_HAS_CUDA", _HAS_CUDA),
         }
     except Exception:
         return {"status": "ok", "model_default": _DEFAULT_MODEL, "cuda": _HAS_CUDA}
