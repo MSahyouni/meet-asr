@@ -5,6 +5,7 @@ import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:http_parser/http_parser.dart';
 
 class AnalysisAudioScreen extends StatefulWidget {
   const AnalysisAudioScreen({super.key});
@@ -19,22 +20,43 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
   // قائمة لتخزين نتائج التحليل لكل الملفات
   List<Map<String, String>> transcriptionSegments = [];
 
-  Future<List<Map<String, String>>> sendAudio(File file, String model) async {
+  Future<List<Map<String, String>>> sendAudio(File file) async {
+    // final wavFile = await convertToWav(file);
     final request = http.MultipartRequest(
       'POST',
-      Uri.parse('https://your-backend.com/analyze'), // ضع رابط الباك-إند  هنا
+      Uri.parse('http://192.168.0.101:8000/transcribe'), // رابط الباك-إند
     );
-    request.files.add(await http.MultipartFile.fromPath('audio', file.path));
-    request.fields['model'] = model;
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        contentType: MediaType('audio', 'wav'),
+      ),
+    );
+
     final response = await request.send();
 
     if (response.statusCode == 200) {
       final respStr = await response.stream.bytesToString();
+      print("Server response: $respStr");
       final decoded = json.decode(respStr);
 
-      return List<Map<String, String>>.from(decoded['transcription']);
+      // نتأكد أنو response هو Map
+      if (decoded is Map<String, dynamic>) {
+        return [
+          {
+            "text": decoded["text"]?.toString() ?? "",
+            "summary": decoded["summary"]?.toString() ?? "",
+            "keywords": decoded["keywords"]?.toString() ?? "",
+          },
+        ];
+      } else {
+        throw Exception("الاستجابة غير متوقعة: ليست Map");
+      }
     } else {
-      throw Exception('فشل في تحليل الملف ${file.path.split('/').last}');
+      throw Exception(
+        'فشل في تحليل الملف ${file.path.split('/').last} (status: ${response.statusCode})',
+      );
     }
   }
 
@@ -45,8 +67,6 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
     final List<File> files =
         (extra?["files"] as List<dynamic>?)?.map((e) => e as File).toList() ??
         [];
-
-    final String? selectedModel = extra?["model"];
 
     if (files.isEmpty) {
       return const Scaffold(body: Center(child: Text('لا يوجد ملف صوتي')));
@@ -110,16 +130,14 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
                 try {
                   for (final file in files) {
-                    if (selectedModel != null) {
-                      final result = await sendAudio(file, selectedModel);
+                    final result = await sendAudio(file);
 
-                      transcriptionSegments.add({
-                        'speaker': ' الملف: ${file.path.split('/').last}',
-                        'text': '',
-                      });
+                    transcriptionSegments.add({
+                      'speaker': ' الملف: ${file.path.split('/').last}',
+                      'text': '',
+                    });
 
-                      transcriptionSegments.addAll(result);
-                    }
+                    transcriptionSegments.addAll(result);
                   }
                 } catch (e) {
                   ScaffoldMessenger.of(

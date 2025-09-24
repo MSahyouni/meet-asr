@@ -19,14 +19,13 @@ class _HomeScreen extends State<HomeScreen> {
   File? recordedFile; // Variable to hold the recorded audio file locally
   File? selectedAudioFile;
   String recordedAudioBlobUrl = "";
-  final List<String> modelLevels = [
-    'small',
-    'tiny',
-    'large-v3',
-    'medium',
-    'base',
-  ];
-  String? selectedModel;
+  // final List<String> modelLevels = [
+  //   'small',
+  //   'tiny',
+  //   'large-v3',
+  //   'medium',
+  //   'base',
+  // ];
 
   late final VoiceNotePlayerController playerController;
 
@@ -83,23 +82,16 @@ class _HomeScreen extends State<HomeScreen> {
                 borderRadius: BorderRadius.circular(10),
                 child: InkWell(
                   onTap: () {
-                    if (recordedFile != null && selectedModel != null) {
+                    if (recordedFile != null) {
                       context.push(
                         "/analysis_audio",
                         extra: {
                           "files": <File>[recordedFile!],
-                          "model": selectedModel,
                         },
                       );
                     } else if (recordedFile == null) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('الرجاء تسجيل صوت أولاً')),
-                      );
-                    } else if (selectedModel == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('الرجاء اختيار نموذج التحليل أولاً'),
-                        ),
                       );
                     }
                   },
@@ -176,18 +168,9 @@ class _HomeScreen extends State<HomeScreen> {
                 Gap(15),
                 InkWell(
                   onTap: () async {
-                    if (selectedModel == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text("الرجاء اختيار نموذج التحليل أولاً"),
-                        ),
-                      );
-                      return;
-                    }
-
                     final result1 = await FilePicker.platform.pickFiles(
                       type: FileType.custom,
-                      allowedExtensions: ['mp3', 'wav', 'm4a', 'aac'],
+                      allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'opus'],
                       allowMultiple: true,
                     );
                     if (result1 == null) return;
@@ -200,10 +183,7 @@ class _HomeScreen extends State<HomeScreen> {
 
                     if (files.isEmpty) return;
 
-                    context.push(
-                      "/analysis_audio",
-                      extra: {"files": files, "model": selectedModel},
-                    );
+                    context.push("/analysis_audio", extra: {"files": files});
                   },
                   child: Container(
                     width: 185,
@@ -230,20 +210,11 @@ class _HomeScreen extends State<HomeScreen> {
                       );
                       return;
                     }
-                    if (selectedModel == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text("الرجاء اختيار نموذج التحليل أولاً"),
-                        ),
-                      );
-                      return;
-                    }
 
                     context.push(
                       "/analysis_audio",
                       extra: {
                         "files": <File>[selectedAudioFile!],
-                        "model": selectedModel,
                       },
                     );
                   },
@@ -257,22 +228,22 @@ class _HomeScreen extends State<HomeScreen> {
                   ),
                 ),
                 Gap(25),
-                DropdownButton<String>(
-                  hint: Text('اختر نموذجًا'),
-                  value: selectedModel,
-                  items:
-                      modelLevels.map((String model) {
-                        return DropdownMenuItem<String>(
-                          value: model,
-                          child: Text(model),
-                        );
-                      }).toList(),
-                  onChanged: (String? newValue) {
-                    setState(() {
-                      selectedModel = newValue;
-                    });
-                  },
-                ),
+                // DropdownButton<String>(
+                //   hint: Text('اختر نموذجًا'),
+                //   value: selectedModel,
+                //   items:
+                //       modelLevels.map((String model) {
+                //         return DropdownMenuItem<String>(
+                //           value: model,
+                //           child: Text(model),
+                //         );
+                //       }).toList(),
+                //   onChanged: (String? newValue) {
+                //     setState(() {
+                //       selectedModel = newValue;
+                //     });
+                //   },
+                // ),
               ],
             ),
 
