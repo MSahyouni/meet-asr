@@ -1,12 +1,11 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/screens/buildVoiceRecorderSection.dart';
 import 'package:flutter_app/screens/loading_files.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:voice_note_kit/player/utils/audio_player_controller.dart';
-import 'package:voice_note_kit/recorder/voice_enums/voice_enums.dart';
-import 'package:voice_note_kit/voice_note_kit.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,6 +18,8 @@ class _HomeScreen extends State<HomeScreen> {
   File? recordedFile; // Variable to hold the recorded audio file locally
   File? selectedAudioFile;
   String recordedAudioBlobUrl = "";
+  final TextEditingController _controller = TextEditingController();
+
   // final List<String> modelLevels = [
   //   'small',
   //   'tiny',
@@ -82,11 +83,18 @@ class _HomeScreen extends State<HomeScreen> {
                 borderRadius: BorderRadius.circular(10),
                 child: InkWell(
                   onTap: () {
+                    final apiUrl = _controller.text.trim();
+                    if (apiUrl.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('الرجاء كتابة الرابط')),
+                      );
+                    }
                     if (recordedFile != null) {
                       context.push(
                         "/analysis_audio",
                         extra: {
                           "files": <File>[recordedFile!],
+                          "apiUrl": apiUrl,
                         },
                       );
                     } else if (recordedFile == null) {
@@ -168,6 +176,7 @@ class _HomeScreen extends State<HomeScreen> {
                 Gap(15),
                 InkWell(
                   onTap: () async {
+                    final apiUrl = _controller.text.trim();
                     final result1 = await FilePicker.platform.pickFiles(
                       type: FileType.custom,
                       allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'opus'],
@@ -182,8 +191,17 @@ class _HomeScreen extends State<HomeScreen> {
                             .toList();
 
                     if (files.isEmpty) return;
+                    if (apiUrl.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text("الرجاء ادخال رابط api")),
+                      );
+                      return;
+                    }
 
-                    context.push("/analysis_audio", extra: {"files": files});
+                    context.push(
+                      "/analysis_audio",
+                      extra: {"files": files, "apiUrl": apiUrl},
+                    );
                   },
                   child: Container(
                     width: 185,
@@ -202,6 +220,7 @@ class _HomeScreen extends State<HomeScreen> {
                     fixedSize: Size(250, 30),
                   ),
                   onPressed: () {
+                    final apiUrl = _controller.text.trim();
                     if (selectedAudioFile == null) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -210,11 +229,18 @@ class _HomeScreen extends State<HomeScreen> {
                       );
                       return;
                     }
+                    if (apiUrl.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text("الرجاء ادخال رابط api")),
+                      );
+                      return;
+                    }
 
                     context.push(
                       "/analysis_audio",
                       extra: {
                         "files": <File>[selectedAudioFile!],
+                        "apiUrl": apiUrl,
                       },
                     );
                   },
@@ -246,115 +272,44 @@ class _HomeScreen extends State<HomeScreen> {
                 // ),
               ],
             ),
+            TextField(
+              controller: _controller,
+              decoration: InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'ادخل رابطapi هنا ',
+              ),
+            ),
 
-            Gap(50),
-            VoiceRecorderWidget(
-              showTimerText: true,
-              showSwipeLeftToCancel: true,
+            Gap(10),
+
+            buildVoiceRecorderSection(
+              context: context,
+              recordedFile: recordedFile,
+              recordedAudioBlobUrl: recordedAudioBlobUrl,
+              playerController: playerController,
+              onRecorded: (file) {
+                setState(() {
+                  recordedFile = file;
+                });
+              },
               onRecordedWeb: (url) {
                 setState(() {
                   recordedAudioBlobUrl = url;
                 });
               },
-              onRecorded: (file) {
-                setState(() {
-                  recordedFile = file;
-                });
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text('تم حفظ التسجيل ')));
-              },
-
               onError: (error) {
                 ScaffoldMessenger.of(
                   context,
-                ).showSnackBar(SnackBar(content: Text('Error: $error')));
+                ).showSnackBar(SnackBar(content: Text(error)));
               },
-
-              actionWhenCancel: () {
+              onCancel: () {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('تم حفظ التسجيل ')),
+                  const SnackBar(
+                    content: SnackBar(content: Text('تم الغاء التسجيل')),
+                  ),
                 );
               },
-
-              maxRecordDuration: const Duration(seconds: 60),
-              permissionNotGrantedMessage: 'Microphone permission required',
-
-              dragToLeftText: 'يتم الآن التسجيل',
-              dragToLeftTextStyle: const TextStyle(
-                color: Colors.blueAccent,
-                fontSize: 18,
-              ),
-              cancelDoneText: 'Recording cancelled',
-              backgroundColor: Colors.blueAccent,
-              cancelHintColor: Colors.red,
-              iconColor: Colors.white,
-              timerFontSize: 16,
-
-              timerTextStyle: const TextStyle(color: Colors.blueAccent),
-
-              style: VoiceUIStyle.compact,
-
-              borderColor: Colors.blue,
-              containerColor: Colors.blue,
-              borderRadius: 16,
-              idleWavesColor: Colors.white,
-              recordingWavesColor: Colors.white,
-              wavesSpeed: const Duration(milliseconds: 500),
             ),
-            const SizedBox(height: 10),
-
-            recordedFile != null
-                ? Column(
-                  children: [
-                    AudioPlayerWidget(
-                      controller: playerController,
-                      autoLoad: true,
-                      audioPath: recordedFile?.path,
-                      size: 60,
-                      progressBarHeight: 5,
-                      backgroundColor: Colors.blueAccent,
-                      progressBarColor: Colors.blue,
-                      progressBarBackgroundColor: Colors.white,
-                      iconColor: Colors.white,
-                      shapeType: PlayIconShapeType.circular,
-                      playerStyle: PlayerStyle.style2,
-                      width: 300,
-                      showProgressBar: true,
-                      showTimer: true,
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(spacing: 10, alignment: WrapAlignment.center),
-                  ],
-                )
-                : const SizedBox.shrink(),
-            recordedAudioBlobUrl.isNotEmpty
-                ? AudioPlayerWidget(
-                  autoPlay: false,
-                  autoLoad: true,
-                  audioPath: recordedAudioBlobUrl,
-
-                  audioType: AudioType.blobforWeb,
-                  playerStyle: PlayerStyle.style1,
-                  textDirection: TextDirection.rtl,
-                  size: 60,
-                  progressBarHeight: 5,
-                  backgroundColor: Colors.blueAccent,
-                  progressBarColor: Colors.blue,
-                  progressBarBackgroundColor: Colors.white,
-                  iconColor: Colors.white,
-                  shapeType: PlayIconShapeType.circular,
-                  showProgressBar: true,
-                  showTimer: true,
-                  width: 300,
-                  audioSpeeds: const [0.5, 1.0, 1.5, 2.0, 3.0],
-                  onSeek: (value) => print('Seeked to: $value'),
-                  onError: (message) => print('Error: $message'),
-                  onPause: () => print("Paused"),
-                  onPlay: (isPlaying) => print("Playing: $isPlaying"),
-                  onSpeedChange: (speed) => print("Speed: $speed"),
-                )
-                : const SizedBox.shrink(),
           ],
         ),
       ),

@@ -20,11 +20,10 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
   // قائمة لتخزين نتائج التحليل لكل الملفات
   List<Map<String, String>> transcriptionSegments = [];
 
-  Future<List<Map<String, String>>> sendAudio(File file) async {
-    // final wavFile = await convertToWav(file);
+  Future<List<Map<String, String>>> sendAudio(File file, String apiUrl) async {
     final request = http.MultipartRequest(
       'POST',
-      Uri.parse('http://192.168.0.101:8000/transcribe'), // رابط الباك-إند
+      Uri.parse(apiUrl), // رابط الباك-إند
     );
     request.files.add(
       await http.MultipartFile.fromPath(
@@ -38,7 +37,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
     if (response.statusCode == 200) {
       final respStr = await response.stream.bytesToString();
-      print("Server response: $respStr");
+
       final decoded = json.decode(respStr);
 
       // نتأكد أنو response هو Map
@@ -67,6 +66,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
     final List<File> files =
         (extra?["files"] as List<dynamic>?)?.map((e) => e as File).toList() ??
         [];
+    final apiUrl = extra?["apiUrl"] as String? ?? '';
 
     if (files.isEmpty) {
       return const Scaffold(body: Center(child: Text('لا يوجد ملف صوتي')));
@@ -130,7 +130,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
                 try {
                   for (final file in files) {
-                    final result = await sendAudio(file);
+                    final result = await sendAudio(file, apiUrl);
 
                     transcriptionSegments.add({
                       'speaker': ' الملف: ${file.path.split('/').last}',
