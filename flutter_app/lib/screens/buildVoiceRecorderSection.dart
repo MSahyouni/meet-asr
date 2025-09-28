@@ -31,9 +31,6 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
   }
 
   void handleRecorded(File file) async {
-    // منع الحفظ أكثر من مرة
-    if (recordedFile != null) return;
-
     final savedFile = await saveRecordingToDownloads(file);
 
     setState(() {
@@ -48,7 +45,6 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('تم حفظ التسجيل في ${savedFile.path}')),
     );
-    print("Saved to: ${savedFile.path}");
   }
 
   @override
