@@ -282,32 +282,11 @@ class _HomeScreen extends State<HomeScreen> {
 
             Gap(10),
 
-            buildVoiceRecorderSection(
-              context: context,
-              recordedFile: recordedFile,
-              recordedAudioBlobUrl: recordedAudioBlobUrl,
-              playerController: playerController,
-              onRecorded: (file) {
+            VoiceRecorderSection(
+              onRecordedFile: (file) {
                 setState(() {
                   recordedFile = file;
                 });
-              },
-              onRecordedWeb: (url) {
-                setState(() {
-                  recordedAudioBlobUrl = url;
-                });
-              },
-              onError: (error) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text(error)));
-              },
-              onCancel: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: SnackBar(content: Text('تم الغاء التسجيل')),
-                  ),
-                );
               },
             ),
           ],
