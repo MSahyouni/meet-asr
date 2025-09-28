@@ -37,7 +37,6 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
       recordedFile = savedFile;
     });
 
-    // إرسال الملف للصفحة الرئيسية
     if (widget.onRecordedFile != null) {
       widget.onRecordedFile!(savedFile);
     }
