@@ -1,12 +1,10 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:voice_note_kit/player/player_enums/player_enums.dart';
-import 'package:voice_note_kit/recorder/voice_recorder_widget.dart';
-import 'package:voice_note_kit/recorder/voice_enums/voice_enums.dart';
+import 'package:record/record.dart';
 
 class VoiceRecorderSection extends StatefulWidget {
-  final Function(File)? onRecordedFile; // Callback لإرسال الملف للصفحة الرئيسية
+  final Function(File)? onRecordedFile;
 
   const VoiceRecorderSection({super.key, this.onRecordedFile});
 
@@ -15,10 +13,19 @@ class VoiceRecorderSection extends StatefulWidget {
 }
 
 class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool isRecording = false;
   File? recordedFile;
+
+  @override
+  void dispose() {
+    _audioRecorder.dispose();
+    super.dispose();
+  }
 
   Future<File> saveRecordingToDownloads(File file) async {
     final directory = await getExternalStorageDirectory();
+
     final downloadsDir = Directory(
       "${directory!.parent.parent.parent.parent.path}/Download",
     );
@@ -30,62 +37,84 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
     return savedFile;
   }
 
-  void handleRecorded(File file) async {
-    final savedFile = await saveRecordingToDownloads(file);
+  Future<void> _toggleRecording() async {
+    try {
+      if (!isRecording) {
+        // بداية التسجيل
+        final hasPerm = await _audioRecorder.hasPermission();
+        if (!hasPerm) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission required')),
+          );
+          return;
+        }
 
-    setState(() {
-      recordedFile = savedFile;
-    });
+        final tempDir = await getTemporaryDirectory();
+        final tempPath =
+            '${tempDir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-    if (widget.onRecordedFile != null) {
-      widget.onRecordedFile!(savedFile);
+        await _audioRecorder.start(const RecordConfig(), path: tempPath);
+
+        setState(() => isRecording = true);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('بدأ التسجيل...')));
+      } else {
+        // إيقاف التسجيل
+        final path = await _audioRecorder.stop();
+        setState(() => isRecording = false);
+
+        if (path != null) {
+          final file = File(path);
+          final savedFile = await saveRecordingToDownloads(file);
+
+          setState(() {
+            recordedFile = savedFile;
+          });
+
+          if (widget.onRecordedFile != null) {
+            widget.onRecordedFile!(savedFile);
+          }
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('تم حفظ التسجيل في ${savedFile.path}')),
+          );
+        } else {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('لم يتم تسجيل ملف')));
+        }
+      }
+    } catch (e) {
+      setState(() => isRecording = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('خطأ أثناء التسجيل: $e')));
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('تم حفظ التسجيل في ${savedFile.path}')),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        VoiceRecorderWidget(
-          showTimerText: true,
-          showSwipeLeftToCancel: true,
-          onRecorded: handleRecorded,
-          onError: (error) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Error: $error')));
-          },
-          actionWhenCancel: () {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('تم إلغاء التسجيل')));
-          },
-          maxRecordDuration: const Duration(seconds: 60),
-          permissionNotGrantedMessage: 'Microphone permission required',
-          dragToLeftText: 'يتم الآن التسجيل',
-          dragToLeftTextStyle: const TextStyle(
-            color: Colors.blueAccent,
-            fontSize: 18,
+        ElevatedButton.icon(
+          onPressed: _toggleRecording,
+          icon: Icon(isRecording ? Icons.stop : Icons.mic, size: 30),
+          label: Text(
+            isRecording ? 'إيقاف' : 'تسجيل',
+            style: TextStyle(fontSize: 25),
           ),
-          cancelDoneText: 'Recording cancelled',
-          backgroundColor: Colors.blueAccent,
-          cancelHintColor: Colors.red,
-          iconColor: Colors.white,
-          timerFontSize: 16,
-          timerTextStyle: const TextStyle(color: Colors.blueAccent),
-          style: VoiceUIStyle.compact,
-          borderColor: Colors.blue,
-          containerColor: Colors.blue,
-          borderRadius: 16,
-          idleWavesColor: Colors.white,
-          recordingWavesColor: Colors.white,
-          wavesSpeed: const Duration(milliseconds: 500),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isRecording ? Colors.red : Colors.blue,
+            foregroundColor: Colors.white,
+
+            padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(30),
+            ),
+          ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
       ],
     );
   }
