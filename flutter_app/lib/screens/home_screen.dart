@@ -5,7 +5,7 @@ import 'package:flutter_app/screens/buildVoiceRecorderSection.dart';
 import 'package:flutter_app/screens/loading_files.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
-import 'package:responsive_framework/responsive_framework.dart';
+
 import 'package:voice_note_kit/player/utils/audio_player_controller.dart';
 
 class HomeScreen extends StatefulWidget {
