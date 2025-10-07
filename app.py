@@ -1,9 +1,17 @@
 import os, pathlib, tempfile, subprocess, shutil, re, time
+import json, requests
+import warnings, logging
 
 # ===== بيئة تمنع الروابط الرمزية على ويندوز =====
 os.environ["SPEECHBRAIN_LOCAL_FILE_STRATEGY"] = "copy"
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
+warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
+warnings.filterwarnings("ignore", category=UserWarning, module="torch")
+warnings.filterwarnings("ignore", message="Requested Pretrainer collection using symlinks", module="speechbrain.utils.parameter_transfer")
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 import numpy as np
 import soundfile as sf
@@ -64,11 +72,11 @@ sb_fetch.fetch = _wrap_fetch(_original_fetch_fetching)
 sb_interfaces.fetch = _wrap_fetch(_original_fetch_interfaces)
 
 # ==================== إعدادات عامة ====================
-MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3"]
+MODEL_CHOICES = ["tiny", "small", "medium", "large-v3"]
 _HAS_CUDA = torch.cuda.is_available()
-DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "large-v3" if _HAS_CUDA else "base")
+DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "large-v3" if _HAS_CUDA else "small")
 DEVICE = os.getenv("WHISPER_DEVICE", "cuda" if _HAS_CUDA else "cpu")
-COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "float16" if DEVICE == "cuda" else "int8")
+COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "float16" if DEVICE == "cuda" else "int8_float32")
 _MODEL_CACHE = {}
 
 ROOT = pathlib.Path(".")
@@ -87,16 +95,61 @@ AUTO_K_MIN = 1
 
 # تلخيص
 _SUMM_CACHE = {"pipe": None, "device": None}
+ENABLE_OLLAMA = os.getenv("ENABLE_OLLAMA_SUMMARY", "1") not in ("0","false","False")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
+# كلمات حشو عربية شائعة
+FILLERS = {"اي","ايه","طيب","مم","اها","يعني","هيك","اممم","تمام","اوك","مزبوط","طيب؟","اي؟"}
+_STAMP_RE = re.compile(r"\[\s*\d+(?:\.\d+)?\s*→\s*\d+(?:\.\d+)?\s*\]")
+_SPEAKER_RE = re.compile(r"\(متكلم\s+\d+\)")
+_MULTI_SPACE = re.compile(r"\s+")
 _AR_SPLIT = re.compile(r'[\.!\?؟\n]+')
 _AR_TOKEN = r'(?u)(?<!\w)(?:[\u0600-\u06FF]{2,}|[A-Za-z]{3,})'
+_AR_SENT_SPLIT = re.compile(r'[\.!\?؟\n]+')
+_AR_STOP = {"في","على","عن","من","إلى","أن","إن","كان","كانت","هذا","هذه","ذلك","تلك","لقد","قد","تم","هو","هي","هم","هناك","كما","أو","و","ثم","أيضا","مع","بين","بعد","قبل","غير","حتى","كل","أي","وقد"}
+
+def _top_terms(keywords:str, k:int=3):
+    toks = [t.strip() for t in (keywords or "").split(",") if t.strip()]
+    out = []
+    for t in toks:
+        if t in _AR_STOP: 
+            continue
+        out.append(t)
+        if len(out) >= k: 
+            break
+    return out
+
+def _structured_summary(body:str, base_summary:str, keywords:str)->str:
+    """3 جمل عامة غير متحيّزة: فكرة رئيسية + محاور بارزة + خاتمة موجزة."""
+    body = (body or "").strip()
+    base = (base_summary or "").strip()
+    sents_base = [s.strip() for s in _AR_SENT_SPLIT.split(base) if s.strip()]
+    sents_body = [s.strip() for s in _AR_SENT_SPLIT.split(body) if s.strip()]
+    # 1) الفكرة الرئيسية
+    s1 = sents_base[0] if sents_base else (sents_body[0] if sents_body else "النص يعالج موضوعًا محددًا.")
+    # 2) المحاور
+    topk = _top_terms(keywords, k=3)
+    if topk:
+        s2 = "أبرز المحاور: " + "، ".join(topk) + "."
+    else:
+        s2 = "يركّز النص على نقاط أساسية متعدّدة."
+    # 3) الخاتمة من آخر جملة مفيدة
+    tail = (sents_base[-1] if len(sents_base) > 1 else (sents_body[-1] if len(sents_body) > 1 else "")).strip()
+    s3 = tail if len(tail) > 10 else "الخلاصة موجزة وتركّز على النتائج أو التوصيات المذكورة."
+    return f"{s1} {s2} {s3}"
 
 # ==================== Whisper / SpeechBrain ====================
 def get_model(name: str, device: str = None, compute_type: str = None):
     dev = (device or DEVICE).lower()
     ctp = (compute_type or COMPUTE_TYPE).lower()
+    if dev != "cuda" and ctp == "float16":
+        ctp = "int8_float32"
     key = (name, dev, ctp)
     if key not in _MODEL_CACHE:
-        _MODEL_CACHE[key] = WhisperModel(name, device=dev, compute_type=ctp)
+        local_dir = pathlib.Path("models") / f"whisper-{name}"
+        if not local_dir.exists():
+            snapshot_download(repo_id=f"Systran/faster-whisper-{name}", local_dir=local_dir.as_posix())
+        _MODEL_CACHE[key] = WhisperModel(local_dir.as_posix(), device=dev, compute_type=ctp)
     return _MODEL_CACHE[key]
 
 def get_spkrec():
@@ -147,7 +200,7 @@ def noisereduce(y, sr, strong=False):
 def enhance_audio(y, sr, strong=False, gain_db=6.0):
     y = librosa.effects.preemphasis(y, coef=0.85)
     y = noisereduce(y, sr, strong=strong)
-    rms = float(np.sqrt(np.mean(y**2) + 1e-9)); target_rms = 0.08
+    rms = float(np.sqrt(np.mean(y**2) + 1e-9)); target_rms = 0.07
     if rms > 0:
         y *= (target_rms / rms)
     y = np.clip(y * (10 ** (gain_db/20.0)), -1.0, 1.0)
@@ -159,7 +212,7 @@ def to_wav16k_enhanced(path, enhance=False, whisper_mode="normal", target_sr=160
         return wav
     y, sr = _wav_read_mono(wav, target_sr)
     strong = (whisper_mode == "whisper")
-    y = enhance_audio(y, sr, strong=strong, gain_db=8.0 if strong else 5.0)
+    y = enhance_audio(y, sr, strong=strong, gain_db=6.0 if strong else 4.0)
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
     sf.write(tmp, (y*32767).astype(np.int16), sr, subtype="PCM_16")
     return tmp
@@ -167,11 +220,19 @@ def to_wav16k_enhanced(path, enhance=False, whisper_mode="normal", target_sr=160
 # -------- Whisper --------
 def run_asr(wav_path, model_obj, whisper_mode="normal"):
     segments, info = model_obj.transcribe(
-        wav_path, language="ar", task="transcribe",
+        wav_path,
+        language="ar",
+        task="transcribe",
         vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=200 if whisper_mode=="whisper" else 300),
-        beam_size=5, best_of=5, temperature=0.0, log_prob_threshold=-1.2,
-        no_speech_threshold=0.25 if whisper_mode=="whisper" else 0.5,
+        vad_parameters=dict(min_silence_duration_ms=150 if whisper_mode=="whisper" else 250),
+        # فك ترميز أكثر صرامة لتفادي الترديد
+        condition_on_previous_text=False,
+        temperature=[0.0, 0.2, 0.4],
+        beam_size=5,
+        best_of=5,
+        compression_ratio_threshold=2.4,
+        log_prob_threshold=-0.3,
+        no_speech_threshold=0.6 if whisper_mode=="whisper" else 0.55,
     )
     seglist = [s for s in segments]
     lines = [f"[{s.start:.2f}→{s.end:.2f}] {s.text.strip()}" for s in seglist]
@@ -357,11 +418,42 @@ def label_speakers(wav_path, seglist, threshold=0.65):
     return labels_out
 
 # ==================== تلخيص ====================
+def summarize(text):
+    """تغليف بسيط يستدعي المُلخص التجميلي مع التنظيف وفرض العربية."""
+    s, _ = summarize_abstractive(text, device_hint=("cuda" if _HAS_CUDA else "cpu"), target_len=200)
+    return s
+
+def _clean_transcript(text: str) -> str:
+    """ينظّف التفريغ من التوقيت/المتكلّم والتكرارات وكلمات الحشو."""
+    t = _STAMP_RE.sub(" ", text)
+    t = _SPEAKER_RE.sub(" ", t)
+    # أسطر الكلام فقط إن وُجد رأس metadata
+    parts = t.split("\n\n", 1)
+    body = parts[1] if len(parts) > 1 else t
+    # حذف كلمات الحشو المفردة والتكرارات الطويلة لكلمة واحدة
+    words = body.split()
+    out = []
+    prev, run = None, 0
+    for w in words:
+        w0 = w.strip("،,.!؟").lower()
+        if w0 in FILLERS:
+            continue
+        if w0 == prev:
+            run += 1
+            if run > 3:
+                continue
+        else:
+            prev, run = w0, 1
+        out.append(w)
+    t = " ".join(out)
+    t = _MULTI_SPACE.sub(" ", t).strip()
+    return t
+
+
 def summarize_extractive(text: str, max_sentences: int = 5, top_k_terms: int = 10):
     if not text or not text.strip():
         return "لا يوجد نص.", "—"
-    parts = text.split("\n\n", 1)
-    body = parts[1] if len(parts) > 1 else text
+    body = _clean_transcript(text)
     sents = [s.strip() for s in _AR_SPLIT.split(body) if s.strip()]
     if not sents:
         return "تعذّر تلخيص النص.", "—"
@@ -384,6 +476,66 @@ def summarize_extractive(text: str, max_sentences: int = 5, top_k_terms: int = 1
     keywords = ", ".join(vocab[term_scores.argsort()[::-1]][:top_k_terms])
     return summary, keywords
 
+# ==================== تلخيص عبر Ollama ====================
+def _ollama_available() -> bool:
+    if not ENABLE_OLLAMA:
+        return False
+    try:
+        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        return r.ok
+    except Exception:
+        return False
+
+def summarize_ollama(text: str, model: str = "gemma:2b-instruct", target_len: int = 220):
+    if not text or not text.strip():
+        return "لا يوجد نص.", "—"
+
+    body = _clean_transcript(text)
+    system = "أنت مساعد تلخيص عربي. اكتب بالعربية الفصحى فقط. جمل قصيرة. دون ترجمة أو تعليق."
+    user = f"لخّص النص التالي في ≈{target_len} حرفًا:\n\n{body}"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.2,
+            "num_ctx": 1536,
+            "repeat_penalty": 1.6,
+            "num_predict": 256,
+        },
+    }
+
+    try:
+        last_err = None
+        for _ in range(2):  # محاولتان
+            try:
+                r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=OLLAMA_TIMEOUT)
+                r.raise_for_status()
+                out = (r.json().get("message") or {}).get("content", "").strip()
+                if not out:
+                    # احتياط إن رجع شكل generate
+                    out = r.json().get("response", "").strip()
+                if out:
+                    vec = TfidfVectorizer(token_pattern=_AR_TOKEN, ngram_range=(1, 2))
+                    X = vec.fit_transform([out])
+                    vocab = vec.get_feature_names_out()
+                    scores = X.toarray()[0]
+                    keywords = ", ".join(vocab[np.argsort(scores)[::-1]][:10]) if len(vocab) else ""
+                    return out, keywords
+                last_err = ValueError("استجابة فارغة من Ollama")
+            except requests.exceptions.ReadTimeout as e:
+                last_err = e
+                continue
+        raise last_err or Exception("Ollama timeout")
+    except Exception:
+        # سقوط تلقائي على Transformers
+        summ, kw = summarize_abstractive(text, target_len=200)
+        return f"[Fallback] {summ}", kw
+
 def _load_abstractive_pipe(device_hint: str = None):
     if _SUMM_CACHE["pipe"] is not None:
         return _SUMM_CACHE["pipe"]
@@ -403,7 +555,7 @@ def _load_abstractive_pipe(device_hint: str = None):
 def summarize_abstractive(text: str, device_hint: str = None, target_len: int = 200):
     if not text or not text.strip():
         return "لا يوجد نص.", "—"
-    body = text.split("\n\n", 1)[1] if "\n\n" in text else text
+    body = _clean_transcript(text)
 
     # تقطيع ذكي حسب طول الأحرف
     chunks, char_limit = [], 1800
@@ -421,12 +573,20 @@ def summarize_abstractive(text: str, device_hint: str = None, target_len: int = 
     pipe = _load_abstractive_pipe(device_hint=device_hint)
 
     def _do_sum(txt, max_len):
+        # فرض العربية عبر توجيه واضح
+        prompt = (
+            "لخّص النص العربي التالي بجمل قصيرة وواضحة وبالعربية فقط.\n\n"
+            f"النص:\n{txt}\n"
+        )
         out = pipe(
-            txt,
+            prompt,
             max_length=max_len,
             min_length=max(40, max_len // 3),
             no_repeat_ngram_size=3,
             num_beams=4,
+            repetition_penalty=1.7,
+            length_penalty=1.0,
+            early_stopping=True,
         )[0]["summary_text"]
         return out.strip()
 
@@ -444,10 +604,16 @@ def summarize_abstractive(text: str, device_hint: str = None, target_len: int = 
 
     return summary, keywords
 
-def smart_summarize(text: str, mode: str = "best", device_hint: str = None):
+def smart_summarize(text: str, mode: str = "fast", device_hint: str = None, engine: str = "transformers", ollama_model: str = "phi"):
     mode = (mode or "best").lower()
-    if mode == "off":
+    engine = (engine or "transformers").lower()
+    if mode == "off" or engine == "off":
         return "", ""
+    if engine == "ollama" and _ollama_available():
+        try:
+            return summarize_ollama(text, model=ollama_model, target_len=220)
+        except Exception:
+            pass  # سنسقط إلى المسار التقليدي عند الفشل
     if mode == "fast":
         summary, keywords = summarize_extractive(text, max_sentences=5, top_k_terms=10)
     else:
@@ -491,7 +657,7 @@ def _persist_recording(file_path, prefix="recording"):
 
 # ==================== المعالجة الرئيسية ====================
 def process(file_path, model_name, enhance, whisper_mode, diarize, auto_k, max_speakers, enroll_threshold,
-            device_sel, compute_sel, summary_mode):
+            device_sel, compute_sel, summary_mode, summary_engine, ollama_model, defer_sum):
     file_path = _normalize_single_file_input(file_path)
     if not file_path:
         return "الرجاء رفع/تسجيل ملف.", None, None, "", "", None
@@ -504,7 +670,7 @@ def process(file_path, model_name, enhance, whisper_mode, diarize, auto_k, max_s
     if (device_sel or "auto") == "auto":
         device_sel = "cuda" if _HAS_CUDA else "cpu"
     if (compute_sel or "auto") == "auto":
-        compute_sel = "float16" if device_sel == "cuda" else "int8"
+        compute_sel = "float16" if device_sel == "cuda" else "int8_float32"
 
     wav = to_wav16k_enhanced(file_path, enhance=enhance, whisper_mode=whisper_mode)
 
@@ -525,23 +691,26 @@ def process(file_path, model_name, enhance, whisper_mode, diarize, auto_k, max_s
     full_txt = header_txt.split("\n\n", 1)[0] + "\n\n" + "\n".join(lines)
 
     device_hint = device_sel if device_sel in ("cpu","cuda") else ("cuda" if _HAS_CUDA else "cpu")
-    summary_text, keywords = smart_summarize(full_txt, mode=summary_mode, device_hint=device_hint)
+    if defer_sum:
+        summary_text, keywords, sum_path = "", "", None
+    else:
+        summary_text, keywords = smart_summarize(full_txt, mode=summary_mode, device_hint=device_hint,
+                                                 engine=summary_engine, ollama_model=ollama_model)
+        sum_path = None
+        if summary_text:
+            sum_path = (OUT_DIR / f"{_safe_filename(file_path)}_summary.txt").as_posix()
+            with open(sum_path, "w", encoding="utf-8") as f:
+                f.write(summary_text + ("\n\n# كلمات مفتاحية:\n" + keywords if keywords else ""))
 
     OUT_DIR.mkdir(exist_ok=True)
     out_path = (OUT_DIR / f"{_safe_filename(file_path)}_transcript.txt").as_posix()
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(full_txt)
 
-    sum_path = None
-    if summary_text:
-        sum_path = (OUT_DIR / f"{_safe_filename(file_path)}_summary.txt").as_posix()
-        with open(sum_path, "w", encoding="utf-8") as f:
-            f.write(summary_text + ("\n\n# كلمات مفتاحية:\n" + keywords if keywords else ""))
-
-    return full_txt, out_path, out_path, summary_text, keywords, sum_path
+    return full_txt, out_path, out_path, summary_text, keywords, sum_path, full_txt, out_path, device_hint
 
 def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k, max_speakers, enroll_threshold,
-                 device_sel, compute_sel, summary_mode):
+                 device_sel, compute_sel, summary_mode, summary_engine, ollama_model, defer_sum):
     if not file_paths:
         return "الرجاء رفع ملفات.", None, None, "", "", None
 
@@ -567,16 +736,16 @@ def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k,
     if (device_sel or "auto") == "auto":
         device_sel = "cuda" if _HAS_CUDA else "cpu"
     if (compute_sel or "auto") == "auto":
-        compute_sel = "float16" if device_sel == "cuda" else "int8"
+        compute_sel = "float16" if device_sel == "cuda" else "int8_float32"
 
     all_texts = []
     summaries = []
 
     for fp in norm_paths:
         try:
-            txt, _, _, sumtxt, _, _ = process(
+            txt, _, _, sumtxt, _, _, _, _, _ = process(
                 fp, model_name, enhance, whisper_mode, diarize, auto_k, max_speakers, enroll_threshold,
-                device_sel, compute_sel, summary_mode
+                device_sel, compute_sel, summary_mode, summary_engine, ollama_model, defer_sum
             )
             name = pathlib.Path(fp).name
             all_texts.append(f"### ملف: {name}\n{txt}\n")
@@ -599,7 +768,23 @@ def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k,
         with open(merged_sum_path, "w", encoding="utf-8") as f:
             f.write(merged_sum)
 
-    return merged_text, merged_path, merged_path, merged_sum, "", merged_sum_path
+    return merged_text, merged_path, merged_path, merged_sum, "", merged_sum_path, merged_text, merged_path, ("cuda" if _HAS_CUDA else "cpu")
+
+def summarize_later(last_text, last_path, device_hint, summary_mode, summary_engine, ollama_model):
+    text = (last_text or "").strip()
+    if not text and last_path and os.path.exists(last_path):
+        text = open(last_path, "r", encoding="utf-8").read()
+    if not text:
+        return gr.update(value="لا يوجد نص لتلخيصه."), gr.update(value=""), None
+    summary_text, keywords = smart_summarize(text, mode=summary_mode, device_hint=device_hint,
+                                             engine=summary_engine, ollama_model=ollama_model)
+    sum_path = None
+    if summary_text:
+        base = pathlib.Path(last_path).with_suffix("").as_posix() if last_path else (OUT_DIR / "summary").as_posix()
+        sum_path = f"{base}_summary.txt"
+        with open(sum_path, "w", encoding="utf-8") as f:
+            f.write(summary_text + ("\n\n# كلمات مفتاحية:\n" + keywords if keywords else ""))
+    return gr.update(value=summary_text), gr.update(value=keywords), sum_path
 
 # ==================== الواجهة ====================
 custom_css = """
@@ -628,11 +813,17 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro (SpeechBrain)", css=custom_css) as 
             max_k_dd = gr.Dropdown([1,2,3,4,5], value=2, label="عدد المتكلمين (إن عطّلت التلقائي)")
             thr_slider = gr.Slider(0.5,0.9,0.65,0.01,label="عتبة ربط البصمة")
             device_dd = gr.Dropdown(["auto","cpu","cuda"], value=("cuda" if _HAS_CUDA else "auto"), label="الجهاز")
-            compute_dd = gr.Dropdown(["auto","int8","float16","float32"], value=("float16" if _HAS_CUDA else "auto"), label="الدقة")
+            compute_dd = gr.Dropdown(["auto","int8","int8_float32","float16","float32"],
+                                     value=("float16" if _HAS_CUDA else "auto"), label="الدقة")
 
             gr.Markdown("#### 🧠 التلخيص")
-            summary_dd = gr.Dropdown(["best","fast","off"], value="best",
-                                     label="وضع التلخيص (best=أعلى جودة، fast=سريع، off=تعطيل)")
+            summary_engine = gr.Dropdown(["transformers","ollama","off"], value="transformers",
+                                         label="محرك التلخيص")
+            ollama_model_in = gr.Textbox(value="gemma:2b-instruct", label="نموذج Ollama", 
+                                         info="مثال: gemma:2b-instruct أو qwen2.5:3b-instruct أو llama3.1:8b")
+            summary_dd = gr.Dropdown(["fast","best","off"], value="fast",
+                                     label="وضع التلخيص (Transformers)")
+            defer_sum = gr.Checkbox(value=True, label="تلخيص لاحقًا لتخفيف الحمل")
 
             btn_file = gr.Button("🚀 حوّل الملف المرفوع")
             btn_mic  = gr.Button("🎤 حوّل التسجيل المباشر")
@@ -648,6 +839,11 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro (SpeechBrain)", css=custom_css) as 
             keywords_box = gr.Textbox(label="كلمات مفتاحية / مواضيع", lines=2)
             summary_file = gr.File(label="تحميل الملخص", interactive=False)
             dl_sum_btn = gr.DownloadButton(label="⬇️ تنزيل الملخص", value=None)
+            summarize_now_btn = gr.Button("🧠 لخّص الآن", variant="secondary")
+        # حالة للاحتفاظ بآخر تفريغ وملفه
+    st_text = gr.State("")      # آخر نص كامل
+    st_out_path = gr.State("")  # مسار نص التفريغ
+    st_device = gr.State("")    # تلميح الجهاز للتلخيص        
 
     gr.Markdown("---\n### 👤 تسجيل بصمة صوت (Enroll)")
     with gr.Row():
@@ -674,7 +870,7 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro (SpeechBrain)", css=custom_css) as 
         if mic_path:
             # احفظ تسجيل الـEnroll وضمّه
             saved = _persist_recording(mic_path, prefix=f"enroll_{_safe_filename(name) or 'speaker'}")
-            file_list.append(mic_path)
+            file_list.append(saved or mic_path)
         ok, msg = enroll_voice(name, file_list)
         return msg
 
@@ -704,23 +900,35 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro (SpeechBrain)", css=custom_css) as 
     btn_file.click(
         process,
         [file_in, model_dd, enhance_cb, whisper_mode, diarize_cb, auto_k_cb, max_k_dd, thr_slider,
-         device_dd, compute_dd, summary_dd],
-        [out_txt, out_file, dl_btn, summary_box, keywords_box, summary_file]
-    )
+         device_dd, compute_dd, summary_dd, summary_engine, ollama_model_in, defer_sum],
+        [out_txt, out_file, dl_btn, summary_box, keywords_box, summary_file, st_text, st_out_path, st_device]
+     )
     # تسجيل ميكروفون
     btn_mic.click(
         process,
         [mic_in, model_dd, enhance_cb, whisper_mode, diarize_cb, auto_k_cb, max_k_dd, thr_slider,
-         device_dd, compute_dd, summary_dd],
-        [out_txt, out_file, dl_btn, summary_box, keywords_box, summary_file]
-    )
+         device_dd, compute_dd, summary_dd, summary_engine, ollama_model_in, defer_sum],
+        [out_txt, out_file, dl_btn, summary_box, keywords_box, summary_file, st_text, st_out_path, st_device]
+     )
     # دفعات + تلخيص
     multi_btn.click(
         process_many,
         [multi_files, model_dd, enhance_cb, whisper_mode, diarize_cb, auto_k_cb, max_k_dd, thr_slider,
-         device_dd, compute_dd, summary_dd],
-        [out_txt, out_file, dl_btn, summary_box, keywords_box, summary_file]
+         device_dd, compute_dd, summary_dd, summary_engine, ollama_model_in, defer_sum],
+        [out_txt, out_file, dl_btn, summary_box, keywords_box, summary_file, st_text, st_out_path, st_device]
     )
+
+    summarize_now_btn.click(
+        summarize_later,
+        [st_text, st_out_path, st_device, summary_dd, summary_engine, ollama_model_in],
+        [summary_box, keywords_box, summary_file]
+    )
+
+        # تحديث أزرار التنزيل عند تغيّر المسارات
+    def _update_dl_buttons(txt_path, sum_path):
+        return gr.update(value=txt_path), gr.update(value=sum_path or None)
+    out_file.change(_update_dl_buttons, [out_file, summary_file], [dl_btn, dl_sum_btn])
+    summary_file.change(_update_dl_buttons, [out_file, summary_file], [dl_btn, dl_sum_btn])
 
 if __name__ == "__main__":
     try:

@@ -31,9 +31,9 @@ try:
 except Exception:
     pass
 
-MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3"]
+MODEL_CHOICES = ["tiny", "small", "medium", "large-v3"]
 _HAS_CUDA = torch.cuda.is_available()
-DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "large-v3" if _HAS_CUDA else "base")
+DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "large-v3" if torch.cuda.is_available() else "small")
 DEVICE = os.getenv("WHISPER_DEVICE", "cuda" if _HAS_CUDA else "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "float16" if DEVICE == "cuda" else "int8")
 _MODEL_CACHE = {}
@@ -90,6 +90,14 @@ def get_model(name: str, device: str = None, compute_type: str = None):
             _MODEL_CACHE[key] = WhisperModel(fb_dir.as_posix(), device=dev, compute_type=ctp)
 
     return _MODEL_CACHE[key]
+
+# داخل مُحمّل Whisper أضف حارس الدقة إن لم يكن موجودًا:
+def _safe_compute(device, compute_type):
+    dev = (device or ("cuda" if _HAS_CUDA else "cpu")).lower()
+    ctp = (compute_type or ("float16" if dev=="cuda" else "int8_float32")).lower()
+    if dev != "cuda" and ctp == "float16":
+        ctp = "int8_float32"
+    return dev, ctp
 
 def _squash_repeats(text: str) -> str:
     # يطوي تكرار نفس الكلمة العربية القصيرة (1–4 أحرف) ≥3 مرات إلى مرتين فقط
@@ -323,6 +331,38 @@ def load_enrolled():
     except Exception as e:
         print(f"[ENROLL_LOAD] {e}")
         return []
+
+def get_speaker_files(name: str):
+    try:
+        name = (name or "").strip()
+        if not name:
+            return []
+        p = SPK_DIR / name
+        if not p.exists() or not p.is_dir():
+            return []
+        files = []
+        for fp in sorted(p.iterdir()):
+            if fp.is_file() and fp.name != "embedding.npy":
+                files.append(fp.as_posix())
+        return files
+    except Exception as e:
+        print(f"[ENROLL_LIST] {e}")
+        return []
+
+def delete_speaker(name: str):
+    try:
+        name = (name or "").strip()
+        if not name:
+            return False, "اسم فارغ."
+        p = SPK_DIR / name
+        if not p.exists():
+            return False, "غير موجود."
+        shutil.rmtree(p, ignore_errors=True)
+        if name in _ENROLLED:
+            _ENROLLED.pop(name, None)
+        return True, "تم الحذف."
+    except Exception as e:
+        return False, f"فشل الحذف: {e}"
 
 def enroll_voice(name: str, files: list):
     try:
