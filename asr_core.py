@@ -8,6 +8,10 @@ os.environ.setdefault("CT2_USE_MMAP","1")
 os.environ["SPEECHBRAIN_LOCAL_FILE_STRATEGY"] = "copy"
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ.setdefault("HF_HOME", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
+os.environ.setdefault("ASR_DATA_DIR", str(pathlib.Path(__file__).resolve().parent / "data"))
+os.environ.setdefault("TRANSFORMERS_CACHE", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
 
 import numpy as np
 import soundfile as sf
@@ -111,7 +115,8 @@ def get_model(name: str, device: str = None, compute_type: str = None):
                 print(f"[CACHE] تنزيل الموديل {name} لأول مرة...")
                 snapshot_download(
                     repo_id=f"Systran/faster-whisper-{name}",
-                    local_dir=local_dir.as_posix()
+                    local_dir=local_dir.as_posix(),
+                    local_dir_use_symlinks=False
                 )
             # 📌 استدعاء الموديل من المسار المحلي مع إعدادات متكيفة
             if torch.cuda.is_available() and dev != "cpu":
@@ -251,7 +256,11 @@ def get_spkrec():
         _wrap_fetch_module(sb_fetch); _wrap_fetch_module(sb_interfaces)
 
         local_dir = (DATA_DIR / "pretrained_models" / "spkrec_ecapa_cpu").as_posix()
-        snapshot_download(repo_id="speechbrain/spkrec-ecapa-voxceleb", local_dir=local_dir)
+        snapshot_download(
+            repo_id="speechbrain/spkrec-ecapa-voxceleb",
+            local_dir=local_dir,
+            local_dir_use_symlinks=False
+        )
         _SPKRECOG = SpeakerRecognition.from_hparams(
             source=local_dir, savedir=local_dir,
             run_opts={"device": "cpu"},

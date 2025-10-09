@@ -6,6 +6,10 @@ import warnings, logging
 os.environ["SPEECHBRAIN_LOCAL_FILE_STRATEGY"] = "copy"
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ.setdefault("HF_HOME", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
+os.environ.setdefault("ASR_DATA_DIR", str(pathlib.Path(__file__).resolve().parent / "data"))
+os.environ.setdefault("TRANSFORMERS_CACHE", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
@@ -41,7 +45,8 @@ def _force_copy(fetched_file, destination, local_strategy=None):
 sb_fetch.link_with_strategy = _force_copy
 sb_interfaces.link_with_strategy = _force_copy
 
-DUMMY_FILE = pathlib.Path("pretrained_models/_dummy_custom.py")
+DATA_ROOT = pathlib.Path(os.getenv("ASR_DATA_DIR", "data"))
+DUMMY_FILE = (DATA_ROOT / "pretrained_models" / "_dummy_custom.py")
 DUMMY_FILE.parent.mkdir(parents=True, exist_ok=True)
 if not DUMMY_FILE.exists():
     DUMMY_FILE.write_text("# dummy custom.py\n", encoding="utf-8")
@@ -100,6 +105,9 @@ AUTO_K_MIN = 1
 
 # تلخيص
 _SUMM_CACHE = {"pipe": None, "device": None}
+# مسارات نماذج التلخيص محليًا
+SUMM_REPO = os.getenv("SUMM_REPO", "csebuetnlp/mT5_multilingual_XLSum")
+SUMM_LOCAL_DIR = (MODELS_DIR / "summarizers" / "mT5_XLSum").as_posix()
 ENABLE_OLLAMA = os.getenv("ENABLE_OLLAMA_SUMMARY", "1") not in ("0","false","False")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
@@ -162,16 +170,28 @@ def get_model(name: str, device: str = None, compute_type: str = None):
     if key not in _MODEL_CACHE:
         local_dir = MODELS_DIR / f"whisper-{base}"
         if not local_dir.exists():
-            snapshot_download(repo_id=f"Systran/faster-whisper-{base}", local_dir=local_dir.as_posix())
-        _MODEL_CACHE[key] = WhisperModel(local_dir.as_posix(), device=dev, compute_type=ctp)
+            snapshot_download(
+                repo_id=f"Systran/faster-whisper-{base}",
+                local_dir=local_dir.as_posix(),
+                local_dir_use_symlinks=False
+            )
+        _MODEL_CACHE[key] = WhisperModel(
+            local_dir.as_posix(),
+            device=dev,
+            compute_type=ctp
+        )
     return _MODEL_CACHE[key]
 
 def get_spkrec():
     """ECAPA محمّل محليًا بدون symlink وبدون custom.py."""
     global _SPKRECOG
     if _SPKRECOG is None:
-        local_dir = "pretrained_models/spkrec_ecapa_cpu"
-        snapshot_download(repo_id="speechbrain/spkrec-ecapa-voxceleb", local_dir=local_dir)
+        local_dir = (DATA_DIR / "pretrained_models" / "spkrec_ecapa_cpu").as_posix()
+        snapshot_download(
+            repo_id="speechbrain/spkrec-ecapa-voxceleb",
+            local_dir=local_dir,
+            local_dir_use_symlinks=False
+        )
         try:
             _SPKRECOG = SpeakerRecognition.from_hparams(
                 source=local_dir,
@@ -606,12 +626,17 @@ def _load_abstractive_pipe(device_hint: str = None):
     if _SUMM_CACHE["pipe"] is not None:
         return _SUMM_CACHE["pipe"]
     from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-    model_name = "csebuetnlp/mT5_multilingual_XLSum"
+    # تنزيل من HF إلى فولدر المشروع (بدون symlinks)
+    snapshot_download(
+        repo_id=SUMM_REPO,
+        local_dir=SUMM_LOCAL_DIR,
+        local_dir_use_symlinks=False
+    )
     dev = device_hint or ("cuda" if _HAS_CUDA else "cpu")
     pipe = pipeline(
         "summarization",
-        model=AutoModelForSeq2SeqLM.from_pretrained(model_name),
-        tokenizer=AutoTokenizer.from_pretrained(model_name),
+        model=AutoModelForSeq2SeqLM.from_pretrained(SUMM_LOCAL_DIR, local_files_only=True),
+        tokenizer=AutoTokenizer.from_pretrained(SUMM_LOCAL_DIR, local_files_only=True),
         device=0 if (dev == "cuda") else -1,
     )
     _SUMM_CACHE["pipe"] = pipe
