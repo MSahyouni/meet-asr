@@ -1,13 +1,32 @@
 # api.py - نسخة مستقرة مُحسّنة
 import os, tempfile, shutil, pathlib, re, math, collections, subprocess, json, traceback
 from typing import List, Tuple, Optional, Set
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Request
+import contextvars
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse, FileResponse, Response, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from urllib.parse import quote
+import logging
+
+try:
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline  # type: ignore
+    _TF_AVAILABLE = True
+except Exception:
+    _TF_AVAILABLE = False
+
+logger = logging.getLogger("asr_api")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 app = FastAPI(title="Arabic ASR API", version="0.1.2")
+_RID: contextvars.ContextVar[str] = contextvars.ContextVar("rid", default="")
 
+# جذر البيانات الموحد
+DATA_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data")).resolve()
+OUTPUTS_DIR = (DATA_DIR / "outputs").resolve()
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 # Lifespan replaces deprecated on_event("startup")
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
@@ -19,10 +38,46 @@ async def _lifespan(_: FastAPI):
     yield
 
 app.router.lifespan_context = _lifespan
+if pathlib.Path("static").exists():
+    app.mount("/static", StaticFiles(directory="static", html=False), name="static")
 
 # api.py
 allow = os.getenv("ASR_ALLOWED_ORIGINS", "").split(",") if os.getenv("ASR_ALLOWED_ORIGINS") else []
 app.add_middleware(CORSMiddleware, allow_origins=allow or ["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# حدّ حجم الطلب قبل الكتابة على القرص
+from starlette.middleware.base import BaseHTTPMiddleware
+import uuid, time
+class _LimitUploadSize(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        rid = request.headers.get("x-request-id") or str(uuid.uuid4())
+        _RID.set(rid)
+        request.state.request_id = rid
+        t0 = time.time()
+        cl = request.headers.get("content-length")
+        ip = request.client.host if request.client else ""
+        try:
+            if cl and float(cl) > MAX_UPLOAD_MB * 1024 * 1024:
+                resp = _response_error(413, "file_too_large", f"max={MAX_UPLOAD_MB}MB")
+                resp.headers["x-request-id"] = rid
+                return resp
+        except Exception:
+            pass
+        resp = await call_next(request)
+        resp.headers["x-request-id"] = rid
+        resp.headers["x-runtime-ms"] = str(int((time.time() - t0)*1000))
+        try:
+            logger.info(
+                f"rid={rid} ip={ip} cl={cl or ''} method={request.method} "
+                f"path={request.url.path} status={resp.status_code} "
+                f"runtime_ms={resp.headers.get('x-runtime-ms','')}"
+            )
+        except Exception:
+            pass
+        return resp
+    
+app.add_middleware(_LimitUploadSize)
 
 # افتراضيات
 _DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "small")
@@ -31,12 +86,34 @@ _HAS_CUDA = False
 # إعدادات Ollama
 _OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
 _ENABLE_OLLAMA = os.getenv("ENABLE_OLLAMA_SUMMARY", "1") in ("1", "true", "True")
+_OLLAMA_REQUIRE_LOCAL = os.getenv("OLLAMA_REQUIRE_LOCAL", "1") in ("1","true","True")
+_OLLAMA_ALLOW_ULTRA   = os.getenv("OLLAMA_ALLOW_ULTRA", "0") in ("1","true","True")
 _OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT_SECS", "90"))
+_OLLAMA_PULL_TIMEOUT = int(os.getenv("OLLAMA_PULL_TIMEOUT_SECS", "29800"))  # للـ ultra فقط
 _SUMMARY_SOURCE = "local"  # سيتم ضبطه أثناء التنفيذ
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
 MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "50"))
 ALLOWED_EXT = {".wav",".mp3",".m4a",".mp4",".ogg",".flac",".webm",".aac",".3gp"}
+_DOWNLOAD_ALLOW = {".txt", ".srt", ".vtt", ".json"}
+# إعدادات Transformers fallback
+_TF_FALLBACK = os.getenv("TRANSFORMERS_FALLBACK", "1") in ("1","true","True")
+_TF_MODEL = os.getenv("SUMMARIZER_MODEL", "csebuetnlp/mT5_multilingual_XLSum")
+_TF_DEVICE = int(os.getenv("HF_DEVICE_ID", "-1"))  # CPU=-1
 
+@app.get("/robots.txt")
+def robots():
+    body = "User-agent: *\nDisallow:\n"
+    return PlainTextResponse(body, media_type="text/plain")
+
+@app.get("/favicon.ico")
+def favicon():
+    icon = pathlib.Path("static") / "favicon.ico"
+    if icon.exists():
+        return FileResponse(icon.as_posix(), media_type="image/x-icon", filename="favicon.ico")
+    return PlainTextResponse("", status_code=204)
+
+# كاش خفيف لأسماء نماذج Ollama
+_OLLAMA_CACHE = {"ts": 0.0, "names": set()}
 def _get_core():
     try:
         import asr_core
@@ -45,7 +122,7 @@ def _get_core():
         raise HTTPException(status_code=503, detail=f"ASR core unavailable: {e}")
     
 @app.delete("/delete-speaker")
-def delete_speaker(name: str = Query(...), x_api_key: Optional[str] = Header(None)):
+def delete_speaker(name: str = Query(...), x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
         return _response_error(401, "unauthorized", "invalid api key")
     core = _get_core()
@@ -53,7 +130,7 @@ def delete_speaker(name: str = Query(...), x_api_key: Optional[str] = Header(Non
     return {"success": bool(ok), "message": msg}
 
 @app.get("/speaker-files")
-def speaker_files(name: str = Query(...), x_api_key: Optional[str] = Header(None)):
+def speaker_files(name: str = Query(...), x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
         return _response_error(401, "unauthorized", "invalid api key")
     core = _get_core()
@@ -69,20 +146,42 @@ def health():
             ffmpeg_ok = True
         except Exception:
             ffmpeg_ok = False
+        gpu_name = ""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+        except Exception:
+            pass
         return {
             "status": "ok",
             "model_default": getattr(core, "DEFAULT_MODEL", _DEFAULT_MODEL),
             "cuda": getattr(core, "_HAS_CUDA", _HAS_CUDA),
             "ollama_enabled": _ENABLE_OLLAMA,
             "ffmpeg": ffmpeg_ok,
+            "gpu_name": gpu_name,
+            "data_dir": str(OUTPUTS_DIR.parent),
+            "max_upload_mb": MAX_UPLOAD_MB,
+            "allowed_ext": sorted(ALLOWED_EXT),
         }
     except Exception:
+        gpu_name = ""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+        except Exception:
+            pass
         return {
-            "status": "ok",
+            "status": "degraded",
             "model_default": _DEFAULT_MODEL,
             "cuda": _HAS_CUDA,
             "ollama_enabled": _ENABLE_OLLAMA,
             "ffmpeg": False,
+            "gpu_name": gpu_name,
+            "data_dir": str(OUTPUTS_DIR.parent),
+            "max_upload_mb": MAX_UPLOAD_MB,
+            "allowed_ext": sorted(ALLOWED_EXT),
         }
 
 # ======================= أدوات العربية ========================
@@ -144,6 +243,38 @@ def _summarize_local(text: str, max_lines: int = 4) -> str:
     top = sorted(sorted(scored, key=lambda x: x[1], reverse=True)[:max_lines], key=lambda x: x[0])
     return "\n".join(f"- {_shorten_sentence(t[2])}" for t in top)
 
+# ------------------- Transformers abstractive summarizer (اختياري) -------------------
+_ABST_PIPE = None
+def _load_abstractive_pipe():
+    global _ABST_PIPE
+    if _ABST_PIPE is not None:
+        return _ABST_PIPE
+    if not (_TF_AVAILABLE and _TF_FALLBACK):
+        return None
+    try:
+        tok = AutoTokenizer.from_pretrained(_TF_MODEL)
+        mdl = AutoModelForSeq2SeqLM.from_pretrained(_TF_MODEL)
+        _ABST_PIPE = pipeline("summarization", model=mdl, tokenizer=tok, device=_TF_DEVICE)
+        return _ABST_PIPE
+    except Exception as e:
+        print(f"[TF] load failed: {e}")
+        return None
+
+def _summarize_abstractive(text: str, target_len: int = 220) -> str:
+    p = _load_abstractive_pipe()
+    if p is None:
+        return ""
+    clean = _clean_for_summary(text)
+    try:
+        out = p(clean, max_length=min(384, target_len), min_length=80, do_sample=False, truncation=True)
+        summ = (out[0].get("summary_text") or "").strip()
+        if summ:
+            globals()["_SUMMARY_SOURCE"] = f"transformers:{_TF_MODEL}"
+        return summ
+    except Exception as e:
+        print(f"[TF] summarize failed: {e}")
+        return ""
+
 def _has_ollama() -> bool:
     if not _ENABLE_OLLAMA:
         return False
@@ -154,21 +285,32 @@ def _has_ollama() -> bool:
         return False
 
 def _available_ollama_models() -> Set[str]:
+    import time
+    now = time.time()
+    if now - _OLLAMA_CACHE["ts"] < 60:
+        return _OLLAMA_CACHE["names"]
     try:
         out = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=5, check=True).stdout
-        names = []
+        names = set()
         for line in (out or "").splitlines():
             line = line.strip()
             if not line or line.startswith("NAME"):
                 continue
             parts = line.split()
             if parts:
-                names.append(parts[0])
-        return set(names)
+                names.add(parts[0])
+        _OLLAMA_CACHE.update(ts=now, names=names)
+        return names
     except Exception:
         return set()
 
-def _summarize_ollama(text: str, max_lines: int = 5, model: Optional[str] = None, prefs: Optional[List[str]] = None) -> str:
+def _summarize_ollama(
+    text: str,
+    max_lines: int = 5,
+    model: Optional[str] = None,
+    prefs: Optional[List[str]] = None,
+    require_local: bool = True,  # اذا True لا يجرب نموذج غير موجود محليًا
+) -> str:
     order: List[str] = []
     if model: order.append(model)
     if _OLLAMA_MODEL: order.append(_OLLAMA_MODEL)
@@ -183,7 +325,7 @@ def _summarize_ollama(text: str, max_lines: int = 5, model: Optional[str] = None
         f"الكلمات المفتاحية:\n"
     )
     for m in order:
-        if m not in have:
+        if require_local and (m not in have):
             continue
         try:
             res = subprocess.run(["ollama", "run", m, prompt],
@@ -201,24 +343,70 @@ def _summarize_ollama(text: str, max_lines: int = 5, model: Optional[str] = None
             continue
     return ""
 
+def _ollama_pull(model: str) -> bool:
+    """يسحب النموذج صراحةً من الإنترنت. يستخدم فقط مع وضع ultra."""
+    try:
+        r = subprocess.run(["ollama", "pull", model], capture_output=True, text=True, timeout=_OLLAMA_PULL_TIMEOUT)
+        if r.returncode == 0:
+            # حدّث الكاش حتى يُكتشف فورًا
+            _OLLAMA_CACHE.update(ts=0.0, names=set())
+            return True
+        else:
+            print(f"[OLLAMA:PULL] failed rc={r.returncode}: {r.stderr[:200] if r.stderr else ''}")
+            return False
+    except Exception as e:
+        print(f"[OLLAMA:PULL] exception: {e}")
+        return False
+
 def _summarize(text: str, mode: str = "auto") -> Tuple[str, str]:
     if not text or not mode or mode.lower() == "off":
         globals()["_SUMMARY_SOURCE"] = "off"
         return ("", "")
     clean = _clean_for_summary(text)
-    mode = mode.lower()
+    mode = (mode or "auto").lower()
+    # توافق أسماء قديمة
+    if mode == "medium":
+        mode = "lite"
     if _has_ollama():
+        have = _available_ollama_models()
+        s = ""
         if mode == "lite":
-            prefs = ["phi"]
-        elif mode == "medium":
-            prefs = ["gemma:2b-instruct"]
-        elif mode == "heavy":
-            prefs = ["mistral:latest"]
-        elif mode == "xlarge":
-            prefs = ["qwen2.5:7b-instruct"]
+            # جرّب gemma حتى انتهاء المهلة حتى لو غير موجود محليًا، ثم mT5
+            s = _summarize_ollama(clean, max_lines=5, prefs=["gemma:2b-instruct"], require_local=False)
+            if not s and _TF_FALLBACK and _TF_AVAILABLE:
+                s_abs = _summarize_abstractive(clean, target_len=220)
+                if s_abs:
+                    return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
+        elif mode == "ultra":
+            # اسحب qwen2.5:72b فقط عند اختيار ultra، ثم جرّبه
+            if "qwen2.5:72b-instruct" not in have:
+                _ollama_pull("qwen2.5:72b-instruct")
+                have = _available_ollama_models()
+            s = _summarize_ollama(clean, max_lines=5, prefs=["qwen2.5:72b-instruct"], require_local=False)
+            if not s and _TF_FALLBACK and _TF_AVAILABLE:
+                s_abs = _summarize_abstractive(clean, target_len=220)
+                if s_abs:
+                    return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
+        elif mode == "auto":
+            # جرّب المحلي فقط، ثم mT5
+            prefs: List[str] = [m for m in ("qwen2.5:72b-instruct","gemma:2b-instruct") if m in have]
+            if prefs:
+                s = _summarize_ollama(clean, max_lines=5, prefs=prefs, require_local=True)
+            if not s and _TF_FALLBACK and _TF_AVAILABLE:
+                s_abs = _summarize_abstractive(clean, target_len=220)
+                if s_abs:
+                    return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
+        elif mode == "off":
+            s = ""
         else:
-            prefs = ["phi", "gemma:2b-instruct", "mistral:latest", "qwen2.5:7b-instruct"]
-        s = _summarize_ollama(clean, max_lines=5, prefs=prefs) if prefs else ""
+            # أسماء غير معروفة ⇒ عاملها كـ auto
+            prefs: List[str] = [m for m in ("qwen2.5:72b-instruct","gemma:2b-instruct") if m in have]
+            if prefs:
+                s = _summarize_ollama(clean, max_lines=5, prefs=prefs, require_local=True)
+            if not s and _TF_FALLBACK and _TF_AVAILABLE:
+                s_abs = _summarize_abstractive(clean, target_len=220)
+                if s_abs:
+                    return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
         if s:
             m = (re.search(r"الكلمات\s*المفتاحية\s*[:：]\s*(.+)$", s, re.M) or
                  re.search(r"Keywords\s*[:：]\s*(.+)$", s, re.I | re.M))
@@ -226,7 +414,10 @@ def _summarize(text: str, mode: str = "auto") -> Tuple[str, str]:
                 kw_line = re.sub(r"^[\-\*\•]\s*", "", m.group(1).strip())
                 return (s, kw_line)
             return (s, ", ".join(_keywords_ar(clean, k=10)))
-    # محلي
+    if _TF_FALLBACK and _TF_AVAILABLE:
+        s_abs = _summarize_abstractive(clean, target_len=220)
+        if s_abs:
+            return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
     globals()["_SUMMARY_SOURCE"] = "local"
     return (_summarize_local(clean, max_lines=4), ", ".join(_keywords_ar(clean, k=10)))
 
@@ -244,41 +435,104 @@ def _renumber_speakers(text: str) -> str:
 def _response_ok(text: str, summary: str, keywords: str,
                  txt_path: Optional[str], summary_path: Optional[str],
                  segments: Optional[list] = None,
-                 srt_path: Optional[str] = None, vtt_path: Optional[str] = None) -> JSONResponse:
+                 srt_path: Optional[str] = None, vtt_path: Optional[str] = None,
+                 segments_path: Optional[str] = None) -> JSONResponse:
     base_url = os.getenv("BASE_URL", "").rstrip("/")
     data = {
         "text": text or "",
         "summary": summary or "",
         "keywords": keywords or "",
+        "request_id": _RID.get(),
         "txt_path": txt_path,
         "summary_path": summary_path,
         "summary_source": globals().get("_SUMMARY_SOURCE", "local"),
         "segments": segments or [],
         "srt_path": srt_path,
         "vtt_path": vtt_path,
+        "segments_path": segments_path,
     }
-    if base_url and txt_path:
+    if base_url and (txt_path or srt_path or vtt_path or summary_path):
+        def _u(p): return f"{base_url}/download?path={quote(p)}" if p else None
         data["download_urls"] = {
-            "txt":  f"{base_url}/download?path={txt_path}",
-            "srt":  f"{base_url}/download?path={srt_path}" if srt_path else None,
-            "vtt":  f"{base_url}/download?path={vtt_path}" if vtt_path else None,
-            "summary": f"{base_url}/download?path={summary_path}" if summary_path else None,
+            "txt": _u(txt_path),
+            "srt": _u(srt_path),
+            "vtt": _u(vtt_path),
+            "summary": _u(summary_path),
         }
     return JSONResponse(data)
 
 def _response_error(code: int, err: str, detail: Optional[str] = None) -> JSONResponse:
-    # يحافظ على المخطط حتى في الخطأ
     payload = {
-        "error": err,
-        "detail": detail or "",
-        "text": "",
-        "summary": "",
-        "keywords": "",
-        "txt_path": None,
-        "summary_path": None,
-        "summary_source": globals().get("_SUMMARY_SOURCE", "local"),
+        "error": err, "detail": detail or "",
+        "request_id": _RID.get(),
+        "text": "", "summary": "", "keywords": "",
+        "txt_path": None, "summary_path": None,
+        "summary_source": globals().get("_SUMMARY_SOURCE","local"),
+        "segments": [], "srt_path": None, "vtt_path": None, "segments_path": None,
+        "download_urls": {"txt": None, "srt": None, "vtt": None, "summary": None},
     }
     return JSONResponse(payload, status_code=code)
+
+@app.post("/summarize")
+async def summarize_after(
+    text: Optional[str] = Form(None),
+    path: Optional[str] = Form(None),
+    summary_mode: str = Form("auto"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    # auth
+    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+        return _response_error(401, "unauthorized", "invalid api key")
+    # احضر النص: من path (موثّق داخل outputs/) أو من text
+    body = (text or "").strip()
+    if (path or "").strip():
+        try:
+            p = pathlib.Path(path).expanduser().resolve()
+            base = OUTPUTS_DIR
+            if base not in p.parents and base != p.parent:
+                return _response_error(403, "forbidden_path", "outside outputs/")
+            if not p.exists() or not p.is_file():
+                return _response_error(404, "file_not_found", p.as_posix())
+            body = p.read_text(encoding="utf-8", errors="ignore")
+            out_base = p
+        except Exception as e:
+            return _response_error(500, "read_failed", str(e))
+    else:
+        out_base = OUTPUTS_DIR / "manual_summary"
+
+    if not body:
+        return _response_error(400, "no_text", "nothing to summarize")
+
+    # لخّص (Ollama/محلي)
+    s_text, kw_csv = _summarize(body, mode=summary_mode)
+    if not s_text.strip():
+        globals()["_SUMMARY_SOURCE"] = "off"
+        return JSONResponse({
+            "summary": "",
+            "keywords": "",
+            "summary_path": None,
+            "summary_source": "off",
+        })
+
+    # اكتب ملف الملخص بجانب التفريغ إن وُجد
+    try:
+        sum_path = str(out_base.with_suffix(".summary.txt"))
+        pathlib.Path(sum_path).write_text(
+            s_text + (("\n\nالكلمات المفتاحية: " + (kw_csv or "")) if kw_csv else ""),
+            encoding="utf-8"
+        )
+    except Exception:
+        sum_path = None
+
+    return JSONResponse({
+        "summary": s_text,
+        "keywords": kw_csv or "",
+        "summary_path": sum_path,
+        "summary_source": globals().get("_SUMMARY_SOURCE", "local"),
+        "download_urls": {
+        "summary": (f"{os.getenv('BASE_URL','').rstrip('/')}/download?path={quote(sum_path)}") if (os.getenv('BASE_URL') and sum_path) else None
+       }
+    })
 
 # -------- أدوات مقاطع + SRT/VTT --------
 def _fmt_hhmmss(t: float) -> str:
@@ -301,33 +555,29 @@ def _parse_segments(text: str) -> list:
             segs.append({"start": st, "end": en, "speaker": who, "text": txt})
     return segs
 
-def _write_srt_vtt(segments: list, base_txt_path: str) -> tuple[str, str]:
+from typing import Optional, Tuple
+def _write_srt_vtt(segments: list, base_txt_path: str) -> Tuple[Optional[str], Optional[str]]:
     if not base_txt_path:
         return None, None
     p = pathlib.Path(base_txt_path)
     srt = p.with_suffix(".srt")
     vtt = p.with_suffix(".vtt")
-    # SRT
+    # حضّر السطور مرة واحدة
+    srt_lines = []
+    vtt_lines = ["WEBVTT", ""]
+    for i, s in enumerate(segments, 1):
+        t0s = _fmt_hhmmss(s['start']); t1s = _fmt_hhmmss(s['end'])
+        label = f"({s.get('speaker','')}) " if s.get("speaker") else ""
+        text = (label + s.get("text","")).strip()
+        srt_lines += [str(i), f"{t0s} --> {t1s}", text, ""]
+        vtt_lines += [f"{t0s.replace(',','.') } --> {t1s.replace(',','.')}", text, ""]
+    # اكتب الملفين
     try:
-        with open(srt, "w", encoding="utf-8") as f:
-            for i, s in enumerate(segments, 1):
-                f.write(str(i) + "\n")
-                f.write(f"{_fmt_hhmmss(s['start'])} --> {_fmt_hhmmss(s['end'])}\n")
-                label = f"({s['speaker']}) " if s.get("speaker") else ""
-                f.write(label + s.get("text","") + "\n\n")
-    except Exception:
-        srt = None
-    # VTT
+        with open(srt, "w", encoding="utf-8") as f: f.write("\n".join(srt_lines))
+    except Exception: srt = None
     try:
-        with open(vtt, "w", encoding="utf-8") as f:
-            f.write("WEBVTT\n\n")
-            for s in segments:
-                t0 = _fmt_hhmmss(s["start"]).replace(",", ".")
-                t1 = _fmt_hhmmss(s["end"]).replace(",", ".")
-                label = f"({s['speaker']}) " if s.get("speaker") else ""
-                f.write(f"{t0} --> {t1}\n{label}{s.get('text','')}\n\n")
-    except Exception:
-        vtt = None
+        with open(vtt, "w", encoding="utf-8") as f: f.write("\n".join(vtt_lines))
+    except Exception: vtt = None
     return srt.as_posix() if srt else None, vtt.as_posix() if vtt else None
 
 def _write_segments_json(segments: list, base_txt_path: str) -> Optional[str]:
@@ -356,7 +606,8 @@ async def transcribe(
     device_sel: str = Form("auto"),       # "auto" | "cpu" | "cuda"
     compute_sel: str = Form("auto"),      # "auto" | "int8" | "float16" | "float32"
     summary_mode: str = Form("auto"),     # "lite" | "medium" | "heavy" | "xlarge" | "auto" | "off"
-    x_api_key: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    request: Request = None,
 ):
     # مفتاح API اختياري: يُفعَّل إذا ضُبط المتغير
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
@@ -375,9 +626,9 @@ async def transcribe(
                 return _response_error(413, "file_too_large", f"max={MAX_UPLOAD_MB}MB")
         except Exception:
             pass
-        # امتداد مقبول تنبيهي
+        # رفض امتداد غير مدعوم
         if pathlib.Path(dst).suffix.lower() not in ALLOWED_EXT:
-            print(f"[WARN] امتداد غير شائع: {dst.suffix}")    
+            return _response_error(415, "unsupported_media_type", pathlib.Path(dst).suffix.lower())
 
         try:
             # asr_core.process يُتوقع أن يعيد 3 أو 6 عناصر
@@ -385,21 +636,24 @@ async def transcribe(
                 str(dst),
                 model_name or core.DEFAULT_MODEL,
                 enhance, whisper_mode, diarize, auto_k, max_speakers,
-                enroll_threshold, device_sel, compute_sel, "off"  # تعطيل تلخيص core افتراضيًا
+                enroll_threshold, device_sel, compute_sel, "off",  # تعطيل تلخيص core افتراضيًا
+                punctuate=True
             )
 
-            summary_text, keywords, sum_path = "", "", None
-            if isinstance(result, (list, tuple)):
+            # توحيد الحقول
+            if isinstance(result, dict):
+                txt = result.get("text","")
+                out_path = result.get("txt_path")
+                summary_text = result.get("summary","") or ""
+                keywords = result.get("keywords","") or ""
+                sum_path = result.get("summary_path")
+            elif isinstance(result, (list, tuple)):
+                # توافق قديم
                 if len(result) == 6:
-                    txt, out_path, _dl1, core_sum, core_kw, sum_path = result
-                    txt = txt or ""
-                    # إذا قدّم core تلخيصًا صالحًا، استخدمه وميز المصدر
-                    if (core_sum or "").strip():
-                        summary_text = core_sum
-                        keywords = (core_kw or "").strip()
-                        globals()["_SUMMARY_SOURCE"] = "core"
+                    txt, out_path, _dl1, summary_text, keywords, sum_path = result
                 elif len(result) == 3:
                     txt, out_path, _dl1 = result
+                    summary_text, keywords, sum_path = "", "", None
                 else:
                     return _response_error(500, "unexpected_result_shape", f"got {len(result)} items")
             else:
@@ -425,15 +679,18 @@ async def transcribe(
                     print(f"[WRITE_SUMMARY] {e}")
             else:
                 globals()["_SUMMARY_SOURCE"] = "off"
-                # استنتاج المقاطع من النص وكتابة SRT/VTT
-            segments = _parse_segments(txt)
-            srt_path, vtt_path = _write_srt_vtt(segments, out_path)
-            seg_path = _write_segments_json(segments, out_path)
-            resp = _response_ok(txt, summary_text, keywords, out_path, sum_path, segments, srt_path, vtt_path)
-            resp.body  # touch
-            payload = json.loads(resp.body)
-            payload["segments_path"] = seg_path
-            return JSONResponse(payload)
+            # استعمل مخرجات core إن وُجدت، وإلا اسقط إلى التوليد
+            segments = (result.get("segments") if isinstance(result, dict) else None) or _parse_segments(txt)
+            srt_path = (result.get("srt_path") if isinstance(result, dict) else None)
+            vtt_path = (result.get("vtt_path") if isinstance(result, dict) else None)
+            seg_path = (result.get("segments_path") if isinstance(result, dict) else None)
+            if not srt_path or not vtt_path:
+                _srt2, _vtt2 = _write_srt_vtt(segments, out_path)
+                srt_path = srt_path or _srt2
+                vtt_path = vtt_path or _vtt2
+            if not seg_path:
+                seg_path = _write_segments_json(segments, out_path)
+            return _response_ok(txt, summary_text, keywords, out_path, sum_path, segments, srt_path, vtt_path, seg_path)
 
         except Exception:
             # تتبّع كامل مفيد لتشخيص WinError 233 وغيرها
@@ -458,7 +715,8 @@ async def transcribe_batch(
     device_sel: str = Form("auto"),
     compute_sel: str = Form("auto"),
     summary_mode: str = Form("auto"),
-    x_api_key: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    request: Request = None,
 ):
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
         return _response_error(401, "unauthorized", "invalid api key")
@@ -479,23 +737,22 @@ async def transcribe_batch(
                 saved,
                 model_name or core.DEFAULT_MODEL,
                 enhance, whisper_mode, diarize, auto_k, max_speakers,
-                enroll_threshold, device_sel, compute_sel, "off"
+                enroll_threshold, device_sel, compute_sel, "off", punctuate=True
             )
 
-            keywords = ""
-            if isinstance(result, (list, tuple)):
+            if isinstance(result, dict):
+                merged_text = result.get("text","")
+                merged_path = result.get("txt_path")
+                merged_sum = result.get("summary","") or ""
+                keywords = result.get("keywords","") or ""
+                merged_sum_path = result.get("summary_path")
+            elif isinstance(result, (list, tuple)):
+                # توافق قديم
                 if len(result) == 6:
-                    merged_text, merged_path, _dl1, core_sum, core_kw, merged_sum_path = result
-                    merged_text = merged_text or ""
-                    if (core_sum or "").strip():
-                        merged_sum = core_sum
-                        keywords = (core_kw or "").strip()
-                        globals()["_SUMMARY_SOURCE"] = "core"
-                    else:
-                        merged_sum = ""
+                    merged_text, merged_path, _dl1, merged_sum, keywords, merged_sum_path = result
                 elif len(result) == 3:
                     merged_text, merged_path, _dl1 = result
-                    merged_sum, merged_sum_path = "", None
+                    merged_sum, merged_sum_path, keywords = "", None, ""
                 else:
                     return _response_error(500, "unexpected_result_shape", f"got {len(result)} items")
             else:
@@ -520,13 +777,11 @@ async def transcribe_batch(
             else:
                 globals()["_SUMMARY_SOURCE"] = "off"
 
+            # دمج: اسقط إلى التوليد لأن core لا يعيد مسار JSON/ترجمات مدمجة
             segs = _parse_segments(merged_text)
             srt_path, vtt_path = _write_srt_vtt(segs, merged_path)
             seg_path = _write_segments_json(segs, merged_path)
-            resp = _response_ok(merged_text, merged_sum, keywords, merged_path, merged_sum_path, segs, srt_path, vtt_path)
-            payload = json.loads(resp.body)
-            payload["segments_path"] = seg_path
-            return JSONResponse(payload)
+            return _response_ok(merged_text, merged_sum, keywords, merged_path, merged_sum_path, segs, srt_path, vtt_path, seg_path)
 
         except Exception:
             return _response_error(500, "processing_failed", traceback.format_exc())
@@ -539,78 +794,127 @@ async def transcribe_batch(
 
 @app.get("/download")
 def download_txt(path: str = Query(..., description="Absolute or outputs-relative path to txt file"),
-                 x_api_key: Optional[str] = Header(None)):
+                 x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
         return _response_error(401, "unauthorized", "invalid api key")
     try:
-        base = pathlib.Path("outputs").resolve()
-        p = pathlib.Path(path).resolve()
+        base = OUTPUTS_DIR
+        p = pathlib.Path(path).expanduser().resolve()
         if base not in p.parents and base != p.parent:
             return _response_error(403, "forbidden_path", "outside outputs/")
         if not p.exists() or not p.is_file():
             return _response_error(404, "file_not_found", p.as_posix())
+        # حظر الامتدادات غير المسموح تنزيلها
+        if p.suffix.lower() not in _DOWNLOAD_ALLOW:
+            return _response_error(403, "forbidden_extension", p.suffix.lower())
         return FileResponse(p.as_posix(), media_type="text/plain", filename=p.name)
     except Exception as e:
         return _response_error(500, "download_failed", str(e))
     
 @app.get("/export.srt")
 def export_srt(path: str = Query(..., description="Absolute or outputs-relative path to txt transcript"),
-               x_api_key: Optional[str] = Header(None)):
+               x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
         return _response_error(401, "unauthorized", "invalid api key")
     try:
-        base = pathlib.Path("outputs").resolve()
-        p = pathlib.Path(path).resolve()
+        base = OUTPUTS_DIR
+        p = pathlib.Path(path).expanduser().resolve()
         if base not in p.parents and base != p.parent:
             return _response_error(403, "forbidden_path", "outside outputs/")
         if not p.exists() or not p.is_file():
             return _response_error(404, "file_not_found", p.as_posix())
-        txt = p.read_text(encoding="utf-8", errors="ignore")
-        segs = _parse_segments(txt)
-        srt_path, _ = _write_srt_vtt(segs, p.as_posix())
+        # إذا كان ملف SRT جاهزًا بجانب النص فاستعمله مباشرة
+        srt_ready = p.with_suffix(".srt")
+        if srt_ready.exists():
+            srt_path = srt_ready.as_posix()
+        else:
+            txt = p.read_text(encoding="utf-8", errors="ignore")
+            segs = _parse_segments(txt)
+            srt_path, _ = _write_srt_vtt(segs, p.as_posix())
         if not srt_path:
             return _response_error(500, "srt_failed")
-        return FileResponse(srt_path, media_type="text/plain", filename=pathlib.Path(srt_path).name)
+        return FileResponse(srt_path, media_type="application/x-subrip", filename=pathlib.Path(srt_path).name)
     except Exception as e:
         return _response_error(500, "srt_failed", str(e))
 
 @app.get("/export.vtt")
 def export_vtt(path: str = Query(..., description="Absolute or outputs-relative path to txt transcript"),
-               x_api_key: Optional[str] = Header(None)):
+               x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
         return _response_error(401, "unauthorized", "invalid api key")
     try:
-        base = pathlib.Path("outputs").resolve()
-        p = pathlib.Path(path).resolve()
+        base = OUTPUTS_DIR
+        p = pathlib.Path(path).expanduser().resolve()
         if base not in p.parents and base != p.parent:
             return _response_error(403, "forbidden_path", "outside outputs/")
         if not p.exists() or not p.is_file():
             return _response_error(404, "file_not_found", p.as_posix())
-        txt = p.read_text(encoding="utf-8", errors="ignore")
-        segs = _parse_segments(txt)
-        _, vtt_path = _write_srt_vtt(segs, p.as_posix())
+        # إذا كان ملف VTT جاهزًا بجانب النص فاستعمله مباشرة
+        vtt_ready = p.with_suffix(".vtt")
+        if vtt_ready.exists():
+            vtt_path = vtt_ready.as_posix()
+        else:
+            txt = p.read_text(encoding="utf-8", errors="ignore")
+            segs = _parse_segments(txt)
+            _, vtt_path = _write_srt_vtt(segs, p.as_posix())
         if not vtt_path:
             return _response_error(500, "vtt_failed")
         return FileResponse(vtt_path, media_type="text/vtt", filename=pathlib.Path(vtt_path).name)
     except Exception as e:
         return _response_error(500, "vtt_failed", str(e))    
 
+@app.get("/segments")
+def segments_json(path: str = Query(..., description="Absolute or outputs-relative path to txt transcript"),
+                  x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+                  request: Request = None):
+    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+        return _response_error(401, "unauthorized", "invalid api key")
+    base = OUTPUTS_DIR
+    p = pathlib.Path(path).expanduser().resolve()
+    if base not in p.parents and base != p.parent:
+        return _response_error(403, "forbidden_path", "outside outputs/")
+    if not p.exists() or not p.is_file():
+        return _response_error(404, "file_not_found", p.as_posix())
+    txt = p.read_text(encoding="utf-8", errors="ignore")
+    return JSONResponse(_parse_segments(txt))
+
+@app.get("/segments/download")
+def segments_download(path: str = Query(..., description="Absolute or outputs-relative path to txt transcript"),
+                      x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+                      request: Request = None):
+    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+        return _response_error(401, "unauthorized", "invalid api key")
+    base = OUTPUTS_DIR
+    p = pathlib.Path(path).expanduser().resolve()
+    if base not in p.parents and base != p.parent:
+        return _response_error(403, "forbidden_path", "outside outputs/")
+    if not p.exists() or not p.is_file():
+        return _response_error(404, "file_not_found", p.as_posix())
+    txt = p.read_text(encoding="utf-8", errors="ignore")
+    segs = _parse_segments(txt)
+    fname = pathlib.Path(p).with_suffix(".segments.json").name
+    return Response(
+        content=json.dumps(segs, ensure_ascii=False),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+    )
+
 @app.get("/models")
 def get_available_models():
     try:
         core = _get_core()
         return {
-            "models": getattr(core, "MODEL_CHOICES", ["tiny", "base", "small", "medium", "large-v3"]),
+            "models": getattr(core, "MODEL_CHOICES", ["light", "heavy"]),
             "default": getattr(core, "DEFAULT_MODEL", _DEFAULT_MODEL),
         }
     except Exception:
-        return {"models": ["tiny", "base", "small", "medium", "large-v3"], "default": _DEFAULT_MODEL}
+        return {"models": ["light", "heavy"], "default": _DEFAULT_MODEL}
 
 @app.post("/enroll-speaker")
 async def enroll_speaker(
     name: str = Form(...),
     files: List[UploadFile] = File(...),
-    x_api_key: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
        return _response_error(401, "unauthorized", "invalid api key")
@@ -628,7 +932,7 @@ async def enroll_speaker(
             except Exception:
                 pass
             if pathlib.Path(dst).suffix.lower() not in ALLOWED_EXT:
-                print(f"[WARN] امتداد غير شائع: {dst.suffix}")    
+                return _response_error(415, "unsupported_media_type", pathlib.Path(dst).suffix.lower())   
             saved_files.append(str(dst))
         success, message = core.enroll_voice(name, saved_files)
         return JSONResponse({"success": bool(success), "message": message or ""})
@@ -641,7 +945,7 @@ async def enroll_speaker(
             pass
 
 @app.get("/enrolled-speakers")
-def get_enrolled_speakers(x_api_key: Optional[str] = Header(None)):
+def get_enrolled_speakers(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
         return _response_error(401, "unauthorized", "invalid api key")
     try:

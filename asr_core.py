@@ -1,5 +1,5 @@
 # asr_core.py - نسخة مستقرة
-import os, pathlib, tempfile, subprocess, shutil, atexit, re
+import os, pathlib, tempfile, subprocess, shutil, atexit, re, time
 # خيوط أقل وذاكرة أخف
 os.environ.setdefault("OMP_NUM_THREADS","1")
 os.environ.setdefault("MKL_NUM_THREADS","1")
@@ -31,16 +31,35 @@ try:
 except Exception:
     pass
 
-MODEL_CHOICES = ["tiny", "small", "medium", "large-v3"]
+MODEL_CHOICES = ["light", "heavy"]  # light=medium, heavy=large-v3
 _HAS_CUDA = torch.cuda.is_available()
-DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "large-v3" if torch.cuda.is_available() else "small")
+DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "heavy" if _HAS_CUDA else "light")
 DEVICE = os.getenv("WHISPER_DEVICE", "cuda" if _HAS_CUDA else "cpu")
-COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "float16" if DEVICE == "cuda" else "int8")
+COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "float16" if DEVICE == "cuda" else "int8_float32")
+# دقة ضرب المصفوفات في PyTorch 2.x لتحسين الاستدلال
+try:
+    if _HAS_CUDA and hasattr(torch, "set_float32_matmul_precision"):
+        torch.set_float32_matmul_precision("high")
+except Exception:
+    pass
+
+GPU_ID = int(os.getenv("GPU_ID", "0"))
+ASR_VAD = os.getenv("ASR_VAD", "0") in ("1","true","True")
+ASR_CHUNK = int(os.getenv("ASR_CHUNK_LEN", "30"))
+ASR_BEAM  = int(os.getenv("ASR_BEAM", "3"))
 _MODEL_CACHE = {}
 
-SPK_DIR = pathlib.Path("voices"); SPK_DIR.mkdir(exist_ok=True)
+# مجلد بيانات موحد تحت data/
+DATA_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data"))
+OUTPUTS_DIR = DATA_DIR / "outputs"
+MODELS_DIR  = DATA_DIR / "models"
+SPK_DIR     = DATA_DIR / "voices"
+for _d in (OUTPUTS_DIR, MODELS_DIR, SPK_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+
 _SPKRECOG = None
 _ENROLLED = {}  # {name: np.ndarray(192,)}
+_DIAR_CACHE = {}  # {(wav_path, mtime, win, hop): np.ndarray[n_frames, 192]}
 
 # ديازة
 DIAR_WIN = 1.5
@@ -48,6 +67,17 @@ DIAR_HOP = 0.75
 AUTO_K_MAX = 5
 AUTO_K_MIN = 1
 
+# كائن خطأ موحّد ليرجِع دائمًا Dict
+def _err(msg: str):
+    return {
+        "text": "",
+        "txt_path": None,
+        "summary": "",
+        "summary_path": None,
+        "keywords": "",
+        "segments": [],
+        "error": msg,
+    }
 # ---------- أدوات ملفية ----------
 def _tmp_wav(suffix=".wav"):
     return tempfile.NamedTemporaryFile(prefix="asr_", suffix=suffix, delete=False).name
@@ -60,34 +90,65 @@ def _safe_filename(p):
         return "audio"
 
 # ---------- نموذج Whisper مع كاش ----------
+def _resolve_model(name: str) -> str:
+    n = (name or "").strip().lower()
+    if n in ("light", "medium"): return "medium"
+    if n in ("heavy", "large-v3"): return "large-v3"
+    # أي اسم آخر → light كافتراضي
+    return "medium"
+
 def get_model(name: str, device: str = None, compute_type: str = None):
+    name = _resolve_model(name)
     dev = (device or DEVICE).lower()
     ctp = (compute_type or COMPUTE_TYPE).lower()
     key = (name, dev, ctp)
 
     if key not in _MODEL_CACHE:
         try:
-            # 📌 تحديد مسار محلي ثابت لكل موديل
-            local_dir = pathlib.Path("models") / f"whisper-{name}"
+            # 📌 تحديد المسار ضمن data/models/
+            local_dir = MODELS_DIR / f"whisper-{name}"
             if not local_dir.exists():
                 print(f"[CACHE] تنزيل الموديل {name} لأول مرة...")
                 snapshot_download(
                     repo_id=f"Systran/faster-whisper-{name}",
                     local_dir=local_dir.as_posix()
                 )
-            # 📌 استدعاء الموديل من المسار المحلي
-            _MODEL_CACHE[key] = WhisperModel(local_dir.as_posix(), device=dev, compute_type=ctp)
+            # 📌 استدعاء الموديل من المسار المحلي مع إعدادات متكيفة
+            if torch.cuda.is_available() and dev != "cpu":
+                _MODEL_CACHE[key] = WhisperModel(
+                    local_dir.as_posix(),
+                    device="cuda",
+                    device_index=GPU_ID,
+                    compute_type="float16",
+                    cpu_threads=max(1, os.cpu_count() // 2),
+                    download_root=MODELS_DIR.as_posix()
+                )
+            else:
+                # جودة أفضل على CPU
+                if dev == "cpu" and (ctp in ("auto","int8","float16")):
+                    ctp = "int8_float32"
+                _MODEL_CACHE[key] = WhisperModel(
+                    local_dir.as_posix(),
+                    device="cpu",
+                    compute_type=ctp or "int8_float32",
+                    cpu_threads=max(1, os.cpu_count() // 2),
+                    download_root=MODELS_DIR.as_posix()
+                )
 
         except Exception as e:
             print(f"[WHISPER] فشل تحميل {name}: {e} → استخدام fallback")
-            fb = "base" if name != "base" else "tiny"
-            fb_dir = pathlib.Path("models") / f"whisper-{fb}"
+            fb = "medium" if name != "medium" else "tiny"
+            fb_dir = MODELS_DIR / f"whisper-{fb}"
             if not fb_dir.exists():
                 snapshot_download(
                     repo_id=f"Systran/faster-whisper-{fb}",
                     local_dir=fb_dir.as_posix()
                 )
-            _MODEL_CACHE[key] = WhisperModel(fb_dir.as_posix(), device=dev, compute_type=ctp)
+            fdev, fctp = _safe_compute(dev, ctp)
+            _MODEL_CACHE[key] = WhisperModel(
+                fb_dir.as_posix(), device=fdev, compute_type=fctp,
+                cpu_threads=max(1, os.cpu_count() // 2), download_root=MODELS_DIR.as_posix()
+            )
 
     return _MODEL_CACHE[key]
 
@@ -109,16 +170,45 @@ def _squash_repeats(text: str) -> str:
     text = re.sub(r'(او\s*){3,}', 'او او ', text)
     return text
 
+# -------- تنظيف كلام (حشو عربي + تكرارات) --------
+_FILLERS = {
+    "يعني","هيك","تمام","مزبوط","اوكي","أوكي","طيب","مم","اها","اهاه","اممم","اي","ايه","اها؟","طيب؟","اوكي؟",
+    "تمام؟","مزبوط؟","هي","هون","شو","اه","آه"
+}
+def _clean_utterance(t: str) -> str:
+    t0 = re.sub(r"\s+", " ", (t or "").strip())
+    # احذف كلمات الحشو المفردة
+    words, out, prev, run = t0.split(), [], None, 0
+    for w in words:
+        w0 = w.strip(".,،!؟").lower()
+        if w0 in _FILLERS: 
+            continue
+        if w0 == prev:
+            run += 1
+            if run > 3:
+                continue
+        else:
+            prev, run = w0, 1
+        out.append(w)
+    t1 = " ".join(out).strip()
+    # طيّ تكرارات قصيرة جدًا
+    return _squash_repeats(t1)
+
 # ---------- ترقيعات SpeechBrain ----------
 def _force_copy(fetched_file, destination, local_strategy=None):
+    dest = pathlib.Path(destination)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        destination = pathlib.Path(destination)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(fetched_file, destination)
-        return destination
-    except Exception as e:
-        print(f"[SB] نسخ فشل: {e}")
-        return destination
+        # إن كان المصدر غير موجود أو ليس ملفًا، أنشئ ملفًا فارغًا مكانه
+        src = pathlib.Path(str(fetched_file))
+        if src.exists() and src.is_file():
+            shutil.copy2(src, dest)
+        else:
+            dest.write_text("# stub", encoding="utf-8")
+    except Exception:
+        try: dest.write_text("# stub", encoding="utf-8")
+        except Exception: pass
+    return dest
 
 def get_spkrec():
     global _SPKRECOG
@@ -139,10 +229,10 @@ def get_spkrec():
                 def link_with_strategy(*a, **k): return None
             sb_interfaces = _SBInterfacesFallback()
 
-        DUMMY_FILE = pathlib.Path("pretrained_models/_dummy_custom.py")
+        DUMMY_FILE = (DATA_DIR / "pretrained_models" / "_dummy_custom.py")
         DUMMY_FILE.parent.mkdir(parents=True, exist_ok=True)
         if not DUMMY_FILE.exists():
-            DUMMY_FILE.write_text("# dummy\n", encoding="utf-8")
+            DUMMY_FILE.write_text("# stub\n", encoding="utf-8")
 
         if hasattr(sb_fetch, "link_with_strategy"): sb_fetch.link_with_strategy = _force_copy
         if hasattr(sb_interfaces, "link_with_strategy"): sb_interfaces.link_with_strategy = _force_copy
@@ -160,7 +250,7 @@ def get_spkrec():
             setattr(mod, fname, wrapper)
         _wrap_fetch_module(sb_fetch); _wrap_fetch_module(sb_interfaces)
 
-        local_dir = "pretrained_models/spkrec_ecapa_cpu"
+        local_dir = (DATA_DIR / "pretrained_models" / "spkrec_ecapa_cpu").as_posix()
         snapshot_download(repo_id="speechbrain/spkrec-ecapa-voxceleb", local_dir=local_dir)
         _SPKRECOG = SpeakerRecognition.from_hparams(
             source=local_dir, savedir=local_dir,
@@ -183,16 +273,15 @@ def _ffmpeg_extract(src: str, dst_wav: str, target_sr=16000):
     try:
         cmd = ["ffmpeg","-nostdin","-y","-hide_banner","-loglevel","error",
                "-i",src,"-ac","1","-ar",str(target_sr),"-vn","-acodec","pcm_s16le",dst_wav]
-        # لا تفتح stdout كـ PIPE على ويندوز
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
         return True
     except subprocess.CalledProcessError as e:
         err = (e.stderr or b"").decode(errors="ignore")
         print(f"[FFMPEG] {err[:300]}")
-        return False
+        raise RuntimeError("ffmpeg_extract_failed") from e
     except Exception as e:
         print(f"[FFMPEG] خطأ عام: {e}")
-        return False
+        raise RuntimeError("ffmpeg_extract_failed") from e
 
 def _wav_read_mono(path, target_sr=16000):
     try:
@@ -212,8 +301,7 @@ def to_wav16k(path, target_sr=16000):
         raise ValueError(f"الملف غير موجود: {path}")
     if _is_container(path):
         tmp = _tmp_wav()
-        if not _ffmpeg_extract(path, tmp, target_sr):
-            raise RuntimeError("فشل استخراج الصوت")
+        _ffmpeg_extract(path, tmp, target_sr)
         return tmp
     y, sr = _wav_read_mono(path, target_sr)
     y = np.clip(y, -1.0, 1.0)
@@ -256,6 +344,7 @@ def to_wav16k_enhanced(path, enhance=False, whisper_mode="normal", target_sr=160
 # ---------- ASR ----------
 def run_asr(wav_path, model_obj, whisper_mode="normal"):
     try:
+        init_prompt = "لغة عربية عامية سورية." if whisper_mode == "whisper" else "لغة عربية فصحى."
         segments, info = model_obj.transcribe(
             wav_path,
             language="ar",
@@ -263,16 +352,18 @@ def run_asr(wav_path, model_obj, whisper_mode="normal"):
             vad_filter=True,
             vad_parameters=dict(
                 threshold=0.7,
-                min_silence_duration_ms=800,
+                min_silence_duration_ms=800 if whisper_mode == "whisper" else 1000,
                 speech_pad_ms=100,
             ),
-            beam_size=3,
-            best_of=3,
-            temperature=0.0,
-            log_prob_threshold=-1.2,
-            no_speech_threshold=0.7,
-            condition_on_previous_text=True,
-            initial_prompt="لغة عربية عامية سورية." if whisper_mode == "whisper" else None,
+            condition_on_previous_text=False,
+            temperature=[0.0, 0.2, 0.4],
+            beam_size=5,
+            best_of=5,
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-0.3,
+            no_speech_threshold=0.6 if whisper_mode == "whisper" else 0.55,
+            word_timestamps=False,
+            initial_prompt=init_prompt,
         )
         seglist = [s for s in segments]
         lines = [f"[{s.start:.2f}→{s.end:.2f}] {s.text.strip()}" for s in seglist]
@@ -420,13 +511,21 @@ def label_speakers(wav_path, seglist, threshold=0.65):
         if rec is None:
             return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
 
-        X = []
-        with torch.no_grad():
-            for (_, _, chunk) in frames:
-                t = torch.from_numpy(chunk).float().unsqueeze(0)
-                v = _to1d(rec.encode_batch(t))
-                X.append(v)
-        if not X:
+        # كاش embeddings على مستوى الملف
+        key = (wav_path, pathlib.Path(wav_path).stat().st_mtime, win, hop)
+        X = _DIAR_CACHE.get(key)
+        if X is None:
+            Xl = []
+            with torch.no_grad():
+                for (_, _, chunk) in frames:
+                    t = torch.from_numpy(chunk).float().unsqueeze(0)
+                    v = _to1d(rec.encode_batch(t))
+                    Xl.append(v)
+            if not Xl:
+                return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
+            X = np.stack(Xl, axis=0)
+            _DIAR_CACHE[key] = X
+        if X.size == 0:
             return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
         X = np.stack(X, axis=0)
 
@@ -538,28 +637,44 @@ def extract_keywords(text, top_k=10):
         print(f"[KW] {e}")
         return ""
 
-def summarize_text(text, summary_mode="best"):
-    try:
-        if summary_mode == "off": return ""
-        t = _clean_text_for_summary(text)
-        sents = re.split(r"[\.!\?؟]+", t)
-        sents = [s.strip() for s in sents if s.strip()]
-        if len(sents) <= 3: return " ".join(sents)
-        # TF-based scoring بدل طول الجملة فقط
-        toks = [w for w in _tokenize_ar(t) if w not in _AR_STOP]
-        freq = Counter(toks)
-        def score(s): 
-            ws = [w for w in _tokenize_ar(s) if w not in _AR_STOP]
-            return sum(freq.get(w,0) for w in ws) / max(1,len(ws))
-        if summary_mode == "fast":
-            picked = [sents[0], sents[len(sents)//2], sents[-1]]
-        else:
-            ranked = sorted(((i,score(s),s) for i,s in enumerate(sents)), key=lambda x: x[1], reverse=True)[:3]
-            picked = [t[2] for t in sorted(ranked, key=lambda x: x[0])]
-        return "، ".join(picked)
-    except Exception as e:
-        print(f"[SUM] {e}")
-        return (text[:200] + "...") if len(text) > 200 else text
+def summarize_text(text, summary_mode="off"):
+    return ""
+
+def _normalize_summary_mode(m: str) -> str:
+    return "off"
+
+# ---------- توليد SRT/VTT وإصدار ----------
+def _fmt_ts(t: float) -> str:
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = int(t % 60)
+    ms = int((t - int(t)) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+def segments_to_srt(segments, base_txt_path: str) -> str:
+    p = pathlib.Path(base_txt_path) if base_txt_path else (OUTPUTS_DIR / "transcript")
+    srt_path = p.with_suffix(".srt")
+    with open(srt_path, "w", encoding="utf-8") as f:
+        for i, seg in enumerate(segments, 1):
+            f.write(
+                f"{i}\n{_fmt_ts(seg['start'])} --> {_fmt_ts(seg['end'])}\n"
+                f"{seg['speaker']}: {seg['text']}\n\n"
+            )
+    return srt_path.as_posix()
+
+def segments_to_vtt(segments, base_txt_path: str) -> str:
+    p = pathlib.Path(base_txt_path) if base_txt_path else (OUTPUTS_DIR / "transcript")
+    vtt_path = p.with_suffix(".vtt")
+    with open(vtt_path, "w", encoding="utf-8") as f:
+        f.write("WEBVTT\n\n")
+        for seg in segments:
+            st = _fmt_ts(seg["start"]).replace(",", ".")
+            en = _fmt_ts(seg["end"]).replace(",", ".")
+            f.write(f"{st} --> {en}\n{seg['speaker']}: {seg['text']}\n\n")
+    return vtt_path.as_posix()
+
+def version() -> str:
+    return "asr_core/1.0.0"
 
 # ---------- نقاط الدخول ----------
 def _normalize_single_file_input(file_path):
@@ -572,21 +687,22 @@ def _normalize_single_file_input(file_path):
 
 def process(file_path, model_name=None, enhance=False, whisper_mode="normal",
             diarize=False, auto_k=True, max_speakers=2, enroll_threshold=0.65,
-            device_sel="auto", compute_sel="auto", summary_mode="best"):
+            device_sel="auto", compute_sel="auto", summary_mode="best",
+            punctuate=False):
     file_path = _normalize_single_file_input(file_path)
     if not file_path:
-        return "الرجاء رفع ملف صحيح.", None, None, "", "", None
+        return _err("الرجاء رفع ملف صحيح.")
     try:
         if not os.path.exists(file_path):
-            return f"الملف غير موجود: {file_path}", None, None, "", "", None
+            return _err(f"الملف غير موجود: {file_path}")
     except Exception as e:
-        return f"خطأ في التحقق من الملف: {str(e)}", None, None, "", "", None
+        return _err(f"خطأ في التحقق من الملف: {str(e)}")
 
     try:
         if (device_sel or "auto") == "auto":
             device_sel = "cuda" if _HAS_CUDA else "cpu"
         if (compute_sel or "auto") == "auto":
-            compute_sel = "float16" if device_sel == "cuda" else "int8"
+            compute_sel = "float16" if device_sel == "cuda" else "int8_float32"
 
         if IS_WIN and diarize:
             # تقليل التعقيد لتجنّب أخطاء PIPE/MP
@@ -605,19 +721,27 @@ def process(file_path, model_name=None, enhance=False, whisper_mode="normal",
             spk_labels = ["غير معروف"] * len(seglist)
 
         lines = []
+        seg_rows = []
+        last_end = None
         for s, who in zip(seglist, spk_labels):
             st = float(s.start); en = float(s.end)
-            lines.append(f"[{st:.2f}→{en:.2f}] ({who}) {s.text.strip()}")
+            txt = _clean_utterance(s.text.strip())
+            # تنقيط بسيط حسب فجوة الصمت
+            if punctuate and last_end is not None and (st - last_end) >= 1.2 and txt and not txt.endswith(("؟","!",".")):
+                txt += "."
+            lines.append(f"[{st:.2f}→{en:.2f}] ({who}) {txt}")
+            seg_rows.append({"start": st, "end": en, "speaker": who, "text": txt})
+            last_end = en
 
         full_txt = header_txt.split("\n\n", 1)[0] + "\n\n" + "\n".join(lines)
         full_txt = _squash_repeats(full_txt)
 
-        summary_text = summarize_text(full_txt, summary_mode)
+        summary_text = ""
         keywords = extract_keywords(full_txt)
 
-        out_dir = pathlib.Path("outputs"); out_dir.mkdir(exist_ok=True)
+        OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         base = _safe_filename(file_path)
-        out_path = (out_dir / f"{base}_transcript.txt").as_posix()
+        out_path = (OUTPUTS_DIR / f"{base}_transcript.txt").as_posix()
         try:
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(full_txt)
@@ -625,27 +749,40 @@ def process(file_path, model_name=None, enhance=False, whisper_mode="normal",
             print(f"[SAVE_TXT] {e}"); out_path = None
 
         sum_path = None
-        if summary_text:
-            sum_path = (out_dir / f"{base}_summary.txt").as_posix()
-            try:
-                with open(sum_path, "w", encoding="utf-8") as f:
-                    f.write(f"الملخص:\n{summary_text}\n\nالكلمات المفتاحية:\n{keywords}")
-            except Exception as e:
-                print(f"[SAVE_SUM] {e}"); sum_path = None
 
-        return full_txt, out_path, out_path, summary_text, keywords, sum_path
+        # توليد ملفات SRT/VTT
+        srt_path = vtt_path = None
+        try:
+            if seg_rows:
+                srt_path = segments_to_srt(seg_rows, out_path)
+                vtt_path = segments_to_vtt(seg_rows, out_path)
+        except Exception as e:
+            print(f"[TIMECODES] {e}")
+
+        # كائن موحّد للنتيجة
+        return {
+            "text": full_txt,
+            "txt_path": out_path,
+            "summary": "",
+            "summary_path": sum_path,
+            "keywords": keywords,
+            "segments": seg_rows,
+            "srt_path": srt_path,
+            "vtt_path": vtt_path,
+        }
 
     except Exception as e:
         msg = f"خطأ أثناء المعالجة: {str(e)}"
         print(f"[PROCESS] {msg}")
-        return msg, None, None, "", "", None
+        return _err(msg)
 
 
 def process_many(file_paths, model_name=None, enhance=False, whisper_mode="normal",
                  diarize=False, auto_k=True, max_speakers=2, enroll_threshold=0.65,
-                 device_sel="auto", compute_sel="auto", summary_mode="best"):
+                 device_sel="auto", compute_sel="auto", summary_mode="best",
+                 punctuate=False):
     if not file_paths:
-        return "الرجاء رفع ملفات.", None, None, "", "", None
+        return _err("الرجاء رفع ملفات.")
     try:
         if isinstance(file_paths, dict):
             fp = file_paths.get("name") or file_paths.get("path")
@@ -662,35 +799,35 @@ def process_many(file_paths, model_name=None, enhance=False, whisper_mode="norma
             else:
                 norm_paths.append(str(fp))
         if not norm_paths:
-            return "لم أتعرف على مسارات صالحة.", None, None, "", "", None
+            return _err("لم أتعرف على مسارات صالحة.")
 
         if (device_sel or "auto") == "auto":
             device_sel = "cuda" if _HAS_CUDA else "cpu"
         if (compute_sel or "auto") == "auto":
-            compute_sel = "float16" if device_sel == "cuda" else "int8"
+            compute_sel = "float16" if device_sel == "cuda" else "int8_float32"
         if IS_WIN:
             diarize = False
 
-        out_dir = pathlib.Path("outputs"); out_dir.mkdir(exist_ok=True)
+        OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         all_texts, all_summaries = [], []
         for fp in norm_paths:
-            txt, _, _, summary, _, _ = process(
+            res = process(
                 fp, model_name, enhance, whisper_mode, diarize,
                 auto_k, max_speakers, enroll_threshold,
-                device_sel, compute_sel, summary_mode
+                device_sel, compute_sel, "off", punctuate=punctuate
             )
 
-            txt = _squash_repeats(txt or "")
+            txt = _squash_repeats((res or {}).get("text",""))
 
             name = pathlib.Path(fp).name
             all_texts.append(f"### ملف: {name}\n{txt}\n")
-            if summary:
-                all_summaries.append(f"### ملخص {name}:\n{summary}\n")
+            if res and res.get("summary"):
+                all_summaries.append(f"### ملخص {name}:\n{res['summary']}\n")
 
         merged_text = "\n\n".join(all_texts).strip()
         merged_summary = "\n\n".join(all_summaries).strip() if all_summaries else ""
 
-        merged_path = (out_dir / "batch_transcripts.txt").as_posix()
+        merged_path = (OUTPUTS_DIR / "batch_transcripts.txt").as_posix()
         try:
             with open(merged_path, "w", encoding="utf-8") as f:
                 f.write(merged_text)
@@ -699,27 +836,40 @@ def process_many(file_paths, model_name=None, enhance=False, whisper_mode="norma
 
         merged_sum_path = None
         if merged_summary:
-            merged_sum_path = (out_dir / "batch_summaries.txt").as_posix()
+            merged_sum_path = (OUTPUTS_DIR / "batch_summaries.txt").as_posix()
             try:
                 with open(merged_sum_path, "w", encoding="utf-8") as f:
                     f.write(merged_summary)
             except Exception as e:
                 print(f"[SAVE_BATCH_SUM] {e}"); merged_sum_path = None
 
-        return merged_text, merged_path, merged_path, merged_summary, "", merged_sum_path
+        return {
+            "text": merged_text,
+            "txt_path": merged_path,
+            "summary": "",
+            "summary_path": None,
+            "keywords": "",
+            "segments": [],
+            "srt_path": None,
+            "vtt_path": None,
+        }
 
     except Exception as e:
         msg = f"خطأ في معالجة الملفات المتعددة: {str(e)}"
         print(f"[PROCESS_MANY] {msg}")
-        return msg, None, None, "", "", None
+        return _err(msg)
 
 # ---------- تنظيف مؤقت ----------
 def cleanup_temp_files():
     try:
         temp_dir = pathlib.Path(tempfile.gettempdir())
         for temp_file in temp_dir.glob("asr_*.wav"):
-            try: temp_file.unlink()
-            except Exception: pass
-    except Exception: pass
+            if temp_file.stat().st_mtime < (time.time() - 86400):  # أقدم من يوم
+                try:
+                    temp_file.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 atexit.register(cleanup_temp_files)

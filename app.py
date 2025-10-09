@@ -72,17 +72,22 @@ sb_fetch.fetch = _wrap_fetch(_original_fetch_fetching)
 sb_interfaces.fetch = _wrap_fetch(_original_fetch_interfaces)
 
 # ==================== إعدادات عامة ====================
-MODEL_CHOICES = ["tiny", "small", "medium", "large-v3"]
+MODEL_CHOICES = ["light", "heavy"]  # light => medium, heavy => large-v3
 _HAS_CUDA = torch.cuda.is_available()
-DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "large-v3" if _HAS_CUDA else "small")
+DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "heavy" if _HAS_CUDA else "light")
 DEVICE = os.getenv("WHISPER_DEVICE", "cuda" if _HAS_CUDA else "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "float16" if DEVICE == "cuda" else "int8_float32")
 _MODEL_CACHE = {}
+MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "50"))
+ALLOWED_EXT = {".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".flac", ".webm", ".aac", ".3gp"}
 
-ROOT = pathlib.Path(".")
-SPK_DIR = ROOT / "voices"; SPK_DIR.mkdir(exist_ok=True)
-OUT_DIR = ROOT / "outputs"; OUT_DIR.mkdir(exist_ok=True)
-REC_DIR = OUT_DIR / "recordings"; REC_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data"))
+MODELS_DIR = DATA_DIR / "models"
+OUT_DIR = DATA_DIR / "outputs"
+SPK_DIR = DATA_DIR / "voices"
+for _d in (MODELS_DIR, OUT_DIR, SPK_DIR, OUT_DIR / "recordings"):
+    _d.mkdir(parents=True, exist_ok=True)
+REC_DIR = OUT_DIR / "recordings"
 
 _SPKRECOG = None
 _ENROLLED = {}   # {name: np.ndarray(192,)}
@@ -98,6 +103,8 @@ _SUMM_CACHE = {"pipe": None, "device": None}
 ENABLE_OLLAMA = os.getenv("ENABLE_OLLAMA_SUMMARY", "1") not in ("0","false","False")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
+OLLAMA_PULL_TIMEOUT = int(os.getenv("OLLAMA_PULL_TIMEOUT_SECS", "29800"))  # حتى 8 ساعات للـ 72B
+
 # كلمات حشو عربية شائعة
 FILLERS = {"اي","ايه","طيب","مم","اها","يعني","هيك","اممم","تمام","اوك","مزبوط","طيب؟","اي؟"}
 _STAMP_RE = re.compile(r"\[\s*\d+(?:\.\d+)?\s*→\s*\d+(?:\.\d+)?\s*\]")
@@ -139,16 +146,23 @@ def _structured_summary(body:str, base_summary:str, keywords:str)->str:
     return f"{s1} {s2} {s3}"
 
 # ==================== Whisper / SpeechBrain ====================
+def _resolve_model(name: str) -> str:
+    n = (name or "").strip().lower()
+    if n in ("light", "medium"): return "medium"
+    if n in ("heavy", "large-v3"): return "large-v3"
+    return "medium"
+
 def get_model(name: str, device: str = None, compute_type: str = None):
     dev = (device or DEVICE).lower()
     ctp = (compute_type or COMPUTE_TYPE).lower()
     if dev != "cuda" and ctp == "float16":
         ctp = "int8_float32"
-    key = (name, dev, ctp)
+    base = _resolve_model(name)
+    key = (base, dev, ctp)
     if key not in _MODEL_CACHE:
-        local_dir = pathlib.Path("models") / f"whisper-{name}"
+        local_dir = MODELS_DIR / f"whisper-{base}"
         if not local_dir.exists():
-            snapshot_download(repo_id=f"Systran/faster-whisper-{name}", local_dir=local_dir.as_posix())
+            snapshot_download(repo_id=f"Systran/faster-whisper-{base}", local_dir=local_dir.as_posix())
         _MODEL_CACHE[key] = WhisperModel(local_dir.as_posix(), device=dev, compute_type=ctp)
     return _MODEL_CACHE[key]
 
@@ -158,21 +172,36 @@ def get_spkrec():
     if _SPKRECOG is None:
         local_dir = "pretrained_models/spkrec_ecapa_cpu"
         snapshot_download(repo_id="speechbrain/spkrec-ecapa-voxceleb", local_dir=local_dir)
-        _SPKRECOG = SpeakerRecognition.from_hparams(
-            source=local_dir,
-            savedir=local_dir,
-            run_opts={"device": "cpu"},
-            hparams_file="hyperparams.yaml",
-            pymodule_file=None,
-        )
+        try:
+            _SPKRECOG = SpeakerRecognition.from_hparams(
+                source=local_dir,
+                savedir=local_dir,
+                run_opts={"device": "cpu"},
+                hparams_file="hyperparams.yaml",
+                pymodule_file=None,
+            )
+        except Exception as e:
+            print(f"[تحذير] فشل تحميل نموذج التعرف على المتكلم: {e}")
+            _SPKRECOG = None
     return _SPKRECOG
 
 def _is_container(p: str) -> bool:
     return pathlib.Path(p).suffix.lower() in {".mp4",".m4a",".mov",".3gp",".mkv",".webm",".avi"}
 
 def _ffmpeg_extract(src: str, dst_wav: str, target_sr=16000):
-    cmd = ["ffmpeg","-y","-i",src,"-ac","1","-ar",str(target_sr),"-vn","-acodec","pcm_s16le",dst_wav]
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    try:
+        cmd = ["ffmpeg","-nostdin","-y","-hide_banner","-loglevel","error",
+               "-i",src,"-ac","1","-ar",str(target_sr),"-vn","-acodec","pcm_s16le",dst_wav]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+    except subprocess.CalledProcessError as e:
+        err = (e.stderr or b"").decode(errors="ignore")
+        raise RuntimeError(f"FFmpeg failed: {err[:200]}") from e
+
+# تحقق مبكر من توفر ffmpeg
+try:
+    subprocess.run(["ffmpeg","-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+except Exception as e:
+    print("[تحذير] FFmpeg غير مثبت أو غير متاح في PATH:", e)
 
 def _wav_read_mono(path, target_sr=16000):
     y, sr = sf.read(path, dtype="float32", always_2d=False)
@@ -212,7 +241,7 @@ def to_wav16k_enhanced(path, enhance=False, whisper_mode="normal", target_sr=160
         return wav
     y, sr = _wav_read_mono(wav, target_sr)
     strong = (whisper_mode == "whisper")
-    y = enhance_audio(y, sr, strong=strong, gain_db=6.0 if strong else 4.0)
+    y = enhance_audio(y, sr, strong=strong, gain_db=8.0 if strong else 5.0)
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
     sf.write(tmp, (y*32767).astype(np.int16), sr, subtype="PCM_16")
     return tmp
@@ -224,15 +253,20 @@ def run_asr(wav_path, model_obj, whisper_mode="normal"):
         language="ar",
         task="transcribe",
         vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=150 if whisper_mode=="whisper" else 250),
-        # فك ترميز أكثر صرامة لتفادي الترديد
+        vad_parameters=dict(
+            threshold=0.7,
+            min_silence_duration_ms=800 if whisper_mode == "whisper" else 1000,
+            speech_pad_ms=100,
+        ),
         condition_on_previous_text=False,
         temperature=[0.0, 0.2, 0.4],
         beam_size=5,
         best_of=5,
         compression_ratio_threshold=2.4,
         log_prob_threshold=-0.3,
-        no_speech_threshold=0.6 if whisper_mode=="whisper" else 0.55,
+        no_speech_threshold=0.6 if whisper_mode == "whisper" else 0.55,
+        word_timestamps=False,
+        initial_prompt=("لغة عربية عامية سورية." if whisper_mode == "whisper" else "لغة عربية فصحى."),
     )
     seglist = [s for s in segments]
     lines = [f"[{s.start:.2f}→{s.end:.2f}] {s.text.strip()}" for s in seglist]
@@ -257,6 +291,8 @@ def _to1d(emb):
 
 def _embed_file(path):
     rec = get_spkrec()
+    if rec is None:
+        return np.zeros(192, dtype=np.float32)
     wav, sr = _wav_read_mono(path, 16000)
     t = torch.from_numpy(wav).float().unsqueeze(0)
     with torch.no_grad():
@@ -351,7 +387,11 @@ def label_speakers(wav_path, seglist, threshold=0.65):
     X = np.stack(X, axis=0)
 
     def _cluster_with_k(k):
-        model = AgglomerativeClustering(n_clusters=k, metric="cosine", linkage="average")
+        try:
+            model = AgglomerativeClustering(n_clusters=k, metric="cosine", linkage="average")
+        except TypeError:
+            # دعم للإصدارات الأقدم من scikit-learn
+            model = AgglomerativeClustering(n_clusters=k, affinity="cosine", linkage="average")
         labels = model.fit_predict(X)
         score = -1.0
         if k > 1:
@@ -485,8 +525,32 @@ def _ollama_available() -> bool:
         return r.ok
     except Exception:
         return False
+    
+def _ollama_has(model_name: str) -> bool:
+    if not _ollama_available():
+        return False
+    try:
+        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        r.raise_for_status()
+        tags = [t.get("name", "") for t in (r.json().get("models") or [])]
+        return model_name in tags
+    except Exception:
+        return False    
 
-def summarize_ollama(text: str, model: str = "gemma:2b-instruct", target_len: int = 220):
+def _ollama_pull(model: str) -> bool:
+    """سحب صريح عبر ollama CLI. للـ ultra فقط حسب الطلب."""
+    try:
+        r = subprocess.run(["ollama", "pull", model],
+                           capture_output=True, text=True, timeout=OLLAMA_PULL_TIMEOUT)
+        if r.returncode == 0:
+            return True
+        print(f"[ollama pull] rc={r.returncode} err={(r.stderr or '')[:200]}")
+        return False
+    except Exception as e:
+        print(f"[ollama pull] exception: {e}")
+        return False
+
+def summarize_ollama(text: str, model: str = "gemma:2b-instruct", target_len: int = 220, fallback_local: bool = True):
     if not text or not text.strip():
         return "لا يوجد نص.", "—"
 
@@ -532,9 +596,11 @@ def summarize_ollama(text: str, model: str = "gemma:2b-instruct", target_len: in
                 continue
         raise last_err or Exception("Ollama timeout")
     except Exception:
-        # سقوط تلقائي على Transformers
-        summ, kw = summarize_abstractive(text, target_len=200)
-        return f"[Fallback] {summ}", kw
+        if fallback_local:
+            summ, kw = summarize_abstractive(text, target_len=200)
+            return summ, kw
+        # دع المتصل يقرر السقوط المحلي
+        raise
 
 def _load_abstractive_pipe(device_hint: str = None):
     if _SUMM_CACHE["pipe"] is not None:
@@ -604,32 +670,60 @@ def summarize_abstractive(text: str, device_hint: str = None, target_len: int = 
 
     return summary, keywords
 
-def smart_summarize(text: str, mode: str = "fast", device_hint: str = None, engine: str = "transformers", ollama_model: str = "phi"):
-    mode = (mode or "best").lower()
-    engine = (engine or "transformers").lower()
-    if mode == "off" or engine == "off":
+def smart_summarize(text: str, mode: str = "auto", device_hint: str = None, engine: str = "transformers", ollama_model: str = "phi"):
+    m = (mode or "auto").lower()
+    if m == "medium":  # توافق قديم
+        m = "lite"
+    if m == "off":
         return "", ""
-    if engine == "ollama" and _ollama_available():
-        try:
-            return summarize_ollama(text, model=ollama_model, target_len=220)
-        except Exception:
-            pass  # سنسقط إلى المسار التقليدي عند الفشل
-    if mode == "fast":
-        summary, keywords = summarize_extractive(text, max_sentences=5, top_k_terms=10)
-    else:
-        try:
-            summary, keywords = summarize_abstractive(text, device_hint=device_hint, target_len=220)
-        except Exception:
-            summary, keywords = summarize_extractive(text, max_sentences=6, top_k_terms=12)
 
-    # صياغة وصف وصفي
-    if keywords:
-        desc = f"النص يتحدث بشكل أساسي عن: {keywords}."
-        summary = desc + "\n\n" + summary
-    else:
-        summary = "النص يناقش موضوعًا عامًا.\n\n" + summary
+    # ملخّص محلي بالـ transformers دومًا متاح
+    def _local():
+        # يمكنك استبداله بـ summarize_abstractive إن رغبت بدقة أعلى محليًا
+        return summarize_extractive(text, max_sentences=5, top_k_terms=10)
 
-    return summary, keywords
+    has_ollama = _ollama_available()
+    has_ultra  = has_ollama and _ollama_has("qwen2.5:72b-instruct")
+    has_lite   = has_ollama and _ollama_has("gemma:2b-instruct")
+
+    if m == "lite":
+        # جرّبه حتى التايم‌آوت حتى لو غير موجود محليًا
+        if has_ollama:
+            try:
+                return summarize_ollama(text, model="gemma:2b-instruct", target_len=220, fallback_local=False)
+            except Exception:
+                pass
+        return _local()
+
+    if m == "ultra":
+        # إن لم يكن محليًا، اسحبه ثم جرّبه
+        if has_ollama:
+            if not has_ultra:
+                _ollama_pull("qwen2.5:72b-instruct")
+                has_ultra = _ollama_has("qwen2.5:72b-instruct")
+            if has_ultra:
+                try:
+                    return summarize_ollama(text, model="qwen2.5:72b-instruct", target_len=220, fallback_local=False)
+                except Exception:
+                    pass
+        return _local()
+
+    # auto: إن وُجدت نماذج محلّيًا جرّبها، وإلا Transformers مباشرة
+    if m == "auto":
+        if has_ultra:
+            try:
+                return summarize_ollama(text, model="qwen2.5:72b-instruct", target_len=220, fallback_local=False)
+            except Exception:
+                pass
+        if has_lite:
+            try:
+                return summarize_ollama(text, model="gemma:2b-instruct", target_len=220, fallback_local=False)
+            except Exception:
+                pass
+        return _local()
+
+    # أي قيمة أخرى → محلي
+    return _local()
 
 # ==================== أدوات مساعدة ====================
 def _safe_filename(p):
@@ -663,6 +757,15 @@ def process(file_path, model_name, enhance, whisper_mode, diarize, auto_k, max_s
         return "الرجاء رفع/تسجيل ملف.", None, None, "", "", None
     if not os.path.exists(file_path):
         return f"لم أجد الملف: {file_path}", None, None, "", "", None
+    # فحص الامتداد والحجم مبكرًا
+    try:
+        p = pathlib.Path(file_path)
+        if p.suffix.lower() not in ALLOWED_EXT:
+            return f"امتداد غير مدعوم: {p.suffix.lower()}", None, None, "", "", None
+        if p.stat().st_size > MAX_UPLOAD_MB * 1024 * 1024:
+            return f"حجم الملف يتجاوز {int(MAX_UPLOAD_MB)}MB.", None, None, "", "", None
+    except Exception as e:
+        return f"تعذّر فحص الملف: {e}", None, None, "", "", None
 
     # إذا كان من الميكروفون، احفظ نسخة في recordings
     _persist_recording(file_path, prefix="main_input")
@@ -702,11 +805,16 @@ def process(file_path, model_name, enhance, whisper_mode, diarize, auto_k, max_s
             with open(sum_path, "w", encoding="utf-8") as f:
                 f.write(summary_text + ("\n\n# كلمات مفتاحية:\n" + keywords if keywords else ""))
 
-    OUT_DIR.mkdir(exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = (OUT_DIR / f"{_safe_filename(file_path)}_transcript.txt").as_posix()
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(full_txt)
 
+    try:
+        if os.path.exists(wav):
+            os.remove(wav)
+    except Exception:
+        pass
     return full_txt, out_path, out_path, summary_text, keywords, sum_path, full_txt, out_path, device_hint
 
 def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k, max_speakers, enroll_threshold,
@@ -742,6 +850,10 @@ def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k,
     summaries = []
 
     for fp in norm_paths:
+        # فحص سريع لكل ملف
+        pp = pathlib.Path(fp)
+        if pp.suffix.lower() not in ALLOWED_EXT or pp.stat().st_size > MAX_UPLOAD_MB * 1024 * 1024:
+            raise RuntimeError(f"تجاوز فحص الملف: {pp.suffix.lower()} / الحجم")        
         try:
             txt, _, _, sumtxt, _, _, _, _, _ = process(
                 fp, model_name, enhance, whisper_mode, diarize, auto_k, max_speakers, enroll_threshold,
@@ -757,7 +869,7 @@ def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k,
     merged_text = "\n\n".join(all_texts).strip()
     merged_sum = "\n\n".join(summaries).strip() if summaries else ""
 
-    OUT_DIR.mkdir(exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     merged_path = (OUT_DIR / "batch_transcripts.txt").as_posix()
     with open(merged_path, "w", encoding="utf-8") as f:
         f.write(merged_text)
@@ -800,8 +912,11 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro (SpeechBrain)", css=custom_css) as 
         with gr.Column(scale=5):
             gr.Markdown("#### 📥 إدخال الصوت")
             # رفع ملف أو تسجيل
-            model_dd = gr.Dropdown(MODEL_CHOICES, value=DEFAULT_MODEL, label="نموذج Whisper")
-            file_in = gr.File(label="رفع ملف واحد", type="filepath")
+            model_dd = gr.Dropdown(MODEL_CHOICES, value=DEFAULT_MODEL,
+                                   label="Whisper model",
+                                   info="light = medium, heavy = large-v3")
+            file_in = gr.File(label="رفع ملف واحد", type="filepath", file_count="single",
+                              file_types=["audio", ".m4a", ".mp4", ".webm", ".3gp"])
             mic_in = gr.Audio(sources=["microphone"], type="filepath", label="🎙️ تسجيل مباشر")
             multi_files = gr.Files(label="رفع عدة ملفات", type="filepath", file_count="multiple")
 
@@ -817,12 +932,11 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro (SpeechBrain)", css=custom_css) as 
                                      value=("float16" if _HAS_CUDA else "auto"), label="الدقة")
 
             gr.Markdown("#### 🧠 التلخيص")
-            summary_engine = gr.Dropdown(["transformers","ollama","off"], value="transformers",
-                                         label="محرك التلخيص")
-            ollama_model_in = gr.Textbox(value="gemma:2b-instruct", label="نموذج Ollama", 
-                                         info="مثال: gemma:2b-instruct أو qwen2.5:3b-instruct أو llama3.1:8b")
-            summary_dd = gr.Dropdown(["fast","best","off"], value="fast",
-                                     label="وضع التلخيص (Transformers)")
+            # أوضاع: auto / off / lite / ultra
+            summary_engine = gr.State("ollama")  # لمواءمة الاستدعاءات القديمة
+            ollama_model_in = gr.State("auto")   # غير مستخدم الآن
+            summary_dd = gr.Dropdown(["auto","off","lite","ultra"], value="auto",
+                                     label="وضع التلخيص")
             defer_sum = gr.Checkbox(value=True, label="تلخيص لاحقًا لتخفيف الحمل")
 
             btn_file = gr.Button("🚀 حوّل الملف المرفوع")
