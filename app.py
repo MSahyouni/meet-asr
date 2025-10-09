@@ -1050,4 +1050,3 @@ if __name__ == "__main__":
     except Exception as e:
         print("[INFO] Localhost غير متاح، سننشئ رابط مشاركة:", e)
         demo.launch(server_name="0.0.0.0", server_port=7860, share=True, inbrowser=False)
-
