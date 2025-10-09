@@ -954,3 +954,4 @@ def get_enrolled_speakers(x_api_key: Optional[str] = Header(None, alias="X-API-K
         return {"speakers": speakers}
     except Exception as e:
         return _response_error(500, "failed_to_load_speakers", str(e))
+    
