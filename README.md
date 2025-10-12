@@ -27,7 +27,7 @@
 1. ثبّت المكتبات:
 
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
    ```
 2. شغّل التطبيق:
 
@@ -50,7 +50,7 @@
 1. ثبّت المكتبات (إذا لم تفعل سابقًا):
 
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
    ```
 2. شغّل السيرفر:
 
