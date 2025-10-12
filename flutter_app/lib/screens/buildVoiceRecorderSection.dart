@@ -134,20 +134,45 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        ElevatedButton.icon(
-          onPressed: _toggleRecording,
-          icon: Icon(isRecording ? Icons.stop : Icons.mic, size: 30),
-          label: Text(
-            isRecording ? 'إيقاف' : ' تسجيل صوتي ',
-            style: const TextStyle(fontSize: 25),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient:
+                isRecording
+                    ? const LinearGradient(
+                      colors: [Colors.redAccent, Colors.red],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )
+                    : const LinearGradient(
+                      colors: [
+                        Color.fromARGB(255, 12, 58, 52), // اللون الأساسي الغامق
+                        Color.fromARGB(255, 18, 75, 68), // أفتح قليلاً
+                        Color.fromARGB(255, 25, 90, 82), // لمعة خفيفة
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+            borderRadius: BorderRadius.all(Radius.circular(30)),
           ),
-          style: ElevatedButton.styleFrom(
-            elevation: 8,
-            backgroundColor: isRecording ? Colors.red : Colors.blue,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(30),
+          child: ElevatedButton.icon(
+            onPressed: _toggleRecording,
+            icon: Icon(
+              isRecording ? Icons.stop : Icons.mic,
+              size: 30,
+              color: Colors.white,
+            ),
+            label: Text(
+              isRecording ? 'إيقاف' : ' تسجيل صوتي ',
+              style: const TextStyle(fontSize: 25, color: Colors.white),
+            ),
+            style: ElevatedButton.styleFrom(
+              elevation: 8,
+              backgroundColor: Colors.transparent, // شفاف لأن التدرج بالخلف
+              shadowColor: Colors.black54,
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(30),
+              ),
             ),
           ),
         ),
