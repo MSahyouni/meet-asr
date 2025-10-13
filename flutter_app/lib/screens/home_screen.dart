@@ -3,9 +3,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/screens/buildVoiceRecorderSection.dart';
 import 'package:flutter_app/screens/loading_files.dart';
+import 'package:flutter_app/widgets/standerd.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
-
 import 'package:voice_note_kit/player/utils/audio_player_controller.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -16,7 +16,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreen extends State<HomeScreen> {
-  File? recordedFile; // Variable to hold the recorded audio file locally
+  File? recordedFile;
   File? selectedAudioFile;
   String recordedAudioBlobUrl = "";
   final TextEditingController _controller = TextEditingController();
@@ -49,40 +49,17 @@ class _HomeScreen extends State<HomeScreen> {
       builder: (context) {
         final screenWidth = MediaQuery.of(context).size.width;
         final screenHeight = MediaQuery.of(context).size.height;
-        return Scaffold(
-          appBar: AppBar(
-            toolbarHeight: 140,
-            title: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-
-                  child: Image.asset(
-                    "assets/images/image5.png",
-                    height: 80,
-                    width: 90,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-                Gap(45),
-                Text(
-                  "الجمهورية العربية السورية  \n        وزارة الدفاع ",
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          ),
-
-          body: SingleChildScrollView(
+        return Standerd(
+          widget: SingleChildScrollView(
             child: Column(
               children: [
                 Divider(
-                  color: const Color.fromARGB(255, 204, 200, 200), // لون الخط
+                  color: Color(0xFF125B4A),
                   thickness: 1.5,
                   indent: 20,
                   endIndent: 20,
                 ),
-                Gap(18),
+                Gap(25),
                 Row(
                   children: [
                     Gap(18),
@@ -103,13 +80,25 @@ class _HomeScreen extends State<HomeScreen> {
                               color: Colors.black.withOpacity(0.2),
                               spreadRadius: 2,
                               blurRadius: 7,
-                              offset: Offset(0, 3), // مكان الظل
+                              offset: Offset(0, 3),
                             ),
                           ],
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF0C3A34),
+                              Color(0xFF125B4A),
+                              Color(0xFF1A7B6A),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
                         ),
                         width: 170,
                         height: 110,
-                        child: Image.asset("assets/images/image6.png"),
+                        child: Image.asset(
+                          "assets/images/image6.png",
+                          color: const Color.fromARGB(255, 206, 182, 111),
+                        ),
                       ),
                     ),
 
@@ -157,13 +146,22 @@ class _HomeScreen extends State<HomeScreen> {
                               color: Colors.black.withOpacity(0.2),
                               spreadRadius: 2,
                               blurRadius: 7,
-                              offset: Offset(0, 3), // مكان الظل
+                              offset: Offset(0, 3),
                             ),
                           ],
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF0C3A34),
+                              Color(0xFF125B4A),
+                              Color(0xFF1A7B6A),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
                         ),
                         width: 170,
                         height: 110,
-                        child: Image.asset("assets/images/image7.png"),
+                        child: Image.asset("assets/images/image7_.png"),
                       ),
                     ),
                   ],
@@ -173,43 +171,61 @@ class _HomeScreen extends State<HomeScreen> {
                   children: [
                     Padding(
                       padding: const EdgeInsets.only(left: 40),
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          elevation: 9,
-                          backgroundColor: Color.fromARGB(200, 68, 138, 255),
-                          fixedSize: Size(310, 50),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF0C3A34), // اللون الغامق الأساسي
+                              Color(0xFF125B4A), // لون متوسط
+                              Color(0xFF1A7B6A), // لون أفتح لإضافة لمعة
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.all(Radius.circular(30)),
                         ),
-                        onPressed: () {
-                          final apiUrl = _controller.text.trim();
-                          if (selectedAudioFile == null) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text("الرجاء رفع الملف الصوتي أولاًً"),
-                              ),
-                            );
-                            return;
-                          }
-                          if (apiUrl.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text("الرجاء ادخال رابط api")),
-                            );
-                            return;
-                          }
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            elevation: 9,
+                            backgroundColor: Colors.transparent,
+                            fixedSize: Size(310, 50),
+                          ),
+                          onPressed: () {
+                            final apiUrl = _controller.text.trim();
+                            if (selectedAudioFile == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    "الرجاء رفع الملف الصوتي أولاًً",
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            if (apiUrl.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text("الرجاء ادخال رابط api"),
+                                ),
+                              );
+                              return;
+                            }
 
-                          context.push(
-                            "/analysis_audio",
-                            extra: {
-                              "files": <File>[selectedAudioFile!],
-                              "apiUrl": apiUrl,
-                            },
-                          );
-                        },
-                        child: Text(
-                          "قم بتحويل الملف الصوتي المخزن إلى نص ",
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                            context.push(
+                              "/analysis_audio",
+                              extra: {
+                                "files": <File>[selectedAudioFile!],
+                                "apiUrl": apiUrl,
+                              },
+                            );
+                          },
+                          child: Text(
+                            "قم بتحويل الملف الصوتي المخزن إلى نص ",
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
@@ -278,8 +294,15 @@ class _HomeScreen extends State<HomeScreen> {
                       child: Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(25),
-
-                          color: Colors.blue,
+                          gradient: LinearGradient(
+                            colors: [
+                              const Color(0xFF0C3A34),
+                              const Color(0xFF125B4A), // أخضر أغمق
+                              const Color(0xFF1A7B6A), // أخضر متوسط
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
                         ),
                         width: 400,
                         height: 80,
@@ -293,6 +316,7 @@ class _HomeScreen extends State<HomeScreen> {
                                 height: 100,
                                 width: 110,
                                 fit: BoxFit.contain,
+                                color: Colors.white.withOpacity(0.5),
                               ),
                             ),
                             Gap(15),
