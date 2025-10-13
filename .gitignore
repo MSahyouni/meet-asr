@@ -86,6 +86,7 @@ build/
 venv/
 
 # Project artifacts
+data/
 outputs/
 pretrained_models/
 voices/
@@ -103,7 +104,6 @@ Thumbs.db
 /flutter_app/.gitignore
 /flutter_app/analysis_options.yaml
 /flutter_app/README.md
-/flutter_app/pubspec.yaml
 /flutter_app/Web
 /flutter_app/test/widget_test.dart
 /flutter_app/assets/images

@@ -1,5 +1,5 @@
 import os, pathlib, tempfile, subprocess, shutil, re, time
-import json, requests
+import requests
 import warnings, logging
 
 # ===== بيئة تمنع الروابط الرمزية على ويندوز =====
@@ -105,53 +105,26 @@ AUTO_K_MIN = 1
 
 # تلخيص
 _SUMM_CACHE = {"pipe": None, "device": None}
-# مسارات نماذج التلخيص محليًا
+# --- Arabic lite summarizer (third option) ---
+AR_LITE_REPO = os.getenv("AR_LITE_REPO", "yalsaffar/mt5-small-Arabic-Summarization")
+AR_LITE_LOCAL_DIR = (MODELS_DIR / "summarizers" / "mt5_small_ar_sum").as_posix()
+
 SUMM_REPO = os.getenv("SUMM_REPO", "csebuetnlp/mT5_multilingual_XLSum")
 SUMM_LOCAL_DIR = (MODELS_DIR / "summarizers" / "mT5_XLSum").as_posix()
-ENABLE_OLLAMA = os.getenv("ENABLE_OLLAMA_SUMMARY", "1") not in ("0","false","False")
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
-OLLAMA_PULL_TIMEOUT = int(os.getenv("OLLAMA_PULL_TIMEOUT_SECS", "29800"))  # حتى 8 ساعات للـ 72B
+# تلخيص عبر Transformers فقط (mT5 و Ultra)
+# افتراضيًا: Jais-13B-Chat
+ULTRA_MODEL = os.getenv("ULTRA_MODEL", "inceptionai/jais-13b-chat")
+HF_TOKEN = (os.getenv("HF_TOKEN", "").strip() or None)
+# مجلد محلي مفضل لحفظ/قراءة النموذج
+ULTRA_LOCAL_DIR = (MODELS_DIR / "ultra").as_posix()
+FORCE_SUMMARY_DEFER = True
 
 # كلمات حشو عربية شائعة
 FILLERS = {"اي","ايه","طيب","مم","اها","يعني","هيك","اممم","تمام","اوك","مزبوط","طيب؟","اي؟"}
 _STAMP_RE = re.compile(r"\[\s*\d+(?:\.\d+)?\s*→\s*\d+(?:\.\d+)?\s*\]")
 _SPEAKER_RE = re.compile(r"\(متكلم\s+\d+\)")
 _MULTI_SPACE = re.compile(r"\s+")
-_AR_SPLIT = re.compile(r'[\.!\?؟\n]+')
 _AR_TOKEN = r'(?u)(?<!\w)(?:[\u0600-\u06FF]{2,}|[A-Za-z]{3,})'
-_AR_SENT_SPLIT = re.compile(r'[\.!\?؟\n]+')
-_AR_STOP = {"في","على","عن","من","إلى","أن","إن","كان","كانت","هذا","هذه","ذلك","تلك","لقد","قد","تم","هو","هي","هم","هناك","كما","أو","و","ثم","أيضا","مع","بين","بعد","قبل","غير","حتى","كل","أي","وقد"}
-
-def _top_terms(keywords:str, k:int=3):
-    toks = [t.strip() for t in (keywords or "").split(",") if t.strip()]
-    out = []
-    for t in toks:
-        if t in _AR_STOP: 
-            continue
-        out.append(t)
-        if len(out) >= k: 
-            break
-    return out
-
-def _structured_summary(body:str, base_summary:str, keywords:str)->str:
-    """3 جمل عامة غير متحيّزة: فكرة رئيسية + محاور بارزة + خاتمة موجزة."""
-    body = (body or "").strip()
-    base = (base_summary or "").strip()
-    sents_base = [s.strip() for s in _AR_SENT_SPLIT.split(base) if s.strip()]
-    sents_body = [s.strip() for s in _AR_SENT_SPLIT.split(body) if s.strip()]
-    # 1) الفكرة الرئيسية
-    s1 = sents_base[0] if sents_base else (sents_body[0] if sents_body else "النص يعالج موضوعًا محددًا.")
-    # 2) المحاور
-    topk = _top_terms(keywords, k=3)
-    if topk:
-        s2 = "أبرز المحاور: " + "، ".join(topk) + "."
-    else:
-        s2 = "يركّز النص على نقاط أساسية متعدّدة."
-    # 3) الخاتمة من آخر جملة مفيدة
-    tail = (sents_base[-1] if len(sents_base) > 1 else (sents_body[-1] if len(sents_body) > 1 else "")).strip()
-    s3 = tail if len(tail) > 10 else "الخلاصة موجزة وتركّز على النتائج أو التوصيات المذكورة."
-    return f"{s1} {s2} {s3}"
 
 # ==================== Whisper / SpeechBrain ====================
 def _resolve_model(name: str) -> str:
@@ -186,7 +159,7 @@ def get_spkrec():
     """ECAPA محمّل محليًا بدون symlink وبدون custom.py."""
     global _SPKRECOG
     if _SPKRECOG is None:
-        local_dir = (DATA_DIR / "pretrained_models" / "spkrec_ecapa_cpu").as_posix()
+        local_dir = (MODELS_DIR / "spkrec_ecapa_cpu").as_posix()
         snapshot_download(
             repo_id="speechbrain/spkrec-ecapa-voxceleb",
             local_dir=local_dir,
@@ -478,11 +451,6 @@ def label_speakers(wav_path, seglist, threshold=0.65):
     return labels_out
 
 # ==================== تلخيص ====================
-def summarize(text):
-    """تغليف بسيط يستدعي المُلخص التجميلي مع التنظيف وفرض العربية."""
-    s, _ = summarize_abstractive(text, device_hint=("cuda" if _HAS_CUDA else "cpu"), target_len=200)
-    return s
-
 def _clean_transcript(text: str) -> str:
     """ينظّف التفريغ من التوقيت/المتكلّم والتكرارات وكلمات الحشو."""
     t = _STAMP_RE.sub(" ", text)
@@ -509,129 +477,14 @@ def _clean_transcript(text: str) -> str:
     t = _MULTI_SPACE.sub(" ", t).strip()
     return t
 
-
-def summarize_extractive(text: str, max_sentences: int = 5, top_k_terms: int = 10):
-    if not text or not text.strip():
-        return "لا يوجد نص.", "—"
-    body = _clean_transcript(text)
-    sents = [s.strip() for s in _AR_SPLIT.split(body) if s.strip()]
-    if not sents:
-        return "تعذّر تلخيص النص.", "—"
-
-    vec = TfidfVectorizer(token_pattern=_AR_TOKEN, ngram_range=(1,2))
-    if len(sents) <= max_sentences:
-        X = vec.fit_transform(sents)
-        term_scores = X.sum(axis=0).A1
-        vocab = vec.get_feature_names_out()
-        keywords = ", ".join(vocab[term_scores.argsort()[::-1]][:top_k_terms])
-        return " ".join(sents), keywords
-
-    X = vec.fit_transform(sents)
-    sent_scores = X.mean(axis=1).A1
-    top_idx = sent_scores.argsort()[::-1][:max_sentences]
-    top_idx.sort()
-    summary = " ".join([sents[i] for i in top_idx])
-    term_scores = X[top_idx].sum(axis=0).A1
-    vocab = vec.get_feature_names_out()
-    keywords = ", ".join(vocab[term_scores.argsort()[::-1]][:top_k_terms])
-    return summary, keywords
-
-# ==================== تلخيص عبر Ollama ====================
-def _ollama_available() -> bool:
-    if not ENABLE_OLLAMA:
-        return False
-    try:
-        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
-        return r.ok
-    except Exception:
-        return False
-    
-def _ollama_has(model_name: str) -> bool:
-    if not _ollama_available():
-        return False
-    try:
-        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
-        r.raise_for_status()
-        tags = [t.get("name", "") for t in (r.json().get("models") or [])]
-        return model_name in tags
-    except Exception:
-        return False    
-
-def _ollama_pull(model: str) -> bool:
-    """سحب صريح عبر ollama CLI. للـ ultra فقط حسب الطلب."""
-    try:
-        r = subprocess.run(["ollama", "pull", model],
-                           capture_output=True, text=True, timeout=OLLAMA_PULL_TIMEOUT)
-        if r.returncode == 0:
-            return True
-        print(f"[ollama pull] rc={r.returncode} err={(r.stderr or '')[:200]}")
-        return False
-    except Exception as e:
-        print(f"[ollama pull] exception: {e}")
-        return False
-
-def summarize_ollama(text: str, model: str = "gemma:2b-instruct", target_len: int = 220, fallback_local: bool = True):
-    if not text or not text.strip():
-        return "لا يوجد نص.", "—"
-
-    body = _clean_transcript(text)
-    system = "أنت مساعد تلخيص عربي. اكتب بالعربية الفصحى فقط. جمل قصيرة. دون ترجمة أو تعليق."
-    user = f"لخّص النص التالي في ≈{target_len} حرفًا:\n\n{body}"
-
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "stream": False,
-        "options": {
-            "temperature": 0.2,
-            "num_ctx": 1536,
-            "repeat_penalty": 1.6,
-            "num_predict": 256,
-        },
-    }
-
-    try:
-        last_err = None
-        for _ in range(2):  # محاولتان
-            try:
-                r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=OLLAMA_TIMEOUT)
-                r.raise_for_status()
-                out = (r.json().get("message") or {}).get("content", "").strip()
-                if not out:
-                    # احتياط إن رجع شكل generate
-                    out = r.json().get("response", "").strip()
-                if out:
-                    vec = TfidfVectorizer(token_pattern=_AR_TOKEN, ngram_range=(1, 2))
-                    X = vec.fit_transform([out])
-                    vocab = vec.get_feature_names_out()
-                    scores = X.toarray()[0]
-                    keywords = ", ".join(vocab[np.argsort(scores)[::-1]][:10]) if len(vocab) else ""
-                    return out, keywords
-                last_err = ValueError("استجابة فارغة من Ollama")
-            except requests.exceptions.ReadTimeout as e:
-                last_err = e
-                continue
-        raise last_err or Exception("Ollama timeout")
-    except Exception:
-        if fallback_local:
-            summ, kw = summarize_abstractive(text, target_len=200)
-            return summ, kw
-        # دع المتصل يقرر السقوط المحلي
-        raise
-
 def _load_abstractive_pipe(device_hint: str = None):
     if _SUMM_CACHE["pipe"] is not None:
         return _SUMM_CACHE["pipe"]
     from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-    # تنزيل من HF إلى فولدر المشروع (بدون symlinks)
-    snapshot_download(
-        repo_id=SUMM_REPO,
-        local_dir=SUMM_LOCAL_DIR,
-        local_dir_use_symlinks=False
-    )
+    # إذا كان المجلد موجودًا استخدمه محليًا. وإلا نزّل إلى نفس المجلد.
+    if not pathlib.Path(SUMM_LOCAL_DIR).exists():
+        snapshot_download(repo_id=SUMM_REPO, local_dir=SUMM_LOCAL_DIR, local_dir_use_symlinks=False)
+
     dev = device_hint or ("cuda" if _HAS_CUDA else "cpu")
     pipe = pipeline(
         "summarization",
@@ -642,6 +495,52 @@ def _load_abstractive_pipe(device_hint: str = None):
     _SUMM_CACHE["pipe"] = pipe
     _SUMM_CACHE["device"] = dev
     return pipe
+
+def _load_ar_lite_pipe(device_hint: str = None):
+    if _SUMM_CACHE.get("pipe_ar_lite") is not None:
+        return _SUMM_CACHE["pipe_ar_lite"]
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+    # استخدم المحلي إن وُجد، وإلا نزّل لنفس المسار
+    if not pathlib.Path(AR_LITE_LOCAL_DIR).exists():
+        snapshot_download(repo_id=AR_LITE_REPO, local_dir=AR_LITE_LOCAL_DIR, local_dir_use_symlinks=False)
+    dev = device_hint or ("cuda" if _HAS_CUDA else "cpu")
+    tok = AutoTokenizer.from_pretrained(AR_LITE_LOCAL_DIR, local_files_only=True)
+    mdl = AutoModelForSeq2SeqLM.from_pretrained(AR_LITE_LOCAL_DIR, local_files_only=True)
+    pipe = pipeline("summarization", model=mdl, tokenizer=tok, device=(0 if dev=="cuda" else -1))
+    _SUMM_CACHE["pipe_ar_lite"] = pipe
+    return pipe
+
+def summarize_ar_lite(text: str, device_hint: str = None, target_len: int = 160):
+    if not text or not text.strip():
+        return "لا يوجد نص.", "—"
+    body = _clean_transcript(text)
+
+    # تقطيع بسيط
+    chunks, char_limit = [], 1200
+    acc = ""
+    for tk in re.split(r'(\s+)', body):
+        if len(acc) + len(tk) > char_limit:
+            if acc.strip(): chunks.append(acc.strip())
+            acc = tk
+        else:
+            acc += tk
+    if acc.strip(): chunks.append(acc.strip())
+
+    p = _load_ar_lite_pipe(device_hint=device_hint)
+
+    def _do(txt, max_len):
+        prompt = "لخّص النص العربي التالي بإيجاز وبلغة فصحى:\n\n" + txt
+        out = p(prompt, max_length=max_len, min_length=max(30, max_len//3),
+                no_repeat_ngram_size=3, num_beams=4, repetition_penalty=1.6,
+                length_penalty=1.0, early_stopping=True)[0]["summary_text"]
+        return out.strip()
+
+    summary = _do(chunks[0], target_len) if len(chunks)==1 else _do(" ".join(_do(c, target_len//2) for c in chunks), target_len)
+
+    vec = TfidfVectorizer(token_pattern=_AR_TOKEN, ngram_range=(1,2))
+    X = vec.fit_transform([summary]); vocab = vec.get_feature_names_out(); scores = X.toarray()[0]
+    keywords = ", ".join(vocab[np.argsort(scores)[::-1]][:10]) if len(vocab) else ""
+    return summary, keywords
 
 def summarize_abstractive(text: str, device_hint: str = None, target_len: int = 200):
     if not text or not text.strip():
@@ -695,60 +594,79 @@ def summarize_abstractive(text: str, device_hint: str = None, target_len: int = 
 
     return summary, keywords
 
-def smart_summarize(text: str, mode: str = "auto", device_hint: str = None, engine: str = "transformers", ollama_model: str = "phi"):
-    m = (mode or "auto").lower()
-    if m == "medium":  # توافق قديم
-        m = "lite"
+# ----- ALLaM-13B-Instruct (ultra) -----
+_ULTRA_PIPE = {"pipe": None}
+def _load_ultra_pipe(device_hint: str = None):
+    # ملاحظة: نموذج 13B غير عملي على CPU
+    if not _HAS_CUDA:
+        return None
+    if _ULTRA_PIPE["pipe"] is not None:
+        return _ULTRA_PIPE["pipe"]
+    from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+    # 1) إن لم يوجد مجلد محلي → نزّل إلى ULTRA_LOCAL_DIR
+    if not pathlib.Path(ULTRA_LOCAL_DIR).exists():
+        snapshot_download(
+            repo_id=ULTRA_MODEL,
+            local_dir=ULTRA_LOCAL_DIR,
+            local_dir_use_symlinks=False,
+            token=HF_TOKEN
+        )
+    src = ULTRA_LOCAL_DIR
+    # 2) 4-بت عند التوفر
+    quant_cfg = None
+    try:
+        from transformers import BitsAndBytesConfig
+        quant_cfg = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype="float16")
+    except Exception:
+        quant_cfg = None
+    # 3) تحميل مع trust_remote_code
+    tok = AutoTokenizer.from_pretrained(src, trust_remote_code=True, token=HF_TOKEN)
+    mdl = AutoModelForCausalLM.from_pretrained(
+        src,
+        trust_remote_code=True,
+        token=HF_TOKEN,
+        device_map="auto",
+        torch_dtype="auto",
+        quantization_config=quant_cfg
+    )
+    dev = device_hint or "cuda"
+    pipe = pipeline("text-generation", model=mdl, tokenizer=tok, device=(0 if dev=="cuda" else -1))
+    _ULTRA_PIPE["pipe"] = pipe
+    return pipe
+
+def summarize_ultra(text: str, device_hint: str = None, target_len: int = 220):
+    if not text or not text.strip():
+        return "لا يوجد نص.", "—"
+    if not _HAS_CUDA:
+        return "وضع Ultra يتطلب GPU.", ""
+    body = _clean_transcript(text)
+    p = _load_ultra_pipe(device_hint=device_hint)
+    prompt = (
+        "ألخّص النص العربي التالي باختصار شديد وبالعربية الفصحى،"
+        " مع 4–6 جمل قصيرة وواضحة:\n\n"
+        f"{body}\n\nالملخص:"
+    )
+    if p is None:
+        return "تعذّر تحميل نموذج Ultra.", ""
+    out = p(prompt, max_new_tokens=min(300, target_len+120), do_sample=False)[0]["generated_text"]
+    summ = out.split("الملخص:")[-1].strip() if "الملخص:" in out else out.strip()
+    vec = TfidfVectorizer(token_pattern=_AR_TOKEN, ngram_range=(1,2))
+    X = vec.fit_transform([summ])
+    vocab = vec.get_feature_names_out(); scores = X.toarray()[0]
+    keywords = ", ".join(vocab[np.argsort(scores)[::-1]][:10]) if len(vocab) else ""
+    return summ, keywords
+
+def smart_summarize(text: str, mode: str = "off", device_hint: str = None, engine: str = "", ollama_model: str = ""):
+    m = (mode or "off").lower()
     if m == "off":
         return "", ""
-
-    # ملخّص محلي بالـ transformers دومًا متاح
-    def _local():
-        # يمكنك استبداله بـ summarize_abstractive إن رغبت بدقة أعلى محليًا
-        return summarize_extractive(text, max_sentences=5, top_k_terms=10)
-
-    has_ollama = _ollama_available()
-    has_ultra  = has_ollama and _ollama_has("qwen2.5:72b-instruct")
-    has_lite   = has_ollama and _ollama_has("gemma:2b-instruct")
-
-    if m == "lite":
-        # جرّبه حتى التايم‌آوت حتى لو غير موجود محليًا
-        if has_ollama:
-            try:
-                return summarize_ollama(text, model="gemma:2b-instruct", target_len=220, fallback_local=False)
-            except Exception:
-                pass
-        return _local()
-
+    if m in ("transformers","lite"):
+        return summarize_abstractive(text, device_hint=device_hint or ("cuda" if _HAS_CUDA else "cpu"), target_len=200)
+    if m == "lite-ar":
+        return summarize_ar_lite(text, device_hint=device_hint or ("cuda" if _HAS_CUDA else "cpu"), target_len=160)
     if m == "ultra":
-        # إن لم يكن محليًا، اسحبه ثم جرّبه
-        if has_ollama:
-            if not has_ultra:
-                _ollama_pull("qwen2.5:72b-instruct")
-                has_ultra = _ollama_has("qwen2.5:72b-instruct")
-            if has_ultra:
-                try:
-                    return summarize_ollama(text, model="qwen2.5:72b-instruct", target_len=220, fallback_local=False)
-                except Exception:
-                    pass
-        return _local()
-
-    # auto: إن وُجدت نماذج محلّيًا جرّبها، وإلا Transformers مباشرة
-    if m == "auto":
-        if has_ultra:
-            try:
-                return summarize_ollama(text, model="qwen2.5:72b-instruct", target_len=220, fallback_local=False)
-            except Exception:
-                pass
-        if has_lite:
-            try:
-                return summarize_ollama(text, model="gemma:2b-instruct", target_len=220, fallback_local=False)
-            except Exception:
-                pass
-        return _local()
-
-    # أي قيمة أخرى → محلي
-    return _local()
+        return summarize_ultra(text, device_hint=device_hint or ("cuda" if _HAS_CUDA else "cpu"), target_len=220)
+    return "", ""
 
 # ==================== أدوات مساعدة ====================
 def _safe_filename(p):
@@ -779,18 +697,23 @@ def process(file_path, model_name, enhance, whisper_mode, diarize, auto_k, max_s
             device_sel, compute_sel, summary_mode, summary_engine, ollama_model, defer_sum):
     file_path = _normalize_single_file_input(file_path)
     if not file_path:
-        return "الرجاء رفع/تسجيل ملف.", None, None, "", "", None
+        msg = "الرجاء رفع/تسجيل ملف."
+        return msg, None, None, "", "", None, "", "", ("cuda" if _HAS_CUDA else "cpu")
     if not os.path.exists(file_path):
-        return f"لم أجد الملف: {file_path}", None, None, "", "", None
+        msg = f"لم أجد الملف: {file_path}"
+        return msg, None, None, "", "", None, "", "", ("cuda" if _HAS_CUDA else "cpu")
     # فحص الامتداد والحجم مبكرًا
     try:
         p = pathlib.Path(file_path)
         if p.suffix.lower() not in ALLOWED_EXT:
-            return f"امتداد غير مدعوم: {p.suffix.lower()}", None, None, "", "", None
+            msg = f"امتداد غير مدعوم: {p.suffix.lower()}"
+            return msg, None, None, "", "", None, "", "", ("cuda" if _HAS_CUDA else "cpu")
         if p.stat().st_size > MAX_UPLOAD_MB * 1024 * 1024:
-            return f"حجم الملف يتجاوز {int(MAX_UPLOAD_MB)}MB.", None, None, "", "", None
+            msg = f"حجم الملف يتجاوز {int(MAX_UPLOAD_MB)}MB."
+            return msg, None, None, "", "", None, "", "", ("cuda" if _HAS_CUDA else "cpu")
     except Exception as e:
-        return f"تعذّر فحص الملف: {e}", None, None, "", "", None
+        msg = f"تعذّر فحص الملف: {e}"
+        return msg, None, None, "", "", None, "", "", ("cuda" if _HAS_CUDA else "cpu")
 
     # إذا كان من الميكروفون، احفظ نسخة في recordings
     _persist_recording(file_path, prefix="main_input")
@@ -818,17 +741,12 @@ def process(file_path, model_name, enhance, whisper_mode, diarize, auto_k, max_s
         lines.append(f"[{st:.2f}→{en:.2f}] ({who}) {s.text.strip()}")
     full_txt = header_txt.split("\n\n", 1)[0] + "\n\n" + "\n".join(lines)
 
-    device_hint = device_sel if device_sel in ("cpu","cuda") else ("cuda" if _HAS_CUDA else "cpu")
-    if defer_sum:
-        summary_text, keywords, sum_path = "", "", None
-    else:
-        summary_text, keywords = smart_summarize(full_txt, mode=summary_mode, device_hint=device_hint,
-                                                 engine=summary_engine, ollama_model=ollama_model)
-        sum_path = None
-        if summary_text:
-            sum_path = (OUT_DIR / f"{_safe_filename(file_path)}_summary.txt").as_posix()
-            with open(sum_path, "w", encoding="utf-8") as f:
-                f.write(summary_text + ("\n\n# كلمات مفتاحية:\n" + keywords if keywords else ""))
+    device_hint = "cuda" if (_HAS_CUDA and device_sel == "cuda") else "cpu"
+    # فرض التعطيل أثناء التفريغ
+    if FORCE_SUMMARY_DEFER:
+        defer_sum = True
+    # لا تلخّص أثناء التفريغ إطلاقًا
+    summary_text, keywords, sum_path = "", "", None
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = (OUT_DIR / f"{_safe_filename(file_path)}_transcript.txt").as_posix()
@@ -845,7 +763,8 @@ def process(file_path, model_name, enhance, whisper_mode, diarize, auto_k, max_s
 def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k, max_speakers, enroll_threshold,
                  device_sel, compute_sel, summary_mode, summary_engine, ollama_model, defer_sum):
     if not file_paths:
-        return "الرجاء رفع ملفات.", None, None, "", "", None
+        msg = "الرجاء رفع ملفات."
+        return msg, None, None, "", "", None, "", "", ("cuda" if _HAS_CUDA else "cpu")
 
     if isinstance(file_paths, dict):
         fp = file_paths.get("name") or file_paths.get("path")
@@ -864,12 +783,16 @@ def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k,
             norm_paths.append(str(fp))
 
     if not norm_paths:
-        return "لم أتعرف على مسارات صالحة.", None, None, "", "", None
+        msg = "لم أتعرف على مسارات صالحة."
+        return msg, None, None, "", "", None, "", "", ("cuda" if _HAS_CUDA else "cpu")
 
     if (device_sel or "auto") == "auto":
         device_sel = "cuda" if _HAS_CUDA else "cpu"
     if (compute_sel or "auto") == "auto":
         compute_sel = "float16" if device_sel == "cuda" else "int8_float32"
+
+    if FORCE_SUMMARY_DEFER:
+        defer_sum = True
 
     all_texts = []
     summaries = []
@@ -878,7 +801,8 @@ def process_many(file_paths, model_name, enhance, whisper_mode, diarize, auto_k,
         # فحص سريع لكل ملف
         pp = pathlib.Path(fp)
         if pp.suffix.lower() not in ALLOWED_EXT or pp.stat().st_size > MAX_UPLOAD_MB * 1024 * 1024:
-            raise RuntimeError(f"تجاوز فحص الملف: {pp.suffix.lower()} / الحجم")        
+            all_texts.append(f"### ملف: {pp.name}\nتجاوز الفحص: الامتداد/الحجم.\n")
+            continue    
         try:
             txt, _, _, sumtxt, _, _, _, _, _ = process(
                 fp, model_name, enhance, whisper_mode, diarize, auto_k, max_speakers, enroll_threshold,
@@ -957,11 +881,10 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro (SpeechBrain)", css=custom_css) as 
                                      value=("float16" if _HAS_CUDA else "auto"), label="الدقة")
 
             gr.Markdown("#### 🧠 التلخيص")
-            # أوضاع: auto / off / lite / ultra
-            summary_engine = gr.State("ollama")  # لمواءمة الاستدعاءات القديمة
-            ollama_model_in = gr.State("auto")   # غير مستخدم الآن
-            summary_dd = gr.Dropdown(["auto","off","lite","ultra"], value="auto",
-                                     label="وضع التلخيص")
+            # أوضاع التلخيص: off / transformers / lite / ultra
+            summary_engine = gr.State("")      # غير مستخدم الآن
+            ollama_model_in = gr.State("")     # غير مستخدم الآن
+            summary_dd = gr.Dropdown(["off","lite","lite-ar","ultra"], value="off", label="وضع التلخيص")
             defer_sum = gr.Checkbox(value=True, label="تلخيص لاحقًا لتخفيف الحمل")
 
             btn_file = gr.Button("🚀 حوّل الملف المرفوع")

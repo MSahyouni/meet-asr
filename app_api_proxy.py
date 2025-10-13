@@ -10,7 +10,7 @@ import time
 DEFAULT_API_URL = os.getenv("ASR_API_URL", "http://127.0.0.1:8000/transcribe")
 DEFAULT_SUMMARY_URL = os.getenv("ASR_SUMMARY_URL", "http://127.0.0.1:8000/summarize")
 MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "50"))
-ALLOWED_EXT = {".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".flac", ".webm", ".aac", ".3gp"}
+ALLOWED_EXT = {".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".flac", ".webm", ".aac", ".3gp", ".opus"}
 DEFAULT_TIMEOUT = int(os.getenv("ASR_HTTP_TIMEOUT", "300"))
 MAX_RETRIES = int(os.getenv("ASR_HTTP_RETRIES", "2"))
 DEFAULT_BATCH_URL = os.getenv("ASR_BATCH_URL", DEFAULT_API_URL.replace("/transcribe", "/transcribe-batch"))
@@ -79,7 +79,12 @@ def call_api(
 
     try:
         with open(chosen, "rb") as f:
-            files = {"file": (Path(chosen).name, f, "application/octet-stream")}
+            def build_files():
+                f.seek(0)
+                name = Path(chosen).name
+                # أرسل حقلاً واحدًا فقط كما يتوقع الـ API
+                return {"file": (name, f, "application/octet-stream")
+                }
             data: Dict[str, str] = {
                 "model_name": model_name,
                 "enhance": str(enhance).lower(),
@@ -100,7 +105,7 @@ def call_api(
             last_err = None
             for attempt in range(MAX_RETRIES + 1):
                 try:
-                    resp = requests.post(api_url, files=files, data=data, headers=headers, timeout=timeout_s)
+                    resp = requests.post(api_url, files=build_files(), data=data, headers=headers, timeout=timeout_s)
                     break
                 except requests.Timeout as e:
                     last_err = e
@@ -115,6 +120,9 @@ def call_api(
                     j = resp.json()
                     err = j.get("error") or ""
                     det = j.get("detail") or ""
+                    if resp.status_code == 413: det = det or "الملف أكبر من الحد المسموح."
+                    if resp.status_code == 415: det = det or "امتداد غير مدعوم."
+                    if resp.status_code == 401: det = det or "مفتاح API غير صالح."
                     rid = j.get("request_id") or ""
                     rid_s = f" | rid={rid}" if rid else ""
                     msg = f"HTTP {resp.status_code}: {err} {('| ' + det) if det else ''}{rid_s}".strip()
@@ -199,18 +207,23 @@ def call_api_batch(
     headers = {"X-API-Key": api_key.strip()} if api_key and api_key.strip() else {}
 
     # جهّز الـ multipart
-    files = []
     file_handles = []
     try:
         for pth in paths:
             fh = open(pth, "rb")
             file_handles.append(fh)
-            files.append(("files", (Path(pth).name, fh, "application/octet-stream")))
 
         last_err = None
+        def build_files():
+            built = []
+            for fh, pth in zip(file_handles, paths):
+                fh.seek(0)
+                built.append(("files", (Path(pth).name, fh, "application/octet-stream")))
+            return built
+
         for attempt in range(MAX_RETRIES + 1):
             try:
-                resp = requests.post(api_url_batch, files=files, data=data, headers=headers, timeout=timeout_s)
+                resp = requests.post(api_url_batch, files=build_files(), data=data, headers=headers, timeout=timeout_s)
                 break
             except requests.Timeout as e:
                 last_err = e
@@ -231,8 +244,21 @@ def call_api_batch(
         txt = res.get("text", "") or ""
         summary = res.get("summary", "") or ""
         keywords = _normalize_keywords(res.get("keywords"))
-        # بقية الحقول قد لا تكون مهمة هنا
-        return (txt, summary, keywords, "", "", "", "", res.get("txt_path") or "")
+        segs = res.get("segments") or []
+        srt = res.get("srt_path") or ""
+        vtt = res.get("vtt_path") or ""
+        dl  = res.get("download_urls") or {}
+        txt_path = res.get("txt_path") or ""
+        return (
+            txt,
+            summary,
+            keywords,
+            json.dumps(segs, ensure_ascii=False, indent=2),
+            srt,
+            vtt,
+            json.dumps(dl, ensure_ascii=False, indent=2),
+            txt_path,
+        )
     except requests.Timeout:
         return "انتهت مهلة الاتصال بالخادم (Timeout).", "", "", "", "", "", "", ""
     except Exception as e:
@@ -268,6 +294,9 @@ def summarize_now(
                 j = r.json()
                 err = j.get("error") or ""
                 det = j.get("detail") or ""
+                if r.status_code == 413: det = det or "الملف أكبر من الحد المسموح."
+                if r.status_code == 415: det = det or "امتداد غير مدعوم."
+                if r.status_code == 401: det = det or "مفتاح API غير صالح."
                 rid = j.get("request_id") or ""
                 rid_s = f" | rid={rid}" if rid else ""
                 msg = f"HTTP {r.status_code}: {err} {('| ' + det) if det else ''}{rid_s}".strip()
@@ -312,18 +341,23 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
             thr_slider = gr.Slider(0.5, 0.9, 0.65, 0.01, label="عتبة ربط البصمة")
 
             device_dd = gr.Dropdown(["auto", "cpu", "cuda"], value="auto", label="الجهاز")
-            compute_dd = gr.Dropdown(["auto", "int8", "int8_float32", "float16", "float32"], value="auto", label="الدقة")
+            compute_dd = gr.Dropdown(["auto", "int8", "float16", "float32"], value="auto", label="الدقة")
 
             # أوضاع التلخيص المدعومة في الـ API
             summary_dd = gr.Dropdown(
-                ["auto", "off", "lite", "ultra"],
+                ["off", "lite", "ultra"],
                 value="off",
-                label="وضع التلخيص وقت التفريغ"
+                label="وضع التلخيص وقت التفريغ",
+                info="lite = mT5 (XLSum) | ultra = Jais-13B"
             )
 
             # وضع التلخيص عند الطلب
-            later_mode = gr.Dropdown(["auto", "lite", "ultra", "off"], value="auto", label="وضع التلخيص عند الطلب")
-
+            later_mode = gr.Dropdown(
+                ["off", "lite", "ultra"],
+                value="off",
+                label="وضع التلخيص عند الطلب",
+                info="lite = mT5 | ultra = Jais-13B"
+            )
             btn = gr.Button("🚀 إرسال ملف واحد", variant="primary")
             btn_multi = gr.Button("📦 إرسال عدة ملفات", variant="secondary")
             later_btn = gr.Button("🧠 لخّص الآن", variant="secondary")
@@ -336,6 +370,7 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
             srt_path = gr.Textbox(visible=False)
             vtt_path = gr.Textbox(visible=False)
             dl_urls = gr.Textbox(visible=False)
+            dl_md = gr.Markdown(visible=True)
             sum_file_path = gr.Textbox(visible=False)
 
     # حالة لمسار نص التفريغ (ليُستخدم في التلخيص عند الطلب)
@@ -351,6 +386,18 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
     source_radio.change(_toggle_inputs, [source_radio], [file_in, mic_in])
 
     # إرسال إلى /transcribe
+    def _links_md(dl_json: str):
+        try:
+            d = json.loads(dl_json or "{}")
+            mk = []
+            if d.get("txt"):     mk.append(f"[تحميل TXT]({d['txt']})")
+            if d.get("srt"):     mk.append(f"[تحميل SRT]({d['srt']})")
+            if d.get("vtt"):     mk.append(f"[تحميل VTT]({d['vtt']})")
+            if d.get("summary"): mk.append(f"[تحميل الملخص]({d['summary']})")
+            return " | ".join(mk) if mk else ""
+        except Exception:
+            return ""
+
     btn.click(
         call_api,
         inputs=[
@@ -361,7 +408,9 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
         ],
         outputs=[out_txt, out_summary, out_keywords, segs_json, srt_path, vtt_path, dl_urls, txt_path_state],
         api_name="send_to_api"
-    )
+    ).then(
+        _links_md, [dl_urls], [dl_md]
+     )
     # إرسال عدة ملفات إلى /transcribe-batch
     btn_multi.click(
         call_api_batch,
@@ -371,7 +420,7 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
         ],
         outputs=[out_txt, out_summary, out_keywords, segs_json, srt_path, vtt_path, dl_urls, txt_path_state],
         api_name="send_to_api_batch"
-    )
+    ).then(_links_md, [dl_urls], [dl_md])
 
     # تلخيص لاحق عبر /summarize
     later_btn.click(

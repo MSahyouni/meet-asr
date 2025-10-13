@@ -52,6 +52,7 @@ ASR_VAD = os.getenv("ASR_VAD", "0") in ("1","true","True")
 ASR_CHUNK = int(os.getenv("ASR_CHUNK_LEN", "30"))
 ASR_BEAM  = int(os.getenv("ASR_BEAM", "3"))
 _MODEL_CACHE = {}
+LOG_LOAD = os.getenv("ASR_LOG_LOAD", "1") in ("1","true","True")
 
 # مجلد بيانات موحد تحت data/
 DATA_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data"))
@@ -116,29 +117,32 @@ def get_model(name: str, device: str = None, compute_type: str = None):
                 snapshot_download(
                     repo_id=f"Systran/faster-whisper-{name}",
                     local_dir=local_dir.as_posix(),
-                    local_dir_use_symlinks=False
+                    local_dir_use_symlinks=False,
+                    cache_dir=(DATA_DIR / ".hf").as_posix()
                 )
-            # 📌 استدعاء الموديل من المسار المحلي مع إعدادات متكيفة
-            if torch.cuda.is_available() and dev != "cpu":
+            else:
+                if LOG_LOAD:
+                    print(f"[CACHE] استخدام النسخة المحلية: {local_dir.as_posix()}")                
+            dev, ctp = _safe_compute(dev, ctp)  # <-- حارس موحّد
+            if torch.cuda.is_available() and dev == "cuda":
                 _MODEL_CACHE[key] = WhisperModel(
                     local_dir.as_posix(),
-                    device="cuda",
+                    device=dev,
                     device_index=GPU_ID,
-                    compute_type="float16",
+                    compute_type=ctp,
                     cpu_threads=max(1, os.cpu_count() // 2),
                     download_root=MODELS_DIR.as_posix()
                 )
             else:
-                # جودة أفضل على CPU
-                if dev == "cpu" and (ctp in ("auto","int8","float16")):
-                    ctp = "int8_float32"
                 _MODEL_CACHE[key] = WhisperModel(
                     local_dir.as_posix(),
-                    device="cpu",
-                    compute_type=ctp or "int8_float32",
+                    device=dev,                 # cpu
+                    compute_type=ctp,           # يضمن int8_float32 على CPU
                     cpu_threads=max(1, os.cpu_count() // 2),
                     download_root=MODELS_DIR.as_posix()
                 )
+            if LOG_LOAD:
+                print(f"[WHISPER] loaded name={name} path={local_dir.as_posix()} device={dev} compute={ctp}")
 
         except Exception as e:
             print(f"[WHISPER] فشل تحميل {name}: {e} → استخدام fallback")
@@ -147,13 +151,17 @@ def get_model(name: str, device: str = None, compute_type: str = None):
             if not fb_dir.exists():
                 snapshot_download(
                     repo_id=f"Systran/faster-whisper-{fb}",
-                    local_dir=fb_dir.as_posix()
+                    local_dir=fb_dir.as_posix(),
+                    local_dir_use_symlinks=False,
+                    cache_dir=(DATA_DIR / ".hf").as_posix()
                 )
             fdev, fctp = _safe_compute(dev, ctp)
             _MODEL_CACHE[key] = WhisperModel(
                 fb_dir.as_posix(), device=fdev, compute_type=fctp,
                 cpu_threads=max(1, os.cpu_count() // 2), download_root=MODELS_DIR.as_posix()
             )
+            if LOG_LOAD:
+                print(f"[WHISPER] fallback name={fb} path={fb_dir.as_posix()} device={fdev} compute={fctp}")
 
     return _MODEL_CACHE[key]
 
@@ -255,11 +263,12 @@ def get_spkrec():
             setattr(mod, fname, wrapper)
         _wrap_fetch_module(sb_fetch); _wrap_fetch_module(sb_interfaces)
 
-        local_dir = (DATA_DIR / "pretrained_models" / "spkrec_ecapa_cpu").as_posix()
+        local_dir = (MODELS_DIR / "spkrec_ecapa_cpu").as_posix()
         snapshot_download(
             repo_id="speechbrain/spkrec-ecapa-voxceleb",
             local_dir=local_dir,
-            local_dir_use_symlinks=False
+            local_dir_use_symlinks=False,
+            cache_dir=(DATA_DIR / ".hf").as_posix()
         )
         _SPKRECOG = SpeakerRecognition.from_hparams(
             source=local_dir, savedir=local_dir,
@@ -649,15 +658,13 @@ def extract_keywords(text, top_k=10):
 def summarize_text(text, summary_mode="off"):
     return ""
 
-def _normalize_summary_mode(m: str) -> str:
-    return "off"
-
 # ---------- توليد SRT/VTT وإصدار ----------
 def _fmt_ts(t: float) -> str:
-    h = int(t // 3600)
-    m = int((t % 3600) // 60)
-    s = int(t % 60)
-    ms = int((t - int(t)) * 1000)
+    t = max(0.0, float(t))
+    total_ms = int(round(t * 1000.0))   # ← أدق
+    s, ms = divmod(total_ms, 1000)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 def segments_to_srt(segments, base_txt_path: str) -> str:

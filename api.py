@@ -1,8 +1,9 @@
 # api.py - نسخة مستقرة مُحسّنة
-import os, tempfile, shutil, pathlib, re, math, collections, subprocess, json, traceback
+import os, tempfile, shutil, pathlib, re, collections, subprocess, json, traceback
 from typing import List, Tuple, Optional, Set
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Request
 import contextvars
+import warnings
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -11,12 +12,26 @@ from fastapi.staticfiles import StaticFiles
 from urllib.parse import quote
 import logging
 
+import sys, asyncio
+if sys.platform.startswith("win"):
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
+
 try:
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline  # type: ignore
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, pipeline  # type: ignore
+    try:
+        # اختياري: للتكميم 4-بت إذا توفّر
+        from transformers import BitsAndBytesConfig  # type: ignore
+    except Exception:
+        BitsAndBytesConfig = None  # type: ignore
     _TF_AVAILABLE = True
 except Exception:
     _TF_AVAILABLE = False
 
+warnings.filterwarnings("ignore", message="You are using the default legacy behaviour of the <class 'transformers.models.t5.tokenization_t5.T5Tokenizer'>")
+warnings.filterwarnings("ignore", message="The sentencepiece tokenizer that you are converting to a fast tokenizer uses the byte fallback option.*")
 logger = logging.getLogger("asr_api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -27,6 +42,29 @@ _RID: contextvars.ContextVar[str] = contextvars.ContextVar("rid", default="")
 DATA_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data")).resolve()
 OUTPUTS_DIR = (DATA_DIR / "outputs").resolve()
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ===================== تعديل: تفضيل النماذج المحلية =====================
+LOCAL_MODELS = (DATA_DIR / "models").resolve()
+E5_BASE_DIR  = (LOCAL_MODELS / "multilingual-e5-base")
+SUM_MT5_DIR  = (LOCAL_MODELS / "summarizers" / "mT5_XLSum")
+
+# إذا وُجد المسار المحلي خذه، وإلا استخدم الاسم الافتراضي
+def _prefer_local(path: pathlib.Path, fallback: str):
+    return path.as_posix() if path.exists() else fallback
+
+# RAG embeddings model
+_rag_mname = os.getenv("RAG_EMB_MODEL",
+    _prefer_local(E5_BASE_DIR, "intfloat/multilingual-e5-base"))
+
+# Summarizer model
+_TF_MODEL = os.getenv("SUMMARIZER_MODEL",
+    _prefer_local(SUM_MT5_DIR, "csebuetnlp/mT5_multilingual_XLSum"))
+
+# حدود تلخيص آمنة للذاكرة
+SUM_MAX_INPUT_TOKENS = max(256, int(os.getenv("SUM_MAX_INPUT_TOKENS", "800")))  # إدخال كل جزء
+SUM_MAX_PARTS = max(1, int(os.getenv("SUM_MAX_PARTS", "8")))  # حد أقصى لعدد الأجزاء
+
+os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", (LOCAL_MODELS).as_posix())
 # Lifespan replaces deprecated on_event("startup")
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
@@ -80,25 +118,77 @@ class _LimitUploadSize(BaseHTTPMiddleware):
 app.add_middleware(_LimitUploadSize)
 
 # افتراضيات
-_DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "small")
+_DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "light")
 _HAS_CUDA = False
 
-# إعدادات Ollama
-_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "")
-_ENABLE_OLLAMA = os.getenv("ENABLE_OLLAMA_SUMMARY", "1") in ("1", "true", "True")
-_OLLAMA_REQUIRE_LOCAL = os.getenv("OLLAMA_REQUIRE_LOCAL", "1") in ("1","true","True")
-_OLLAMA_ALLOW_ULTRA   = os.getenv("OLLAMA_ALLOW_ULTRA", "0") in ("1","true","True")
-_OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT_SECS", "90"))
-_OLLAMA_PULL_TIMEOUT = int(os.getenv("OLLAMA_PULL_TIMEOUT_SECS", "29800"))  # للـ ultra فقط
-_SUMMARY_SOURCE = "local"  # سيتم ضبطه أثناء التنفيذ
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
 MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "50"))
-ALLOWED_EXT = {".wav",".mp3",".m4a",".mp4",".ogg",".flac",".webm",".aac",".3gp"}
+ALLOWED_EXT = {".wav",".mp3",".m4a",".mp4",".ogg",".flac",".webm",".aac",".3gp",".opus"}
 _DOWNLOAD_ALLOW = {".txt", ".srt", ".vtt", ".json"}
-# إعدادات Transformers fallback
-_TF_FALLBACK = os.getenv("TRANSFORMERS_FALLBACK", "1") in ("1","true","True")
-_TF_MODEL = os.getenv("SUMMARIZER_MODEL", "csebuetnlp/mT5_multilingual_XLSum")
+# إعدادات المُلخِّصات
+_TF_FALLBACK = True
 _TF_DEVICE = int(os.getenv("HF_DEVICE_ID", "-1"))  # CPU=-1
+# ULTRA = Jais-13B-Chat عبر Transformers (يدعم العربية بقوة)
+# يمكن تمرير مسار محلي أو معرف HF عبر ULTRA_MODEL
+_ULTRA_MODEL   = os.getenv("ULTRA_MODEL", "inceptionai/jais-13b-chat")
+_ULTRA_4BIT    = os.getenv("ULTRA_4BIT", "1").lower() in ("1","true","yes")
+_HF_TOKEN      = os.getenv("HF_TOKEN", "").strip() or None
+_TRUST_REMOTE  = True  # مطلوب لـ Jais
+_ULTRA_PROMPT_MODE = os.getenv("ULTRA_PROMPT_MODE", "auto").lower()
+
+# ==================== ArabicText-Large RAG ====================
+import json, faiss, numpy as np
+from sentence_transformers import SentenceTransformer
+
+_RAG_DIR = (DATA_DIR / "rag" / "arabictext_large").resolve()
+_RAG_INDEX = _RAG_DIR / "index.faiss"
+_RAG_DOCS = _RAG_DIR / "docs.jsonl"
+_rag_index = None
+_rag_model = None
+_rag_texts = []
+_rag_dim   = None
+
+def _rag_load():
+    """تحميل الفهرس والنصوص والـembeddings"""
+    global _rag_index, _rag_model, _rag_texts, _rag_dim
+    if _rag_index is not None:
+        return
+    if not _RAG_INDEX.exists() or not _RAG_DOCS.exists():
+        print("[RAG] no ArabicText-Large index found.")
+        return
+    print("[RAG] loading FAISS + docs ...")
+    _rag_index = faiss.read_index(_RAG_INDEX.as_posix())
+    with open(_RAG_DOCS, "r", encoding="utf-8") as f:
+        _rag_texts = [json.loads(line).get("text", "") for line in f]
+    _rag_model = SentenceTransformer(_rag_mname)
+    try:
+        print(f"[RAG] model={_rag_mname} loaded")
+    except Exception: pass
+    _rag_dim = getattr(_rag_model, "get_sentence_embedding_dimension", lambda: None)()
+    try:
+        if _rag_dim and _rag_index.d != int(_rag_dim):
+            print(f"[RAG] dim mismatch: index.d={_rag_index.d} vs model.d={_rag_dim} → disabling RAG")
+            _rag_index = None  # عطّل RAG لمنع الأخطاء
+    except Exception as e:
+        print(f"[RAG] dim check failed: {e}")
+
+def _rag_retrieve(query: str, k: int = 6) -> str:
+    """يسترجع مقاطع مشابهة من ArabicText-Large"""
+    if not query.strip():
+        return ""
+    _rag_load()
+    if _rag_index is None:
+        return ""
+    qv = _rag_model.encode([f"query: {query}"], normalize_embeddings=True)
+    qv = np.asarray(qv, dtype="float32")
+    try:
+        k = max(1, min(k, getattr(_rag_index, "ntotal", k)))
+        D, I = _rag_index.search(qv, k)
+    except Exception as e:
+        print(f"[RAG] search failed: {e}")
+        return ""
+    ctx = "\n\n".join(_rag_texts[i] for i in I[0] if i < len(_rag_texts))
+    return ctx.strip()
 
 @app.get("/robots.txt")
 def robots():
@@ -112,8 +202,6 @@ def favicon():
         return FileResponse(icon.as_posix(), media_type="image/x-icon", filename="favicon.ico")
     return PlainTextResponse("", status_code=204)
 
-# كاش خفيف لأسماء نماذج Ollama
-_OLLAMA_CACHE = {"ts": 0.0, "names": set()}
 def _get_core():
     try:
         import asr_core
@@ -157,7 +245,7 @@ def health():
             "status": "ok",
             "model_default": getattr(core, "DEFAULT_MODEL", _DEFAULT_MODEL),
             "cuda": getattr(core, "_HAS_CUDA", _HAS_CUDA),
-            "ollama_enabled": _ENABLE_OLLAMA,
+            "ollama_enabled": False,
             "ffmpeg": ffmpeg_ok,
             "gpu_name": gpu_name,
             "data_dir": str(OUTPUTS_DIR.parent),
@@ -176,13 +264,79 @@ def health():
             "status": "degraded",
             "model_default": _DEFAULT_MODEL,
             "cuda": _HAS_CUDA,
-            "ollama_enabled": _ENABLE_OLLAMA,
+            "ollama_enabled": False,
             "ffmpeg": False,
             "gpu_name": gpu_name,
             "data_dir": str(OUTPUTS_DIR.parent),
             "max_upload_mb": MAX_UPLOAD_MB,
             "allowed_ext": sorted(ALLOWED_EXT),
         }
+    
+# ---- RAG health (اختياري) ----
+@app.get("/rag-health")
+def rag_health():
+    rag_dir = (DATA_DIR / "rag" / "arabictext_large").resolve()
+    idx = rag_dir / "index.faiss"
+    docs = rag_dir / "docs.jsonl"
+    raw  = rag_dir / "raw.jsonl"
+
+    exists = {
+        "dir": rag_dir.as_posix(),
+        "index_exists": idx.exists(),
+        "docs_exists": docs.exists(),
+        "raw_exists": raw.exists(),
+    }
+
+    # مقاسات وتواريخ آخر تعديل (إن وجدت)
+    def _stat(p: pathlib.Path):
+        if not p.exists(): return None
+        try:
+            s = p.stat()
+            return {"size_bytes": s.st_size, "mtime": s.st_mtime}
+        except Exception:
+            return None
+
+    info = {
+        "index": _stat(idx),
+        "docs": _stat(docs),
+        "raw": _stat(raw),
+    }
+
+    # عدّ سريع لعدد الأسطر في docs.jsonl (اختياري)
+    line_count = None
+    if docs.exists():
+        try:
+            with open(docs, "r", encoding="utf-8", errors="ignore") as f:
+                line_count = sum(1 for _ in f)
+        except Exception:
+            line_count = None
+
+    # فحص قراءة FAISS (اختياري — يُتجاوز إذا لم تتوفر المكتبة)
+    faiss_ok = None
+    faiss_nt = None
+    try:
+        import faiss  # type: ignore
+        if idx.exists():
+            try:
+                index = faiss.read_index(idx.as_posix())
+                faiss_ok = True
+                try:
+                    faiss_nt = int(index.ntotal)  # عدد المتجهات إن أمكن
+                except Exception:
+                    faiss_nt = None
+            except Exception:
+                faiss_ok = False
+    except Exception:
+        faiss_ok = None  # FAISS غير مثبت
+
+    return JSONResponse({
+        "status": "ok" if exists["index_exists"] and exists["docs_exists"] else "missing",
+        "paths": exists,
+        "stats": info,
+        "docs_lines": line_count,
+        "faiss_loaded": faiss_ok,
+        "faiss_ntotal": faiss_nt,
+    })
 
 # ======================= أدوات العربية ========================
 _AR_STOP = set("""
@@ -215,50 +369,47 @@ def _clean_for_summary(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-def _sent_split_ar(text: str) -> list:
-    parts = re.split(r"[\.!\?؟\n]+", text)
-    return [p.strip() for p in parts if p.strip()]
-
-def _score_sentence(sent: str, freq: dict) -> float:
-    toks = _tokenize_ar(sent)
-    if not toks: return 0.0
-    return sum(freq.get(t, 0) for t in toks) / max(1.0, math.sqrt(len(toks)))
-
-def _shorten_sentence(sent: str, max_len: int = 20) -> str:
-    toks = sent.split()
-    return " ".join(toks[:max_len]) + ("..." if len(toks) > max_len else "")
-
-def _summarize_local(text: str, max_lines: int = 4) -> str:
-    t = _clean_for_summary(text)
-    sents = _sent_split_ar(t)
-    if not sents:
-        return ""
-    bag = []
-    for s in sents:
-        bag += _tokenize_ar(s)
-    if not bag:
-        return "\n".join(f"- {_shorten_sentence(s)}" for s in sents[:max_lines])
-    freq = collections.Counter(bag)
-    scored = [(i, _score_sentence(s, freq), s) for i, s in enumerate(sents)]
-    top = sorted(sorted(scored, key=lambda x: x[1], reverse=True)[:max_lines], key=lambda x: x[0])
-    return "\n".join(f"- {_shorten_sentence(t[2])}" for t in top)
-
-# ------------------- Transformers abstractive summarizer (اختياري) -------------------
+# ------------------- Summarizers -------------------
 _ABST_PIPE = None
 def _load_abstractive_pipe():
+    """mT5 للوضع lite فقط."""
     global _ABST_PIPE
-    if _ABST_PIPE is not None:
+    if _ABST_PIPE is not None or not (_TF_AVAILABLE and _TF_FALLBACK):
         return _ABST_PIPE
-    if not (_TF_AVAILABLE and _TF_FALLBACK):
-        return None
     try:
         tok = AutoTokenizer.from_pretrained(_TF_MODEL)
         mdl = AutoModelForSeq2SeqLM.from_pretrained(_TF_MODEL)
+        try:
+            tok.model_max_length = min(getattr(tok, "model_max_length", 1_000_000), 1024)
+        except Exception:
+            pass
         _ABST_PIPE = pipeline("summarization", model=mdl, tokenizer=tok, device=_TF_DEVICE)
         return _ABST_PIPE
     except Exception as e:
-        print(f"[TF] load failed: {e}")
+        print(f"[TF] mT5 load failed: {e}")
         return None
+    
+def _chunks_by_tokens(text: str, tok, max_tokens: int) -> list:
+    """
+    قصّ على مرحلتين لمنع تحذير 17261>1024 وتسريع العمل:
+    1) تقطيع خشن بالحروف إلى كتل ~6000 حرف.
+    2) لكل كتلة: ترميز ثم تقطيع إلى أجزاء <= max_tokens.
+    """
+    parts: list[str] = []
+    rough_step = 6000
+    blocks = [text[i:i+rough_step] for i in range(0, len(text), rough_step)] or [text]
+    for blk in blocks:
+        try:
+            ids = tok.encode(blk, add_special_tokens=False)
+            for i in range(0, len(ids), max_tokens):
+                seg = tok.decode(ids[i:i+max_tokens], skip_special_tokens=True).strip()
+                if seg:
+                    parts.append(seg)
+        except Exception:
+            parts.append(blk.strip())
+        if len(parts) >= SUM_MAX_PARTS:
+            break
+    return parts[:SUM_MAX_PARTS] or [text]
 
 def _summarize_abstractive(text: str, target_len: int = 220) -> str:
     p = _load_abstractive_pipe()
@@ -266,160 +417,149 @@ def _summarize_abstractive(text: str, target_len: int = 220) -> str:
         return ""
     clean = _clean_for_summary(text)
     try:
-        out = p(clean, max_length=min(384, target_len), min_length=80, do_sample=False, truncation=True)
-        summ = (out[0].get("summary_text") or "").strip()
+        tok = p.tokenizer
+        parts = _chunks_by_tokens(clean, tok, max_tokens=min(SUM_MAX_INPUT_TOKENS, getattr(tok, "model_max_length", 1024)))
+        summaries = []
+        for seg in parts:
+            out = p(
+                seg,
+                max_length=min(220, target_len),
+                min_length=60,
+                do_sample=False,
+                truncation=True,
+                num_beams=2,
+            )
+            summaries.append((out[0].get("summary_text") or "").strip())
+        # دمج ثم ضغط ملخص الملخص
+        merged = " ".join(s for s in summaries if s)
+        if not merged:
+            return ""
+        if len(parts) > 1:
+            out2 = p(merged, max_length=min(240, target_len+40), min_length=80, do_sample=False, truncation=True, num_beams=2)
+            summ = (out2[0].get("summary_text") or "").strip()
+        else:
+            summ = merged.strip()
         if summ:
             globals()["_SUMMARY_SOURCE"] = f"transformers:{_TF_MODEL}"
         return summ
     except Exception as e:
-        print(f"[TF] summarize failed: {e}")
+        print(f"[TF] mT5 summarize failed: {e}")
         return ""
 
-def _has_ollama() -> bool:
-    if not _ENABLE_OLLAMA:
-        return False
+_ULTRA_PIPE = None
+def _load_ultra_pipe():
+    """تحميل Jais-13B-Chat للتوليد (وضع ultra)."""
+    global _ULTRA_PIPE
+    if _ULTRA_PIPE is not None:
+        return _ULTRA_PIPE
+    if not _TF_AVAILABLE:
+        return None
     try:
-        subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=3, check=True)
-        return True
-    except Exception:
-        return False
-
-def _available_ollama_models() -> Set[str]:
-    import time
-    now = time.time()
-    if now - _OLLAMA_CACHE["ts"] < 60:
-        return _OLLAMA_CACHE["names"]
-    try:
-        out = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=5, check=True).stdout
-        names = set()
-        for line in (out or "").splitlines():
-            line = line.strip()
-            if not line or line.startswith("NAME"):
-                continue
-            parts = line.split()
-            if parts:
-                names.add(parts[0])
-        _OLLAMA_CACHE.update(ts=now, names=names)
-        return names
-    except Exception:
-        return set()
-
-def _summarize_ollama(
-    text: str,
-    max_lines: int = 5,
-    model: Optional[str] = None,
-    prefs: Optional[List[str]] = None,
-    require_local: bool = True,  # اذا True لا يجرب نموذج غير موجود محليًا
-) -> str:
-    order: List[str] = []
-    if model: order.append(model)
-    if _OLLAMA_MODEL: order.append(_OLLAMA_MODEL)
-    if prefs: order.extend([m for m in prefs if m not in order])
-
-    have = _available_ollama_models()
-    prompt = (
-        f"لخّص النص التالي بدقة في {max_lines} نقاط قصيرة.\n"
-        f"ثم أعطني 8 كلمات مفتاحية بالعربية مفصولة بفواصل فقط.\n\n"
-        f"النص:\n{text}\n\n"
-        f"النقاط:\n- \n- \n- \n- \n\n"
-        f"الكلمات المفتاحية:\n"
-    )
-    for m in order:
-        if require_local and (m not in have):
-            continue
-        try:
-            res = subprocess.run(["ollama", "run", m, prompt],
-                                 capture_output=True, text=True, timeout=_OLLAMA_TIMEOUT)
-            out = (res.stdout or "").strip()
-            if out:
-                globals()["_SUMMARY_SOURCE"] = m
-                return out
-            # debug الخرج الفارغ
-            err = (res.stderr or "").strip()
-            if err:
-                print(f"[OLLAMA:{m}] stderr: {err[:200]}")
-        except Exception as e:
-            print(f"[OLLAMA:{m}] exception: {e}")
-            continue
-    return ""
-
-def _ollama_pull(model: str) -> bool:
-    """يسحب النموذج صراحةً من الإنترنت. يستخدم فقط مع وضع ultra."""
-    try:
-        r = subprocess.run(["ollama", "pull", model], capture_output=True, text=True, timeout=_OLLAMA_PULL_TIMEOUT)
-        if r.returncode == 0:
-            # حدّث الكاش حتى يُكتشف فورًا
-            _OLLAMA_CACHE.update(ts=0.0, names=set())
-            return True
+        # يحمّل محليًا إن وُجد أو من HF. وجوب trust_remote_code لـ Jais.
+        tok = AutoTokenizer.from_pretrained(
+            _ULTRA_MODEL,
+            token=_HF_TOKEN,
+            trust_remote_code=_TRUST_REMOTE
+        )
+        if _ULTRA_4BIT and BitsAndBytesConfig is not None:
+            bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype="float16")  # type: ignore
+            mdl = AutoModelForCausalLM.from_pretrained(
+                _ULTRA_MODEL,
+                token=_HF_TOKEN,
+                trust_remote_code=_TRUST_REMOTE,
+                device_map="auto",
+                quantization_config=bnb
+            )
         else:
-            print(f"[OLLAMA:PULL] failed rc={r.returncode}: {r.stderr[:200] if r.stderr else ''}")
-            return False
+            mdl = AutoModelForCausalLM.from_pretrained(
+                _ULTRA_MODEL,
+                token=_HF_TOKEN,
+                trust_remote_code=_TRUST_REMOTE,
+                device_map="auto",
+                torch_dtype="auto"
+            )
+        # ملاحظة: عند تمرير model محمّل بـ device_map، لا نحتاج لتحديد device في pipeline
+        _ULTRA_PIPE = pipeline("text-generation", model=mdl, tokenizer=tok)
+        return _ULTRA_PIPE
     except Exception as e:
-        print(f"[OLLAMA:PULL] exception: {e}")
-        return False
+        print(f"[TF] ULTRA load failed: {e}")
+        return None
 
-def _summarize(text: str, mode: str = "auto") -> Tuple[str, str]:
-    if not text or not mode or mode.lower() == "off":
+def _summarize_ultra(text: str, target_len: int = 220) -> str:
+    p = _load_ultra_pipe()
+    if p is None:
+        return ""
+    clean = _clean_for_summary(text)
+    # تحديد نمط البرومبت
+    mode = _ULTRA_PROMPT_MODE
+    if mode == "auto":
+        name = (_ULTRA_MODEL or "").lower()
+        mode = "chat" if ("-chat" in name) else "plain"
+    if mode == "chat":
+        prompt = (
+            "### Instruction: لخّص النص التالي بالعربية الفصحى في 4-6 جمل قصيرة وواضحة،"
+            " امنع الحشو وكرر الأفكار الأساسية فقط.\n"
+            f"### Input: [|Human|] {clean}\n"
+            "### Response: [|AI|]"
+        )
+    else:
+        prompt = (
+            "لخّص النص التالي بالعربية الفصحى في 4-6 جمل قصيرة وواضحة،"
+            " بدون حشو وبتركيز على الأفكار الأساسية:\n\n"
+            f"{clean}\n\nالملخص:"
+        )
+    try:
+        out = p(
+            prompt,
+            max_new_tokens=min(300, target_len+120),
+            do_sample=False
+        )[0]["generated_text"]
+        if mode == "chat":
+            spl = out.split("### Response: [|AI|]")
+            summ = (spl[-1] if len(spl) > 1 else out).strip()
+        else:
+            summ = out.split("الملخص:")[-1].strip() if "الملخص:" in out else out.strip()
+        if summ:
+            globals()["_SUMMARY_SOURCE"] = f"transformers:{_ULTRA_MODEL}"
+        return summ
+    except Exception as e:
+        print(f"[TF] ULTRA summarize failed: {e}")
+        return ""
+
+def _summarize(text: str, mode: str = "lite") -> Tuple[str, str]:
+    if not text or not mode:
         globals()["_SUMMARY_SOURCE"] = "off"
         return ("", "")
     clean = _clean_for_summary(text)
-    mode = (mode or "auto").lower()
-    # توافق أسماء قديمة
-    if mode == "medium":
-        mode = "lite"
-    if _has_ollama():
-        have = _available_ollama_models()
-        s = ""
-        if mode == "lite":
-            # جرّب gemma حتى انتهاء المهلة حتى لو غير موجود محليًا، ثم mT5
-            s = _summarize_ollama(clean, max_lines=5, prefs=["gemma:2b-instruct"], require_local=False)
-            if not s and _TF_FALLBACK and _TF_AVAILABLE:
-                s_abs = _summarize_abstractive(clean, target_len=220)
-                if s_abs:
-                    return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
-        elif mode == "ultra":
-            # اسحب qwen2.5:72b فقط عند اختيار ultra، ثم جرّبه
-            if "qwen2.5:72b-instruct" not in have:
-                _ollama_pull("qwen2.5:72b-instruct")
-                have = _available_ollama_models()
-            s = _summarize_ollama(clean, max_lines=5, prefs=["qwen2.5:72b-instruct"], require_local=False)
-            if not s and _TF_FALLBACK and _TF_AVAILABLE:
-                s_abs = _summarize_abstractive(clean, target_len=220)
-                if s_abs:
-                    return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
-        elif mode == "auto":
-            # جرّب المحلي فقط، ثم mT5
-            prefs: List[str] = [m for m in ("qwen2.5:72b-instruct","gemma:2b-instruct") if m in have]
-            if prefs:
-                s = _summarize_ollama(clean, max_lines=5, prefs=prefs, require_local=True)
-            if not s and _TF_FALLBACK and _TF_AVAILABLE:
-                s_abs = _summarize_abstractive(clean, target_len=220)
-                if s_abs:
-                    return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
-        elif mode == "off":
-            s = ""
-        else:
-            # أسماء غير معروفة ⇒ عاملها كـ auto
-            prefs: List[str] = [m for m in ("qwen2.5:72b-instruct","gemma:2b-instruct") if m in have]
-            if prefs:
-                s = _summarize_ollama(clean, max_lines=5, prefs=prefs, require_local=True)
-            if not s and _TF_FALLBACK and _TF_AVAILABLE:
-                s_abs = _summarize_abstractive(clean, target_len=220)
-                if s_abs:
-                    return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
-        if s:
-            m = (re.search(r"الكلمات\s*المفتاحية\s*[:：]\s*(.+)$", s, re.M) or
-                 re.search(r"Keywords\s*[:：]\s*(.+)$", s, re.I | re.M))
-            if m:
-                kw_line = re.sub(r"^[\-\*\•]\s*", "", m.group(1).strip())
-                return (s, kw_line)
-            return (s, ", ".join(_keywords_ar(clean, k=10)))
-    if _TF_FALLBACK and _TF_AVAILABLE:
+    m = mode.lower()
+
+    # off
+    if m == "off":
+        globals()["_SUMMARY_SOURCE"] = "off"
+        return ("", "")
+    
+    # lite = mT5 (XLSum)
+    if m == "lite":
+        print("[SUM] lite -> mT5 (XLSum)")
         s_abs = _summarize_abstractive(clean, target_len=220)
         if s_abs:
-            return (s_abs, ", ".join(_keywords_ar(clean, k=10)))
-    globals()["_SUMMARY_SOURCE"] = "local"
-    return (_summarize_local(clean, max_lines=4), ", ".join(_keywords_ar(clean, k=10)))
+            globals()["_SUMMARY_SOURCE"] = f"transformers:{_TF_MODEL}"
+        return (s_abs or "", ", ".join(_keywords_ar(clean, k=10)) if s_abs else "")
+
+    # ultra = ALLaM-13B-Instruct + RAG اختياري
+    if m == "ultra":
+        print("[SUM] ultra -> Jais-13B-Chat")
+        ctx = _rag_retrieve(clean, k=3)
+        prompt = f"السياق المسترجع:\n{ctx}\n\nالنص:\n{clean}" if ctx else clean
+        s_ultra = _summarize_ultra(prompt, target_len=220)
+        return (s_ultra or "", ", ".join(_keywords_ar(clean, k=10)) if s_ultra else "")
+
+    # أي قيمة أخرى غير مدعومة
+    raise HTTPException(status_code=400, detail=f"unsupported summary_mode: {mode}")
+
+@app.get("/ultra-health")
+def ultra_health():
+    return {"ultra_model": _ULTRA_MODEL, "ultra_4bit": _ULTRA_4BIT, "trust_remote": _TRUST_REMOTE, "prompt_mode": _ULTRA_PROMPT_MODE}
 
 def _renumber_speakers(text: str) -> str:
     mapping, next_id = {}, 1
@@ -477,7 +617,7 @@ def _response_error(code: int, err: str, detail: Optional[str] = None) -> JSONRe
 async def summarize_after(
     text: Optional[str] = Form(None),
     path: Optional[str] = Form(None),
-    summary_mode: str = Form("auto"),
+    summary_mode: str = Form("lite"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     # auth
@@ -503,7 +643,7 @@ async def summarize_after(
     if not body:
         return _response_error(400, "no_text", "nothing to summarize")
 
-    # لخّص (Ollama/محلي)
+    # لخّص
     s_text, kw_csv = _summarize(body, mode=summary_mode)
     if not s_text.strip():
         globals()["_SUMMARY_SOURCE"] = "off"
@@ -596,6 +736,7 @@ def _write_segments_json(segments: list, base_txt_path: str) -> Optional[str]:
 @app.post("/transcribe")
 async def transcribe(
     file: UploadFile = File(...),
+    audio: UploadFile = File(None),
     model_name: Optional[str] = Form(None),
     enhance: bool = Form(True),
     whisper_mode: str = Form("normal"),   # "normal" | "whisper"
@@ -605,7 +746,7 @@ async def transcribe(
     enroll_threshold: float = Form(0.65),
     device_sel: str = Form("auto"),       # "auto" | "cpu" | "cuda"
     compute_sel: str = Form("auto"),      # "auto" | "int8" | "float16" | "float32"
-    summary_mode: str = Form("auto"),     # "lite" | "medium" | "heavy" | "xlarge" | "auto" | "off"
+    summary_mode: str = Form("off"),  # "off" | "lite(mT5)" | "ultra(Jais-13B)"
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     request: Request = None,
 ):
@@ -613,13 +754,19 @@ async def transcribe(
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
         return _response_error(401, "unauthorized", "invalid api key")
     core = _get_core()
+    uf = file or audio
+    if uf is None:
+        return _response_error(400, "no_file", "use form field 'file' or 'audio'")
     globals()["_SUMMARY_SOURCE"] = "local"
-
+    try:
+        logger.info(f"[REQ] model_name={model_name or core.DEFAULT_MODEL} device_sel={device_sel} compute_sel={compute_sel} diarize={diarize} summary_mode={summary_mode}")
+    except Exception: pass
+    
     tmpdir = tempfile.mkdtemp(prefix="asr_")
     try:
-        dst = pathlib.Path(tmpdir) / (file.filename or "audio.wav")
+        dst = pathlib.Path(tmpdir) / ((uf.filename) or "audio.wav")
         with open(dst, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            shutil.copyfileobj(uf.file, f)
            # حجم وحد أقصى
         try:
             if dst.stat().st_size > MAX_UPLOAD_MB * 1024 * 1024:
@@ -662,10 +809,15 @@ async def transcribe(
             # ترقيم المتكلمين
             txt = _renumber_speakers(txt or "")
 
-            # تلخيص عند الطلب أو إذا لا يوجد core_sum
-            if summary_mode and summary_mode.lower() != "off":
+            # إجبار عدم التلخيص داخل /transcribe دائماً
+            summary_mode = "off"
+            if False and summary_mode and summary_mode.lower() != "off":
                 if not summary_text:
-                    s_text, kw_csv = _summarize(txt, mode=summary_mode)
+                    try:
+                        s_text, kw_csv = _summarize(txt, mode=summary_mode)
+                    except HTTPException as he:
+                        # مرّر كـ استجابة FastAPI القياسية
+                        raise he
                     summary_text = s_text
                     keywords = kw_csv
                 try:
@@ -692,6 +844,9 @@ async def transcribe(
                 seg_path = _write_segments_json(segments, out_path)
             return _response_ok(txt, summary_text, keywords, out_path, sum_path, segments, srt_path, vtt_path, seg_path)
 
+        except HTTPException as he:
+            # أعدّ تمرير أخطاء HTTP (503 مثلاً)
+            raise he
         except Exception:
             # تتبّع كامل مفيد لتشخيص WinError 233 وغيرها
             return _response_error(500, "processing_failed", traceback.format_exc())
@@ -714,7 +869,7 @@ async def transcribe_batch(
     enroll_threshold: float = Form(0.65),
     device_sel: str = Form("auto"),
     compute_sel: str = Form("auto"),
-    summary_mode: str = Form("auto"),
+    summary_mode: str = Form("off"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     request: Request = None,
 ):
@@ -763,7 +918,10 @@ async def transcribe_batch(
 
             if summary_mode and summary_mode.lower() != "off":
                 if not (merged_sum or "").strip():
-                    s_text, kw_csv = _summarize(merged_text, mode=summary_mode)
+                    try:
+                        s_text, kw_csv = _summarize(merged_text, mode=summary_mode)
+                    except HTTPException as he:
+                        raise he
                     merged_sum, keywords = s_text, kw_csv
                 try:
                     if (merged_sum or "").strip():
@@ -783,6 +941,8 @@ async def transcribe_batch(
             seg_path = _write_segments_json(segs, merged_path)
             return _response_ok(merged_text, merged_sum, keywords, merged_path, merged_sum_path, segs, srt_path, vtt_path, seg_path)
 
+        except HTTPException as he:
+            raise he
         except Exception:
             return _response_error(500, "processing_failed", traceback.format_exc())
 
