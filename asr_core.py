@@ -9,10 +9,14 @@ os.environ.setdefault("CT2_USE_MMAP","1")
 os.environ["SPEECHBRAIN_LOCAL_FILE_STRATEGY"] = "copy"
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.environ.setdefault("HF_HOME", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
+# كاش موحّد مع ضمان وجود المجلد + كتم ضجيج Transformers
+HF_DIR = (pathlib.Path(__file__).resolve().parent / "data" / ".hf")
+HF_DIR.mkdir(parents=True, exist_ok=True)
+os.environ["HF_HOME"] = str(HF_DIR)
+os.environ.pop("TRANSFORMERS_CACHE", None)
 os.environ.setdefault("ASR_DATA_DIR", str(pathlib.Path(__file__).resolve().parent / "data"))
-os.environ.setdefault("TRANSFORMERS_CACHE", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str((pathlib.Path(__file__).resolve().parent / "data" / ".hf")))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_DIR))
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 import numpy as np
 import soundfile as sf
@@ -24,9 +28,8 @@ import torch
 from collections import Counter
 from huggingface_hub import snapshot_download
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
 import joblib
-
+_HF_TOKEN = (os.getenv("HF_TOKEN", "").strip() or None)
 # ---------- إعدادات عامة ----------
 IS_WIN = os.name == "nt"
 try:
@@ -73,8 +76,8 @@ _ENROLLED = {}  # {name: np.ndarray(192,)}
 _DIAR_CACHE = {}  # {(wav_path, mtime, win, hop): np.ndarray[n_frames, 192]}
 
 # ديازة
-DIAR_WIN = 1.5
-DIAR_HOP = 0.75
+DIAR_WIN = 1.0
+DIAR_HOP = 0.5
 AUTO_K_MAX = 5
 AUTO_K_MIN = 1
 
@@ -124,7 +127,8 @@ def get_model(name: str, device: str = None, compute_type: str = None):
                     repo_id=f"Systran/faster-whisper-{name}",
                     local_dir=local_dir.as_posix(),
                     local_dir_use_symlinks=False,
-                    cache_dir=(DATA_DIR / ".hf").as_posix()
+                    cache_dir=(DATA_DIR / ".hf").as_posix(),
+                    token=_HF_TOKEN
                 )
             else:
                 if LOG_LOAD:
@@ -159,7 +163,8 @@ def get_model(name: str, device: str = None, compute_type: str = None):
                     repo_id=f"Systran/faster-whisper-{fb}",
                     local_dir=fb_dir.as_posix(),
                     local_dir_use_symlinks=False,
-                    cache_dir=(DATA_DIR / ".hf").as_posix()
+                    cache_dir=(DATA_DIR / ".hf").as_posix(),
+                    token=_HF_TOKEN
                 )
             fdev, fctp = _safe_compute(dev, ctp)
             _MODEL_CACHE[key] = WhisperModel(
@@ -274,7 +279,8 @@ def get_spkrec():
             repo_id="speechbrain/spkrec-ecapa-voxceleb",
             local_dir=local_dir,
             local_dir_use_symlinks=False,
-            cache_dir=(DATA_DIR / ".hf").as_posix()
+            cache_dir=(DATA_DIR / ".hf").as_posix(),
+            token=_HF_TOKEN
         )
         _SPKRECOG = SpeakerRecognition.from_hparams(
             source=local_dir, savedir=local_dir,
@@ -376,7 +382,7 @@ def run_asr(wav_path, model_obj, whisper_mode="normal"):
             vad_filter=True,
             vad_parameters=dict(
                 threshold=0.7,
-                min_silence_duration_ms=800 if whisper_mode == "whisper" else 1000,
+                min_silence_duration_ms=700 if whisper_mode == "whisper" else 900,
                 speech_pad_ms=100,
             ),
             condition_on_previous_text=False,
@@ -592,7 +598,7 @@ def label_speakers(wav_path, seglist, threshold=0.65):
                 sim = cosine(c_emb, ref)
                 if sim > best_sim:
                     best_sim, best_name = sim, name
-            cluster_names[c] = best_name if (best_name and best_sim >= threshold) else None
+            cluster_names[c] = best_name if (best_name and best_sim >= max(threshold, 0.7)) else None
 
         diar_segs = []
         if len(frames) > 0:
@@ -604,6 +610,19 @@ def label_speakers(wav_path, seglist, threshold=0.65):
                     diar_segs.append((cur_start, cur_end, cur_c))
                     cur_c = z[j]; cur_start = frames[j][0]; cur_end = frames[j][1]
             diar_segs.append((cur_start, cur_end, cur_c))
+        # دمج فجوات قصيرة لنفس المتكلم (< 0.3s)
+        merged = []
+        GAP = 0.3
+        for seg in diar_segs:
+            if not merged:
+                merged.append(list(seg)); continue
+            ps, pe, pc = merged[-1]
+            cs, ce, cc = seg
+            if pc == cc and (cs - pe) <= GAP:
+                merged[-1][1] = ce  # وسّع النهاية
+            else:
+                merged.append(list(seg))
+        diar_segs = [tuple(t) for t in merged]
 
         def _overlap(a0,a1,b0,b1): return max(0.0, min(a1,b1) - max(a0,b0))
 
@@ -781,7 +800,7 @@ def _fmt_ts(t: float) -> str:
 def segments_to_srt(segments, base_txt_path: str) -> str:
     p = pathlib.Path(base_txt_path) if base_txt_path else (OUTPUTS_DIR / "transcript")
     srt_path = p.with_suffix(".srt")
-    with open(srt_path, "w", encoding="utf-8") as f:
+    with open(srt_path, "w", encoding="utf-8", newline="\n") as f:
         for i, seg in enumerate(segments, 1):
             f.write(
                 f"{i}\n{_fmt_ts(seg['start'])} --> {_fmt_ts(seg['end'])}\n"
@@ -792,7 +811,7 @@ def segments_to_srt(segments, base_txt_path: str) -> str:
 def segments_to_vtt(segments, base_txt_path: str) -> str:
     p = pathlib.Path(base_txt_path) if base_txt_path else (OUTPUTS_DIR / "transcript")
     vtt_path = p.with_suffix(".vtt")
-    with open(vtt_path, "w", encoding="utf-8") as f:
+    with open(vtt_path, "w", encoding="utf-8", newline="\n") as f:
         f.write("WEBVTT\n\n")
         for seg in segments:
             st = _fmt_ts(seg["start"]).replace(",", ".")
@@ -932,8 +951,10 @@ def process_many(file_paths, model_name=None, enhance=False, whisper_mode="norma
             device_sel = "cuda" if _HAS_CUDA else "cpu"
         if (compute_sel or "auto") == "auto":
             compute_sel = "float16" if device_sel == "cuda" else "int8_float32"
-        if IS_WIN:
-            diarize = False
+        if IS_WIN and diarize:
+            # قيود آمنة لويندوز: عدد متكلمين صغير ودون تقدير تلقائي مكلف
+            auto_k = False if auto_k is None else bool(auto_k)
+            max_speakers = min(2, int(max_speakers or 2))
 
         OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         all_texts, all_summaries = [], []

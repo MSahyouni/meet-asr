@@ -319,6 +319,7 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
             api_url_state = gr.State(DEFAULT_API_URL)
             api_summary_state = gr.State(DEFAULT_SUMMARY_URL)
             api_batch_state = gr.State(DEFAULT_BATCH_URL)
+            summary_dd = gr.State("off")
             api_key_in = gr.Textbox(value="", label="X-API-Key", type="password")
             timeout_in = gr.Slider(30, 600, DEFAULT_TIMEOUT, 5, label="HTTP Timeout (sec)")
             # مصدر الإدخال: ملف أو ميكروفون
@@ -342,14 +343,6 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
 
             device_dd = gr.Dropdown(["auto", "cpu", "cuda"], value="auto", label="الجهاز")
             compute_dd = gr.Dropdown(["auto", "int8", "float16", "float32"], value="auto", label="الدقة")
-
-            # أوضاع التلخيص المدعومة في الـ API
-            summary_dd = gr.Dropdown(
-                ["off", "lite", "ultra"],
-                value="off",
-                label="وضع التلخيص وقت التفريغ",
-                info="lite = mT5 (XLSum) | ultra = Jais-13B"
-            )
 
             # وضع التلخيص عند الطلب
             later_mode = gr.Dropdown(

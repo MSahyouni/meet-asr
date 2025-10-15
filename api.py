@@ -1,5 +1,5 @@
 # api.py - نسخة مستقرة مُحسّنة
-import os, tempfile, shutil, pathlib, re, collections, subprocess, json, traceback
+import os, tempfile, shutil, pathlib, re, collections, subprocess, traceback
 from typing import List, Tuple, Optional, Set
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Request
 import contextvars
@@ -11,6 +11,14 @@ from fastapi.responses import JSONResponse, FileResponse, Response, PlainTextRes
 from fastapi.staticfiles import StaticFiles
 from urllib.parse import quote
 import logging
+import platform
+
+HF_DIR = (pathlib.Path(__file__).resolve().parent / "data" / ".hf")
+HF_DIR.mkdir(parents=True, exist_ok=True)            # ← تأكد من وجود المجلد
+os.environ["HF_HOME"] = str(HF_DIR)                 # ← اعتمد HF_HOME فقط
+os.environ.pop("TRANSFORMERS_CACHE", None)          # ← أزل الكاش القديم
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 import sys, asyncio
 if sys.platform.startswith("win"):
@@ -30,6 +38,8 @@ try:
 except Exception:
     _TF_AVAILABLE = False
 
+warnings.filterwarnings("ignore", message=".*TypedStorage is deprecated.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*TypedStorage is deprecated.*", category=FutureWarning)
 warnings.filterwarnings("ignore", message="You are using the default legacy behaviour of the <class 'transformers.models.t5.tokenization_t5.T5Tokenizer'>")
 warnings.filterwarnings("ignore", message="The sentencepiece tokenizer that you are converting to a fast tokenizer uses the byte fallback option.*")
 logger = logging.getLogger("asr_api")
@@ -125,6 +135,7 @@ API_TOKEN = os.getenv("API_TOKEN", "").strip()
 MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "50"))
 ALLOWED_EXT = {".wav",".mp3",".m4a",".mp4",".ogg",".flac",".webm",".aac",".3gp",".opus"}
 _DOWNLOAD_ALLOW = {".txt", ".srt", ".vtt", ".json"}
+
 # إعدادات المُلخِّصات
 _TF_FALLBACK = True
 _TF_DEVICE = int(os.getenv("HF_DEVICE_ID", "-1"))  # CPU=-1
@@ -137,6 +148,7 @@ _TRUST_REMOTE  = True  # مطلوب لـ Jais
 _ULTRA_PROMPT_MODE = os.getenv("ULTRA_PROMPT_MODE", "auto").lower()
 
 # ==================== ArabicText-Large RAG ====================
+_RAG_ENABLED = os.getenv("RAG_ENABLE", "0").lower() in ("1","true","yes")
 import json, numpy as np
 try:
     import faiss  # اختياري
@@ -162,6 +174,8 @@ _rag_dim   = None
 def _rag_load():
     """تحميل الفهرس والنصوص والـembeddings"""
     global _rag_index, _rag_model, _rag_texts, _rag_dim
+    if not _RAG_ENABLED:
+        return
     if _rag_index is not None:
         return
     # عطّل إذا المكتبات أو الملفات غير متوفرة
@@ -266,6 +280,10 @@ def health():
             "data_dir": str(OUTPUTS_DIR.parent),
             "max_upload_mb": MAX_UPLOAD_MB,
             "allowed_ext": sorted(ALLOWED_EXT),
+            "versions": {
+                "python": platform.python_version(),
+                "transformers": (__import__("transformers").__version__ if _TF_AVAILABLE else ""),
+            },
         }
     except Exception:
         gpu_name = ""
@@ -285,6 +303,10 @@ def health():
             "data_dir": str(OUTPUTS_DIR.parent),
             "max_upload_mb": MAX_UPLOAD_MB,
             "allowed_ext": sorted(ALLOWED_EXT),
+            "versions": {
+                "python": platform.python_version(),
+                "transformers": (__import__("transformers").__version__ if _TF_AVAILABLE else ""),
+            },
         }
     
 # ---- RAG health (اختياري) ----
@@ -390,8 +412,8 @@ def _load_abstractive_pipe():
     if _ABST_PIPE is not None or not (_TF_AVAILABLE and _TF_FALLBACK):
         return _ABST_PIPE
     try:
-        tok = AutoTokenizer.from_pretrained(_TF_MODEL)
-        mdl = AutoModelForSeq2SeqLM.from_pretrained(_TF_MODEL)
+        tok = AutoTokenizer.from_pretrained(_TF_MODEL, token=_HF_TOKEN, use_fast=False)
+        mdl = AutoModelForSeq2SeqLM.from_pretrained(_TF_MODEL, token=_HF_TOKEN)
         try:
             tok.model_max_length = min(getattr(tok, "model_max_length", 1_000_000), 1024)
         except Exception:
@@ -472,7 +494,8 @@ def _load_ultra_pipe():
         tok = AutoTokenizer.from_pretrained(
             _ULTRA_MODEL,
             token=_HF_TOKEN,
-            trust_remote_code=_TRUST_REMOTE
+            trust_remote_code=_TRUST_REMOTE,
+            use_fast=False
         )
         if _ULTRA_4BIT and BitsAndBytesConfig is not None:
             bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype="float16")  # type: ignore
@@ -726,10 +749,10 @@ def _write_srt_vtt(segments: list, base_txt_path: str) -> Tuple[Optional[str], O
         vtt_lines += [f"{t0s.replace(',','.') } --> {t1s.replace(',','.')}", text, ""]
     # اكتب الملفين
     try:
-        with open(srt, "w", encoding="utf-8") as f: f.write("\n".join(srt_lines))
+        with open(srt, "w", encoding="utf-8", newline="\n") as f: f.write("\n".join(srt_lines))
     except Exception: srt = None
     try:
-        with open(vtt, "w", encoding="utf-8") as f: f.write("\n".join(vtt_lines))
+        with open(vtt, "w", encoding="utf-8", newline="\n") as f: f.write("\n".join(vtt_lines))
     except Exception: vtt = None
     return srt.as_posix() if srt else None, vtt.as_posix() if vtt else None
 
