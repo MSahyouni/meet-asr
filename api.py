@@ -137,8 +137,19 @@ _TRUST_REMOTE  = True  # مطلوب لـ Jais
 _ULTRA_PROMPT_MODE = os.getenv("ULTRA_PROMPT_MODE", "auto").lower()
 
 # ==================== ArabicText-Large RAG ====================
-import json, faiss, numpy as np
-from sentence_transformers import SentenceTransformer
+import json, numpy as np
+try:
+    import faiss  # اختياري
+    _FAISS_OK = True
+except Exception:
+    faiss = None
+    _FAISS_OK = False
+try:
+    from sentence_transformers import SentenceTransformer  # اختياري
+    _ST_OK = True
+except Exception:
+    SentenceTransformer = None
+    _ST_OK = False
 
 _RAG_DIR = (DATA_DIR / "rag" / "arabictext_large").resolve()
 _RAG_INDEX = _RAG_DIR / "index.faiss"
@@ -152,6 +163,10 @@ def _rag_load():
     """تحميل الفهرس والنصوص والـembeddings"""
     global _rag_index, _rag_model, _rag_texts, _rag_dim
     if _rag_index is not None:
+        return
+    # عطّل إذا المكتبات أو الملفات غير متوفرة
+    if not (_FAISS_OK and _ST_OK):
+        print("[RAG] disabled (faiss or sentence-transformers missing).")
         return
     if not _RAG_INDEX.exists() or not _RAG_DOCS.exists():
         print("[RAG] no ArabicText-Large index found.")
@@ -314,20 +329,18 @@ def rag_health():
     # فحص قراءة FAISS (اختياري — يُتجاوز إذا لم تتوفر المكتبة)
     faiss_ok = None
     faiss_nt = None
-    try:
-        import faiss  # type: ignore
-        if idx.exists():
+    if _FAISS_OK and idx.exists():
+        try:
+            index = faiss.read_index(idx.as_posix())
+            faiss_ok = True
             try:
-                index = faiss.read_index(idx.as_posix())
-                faiss_ok = True
-                try:
-                    faiss_nt = int(index.ntotal)  # عدد المتجهات إن أمكن
-                except Exception:
-                    faiss_nt = None
+                faiss_nt = int(index.ntotal)
             except Exception:
-                faiss_ok = False
-    except Exception:
-        faiss_ok = None  # FAISS غير مثبت
+                faiss_nt = None
+        except Exception:
+            faiss_ok = False
+    else:
+        faiss_ok = None
 
     return JSONResponse({
         "status": "ok" if exists["index_exists"] and exists["docs_exists"] else "missing",

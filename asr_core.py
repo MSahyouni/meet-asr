@@ -1,5 +1,6 @@
 # asr_core.py - نسخة مستقرة
 import os, pathlib, tempfile, subprocess, shutil, atexit, re, time
+from typing import Optional
 # خيوط أقل وذاكرة أخف
 os.environ.setdefault("OMP_NUM_THREADS","1")
 os.environ.setdefault("MKL_NUM_THREADS","1")
@@ -22,6 +23,9 @@ import noisereduce as nr
 import torch
 from collections import Counter
 from huggingface_hub import snapshot_download
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+import joblib
 
 # ---------- إعدادات عامة ----------
 IS_WIN = os.name == "nt"
@@ -61,7 +65,9 @@ MODELS_DIR  = DATA_DIR / "models"
 SPK_DIR     = DATA_DIR / "voices"
 for _d in (OUTPUTS_DIR, MODELS_DIR, SPK_DIR):
     _d.mkdir(parents=True, exist_ok=True)
-
+KW_DIR      = MODELS_DIR / "keywords"
+KW_DIR.mkdir(parents=True, exist_ok=True)
+TFIDF_PATH  = (KW_DIR / "tfidf_ar.joblib")
 _SPKRECOG = None
 _ENROLLED = {}  # {name: np.ndarray(192,)}
 _DIAR_CACHE = {}  # {(wav_path, mtime, win, hop): np.ndarray[n_frames, 192]}
@@ -639,18 +645,123 @@ def _tokenize_ar(s: str):
     s = _normalize_ar(s)
     return re.findall(r"[اأإآابتثجحخدذرزسشصضطظعغفقكلمنهوية]{2,}", s)
 
+# ========= TF-IDF اختياري اعتماداً على Parquet =========
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    _SK_TFIDF_OK = True
+except Exception:
+    _SK_TFIDF_OK = False
+
+_TFIDF = {"vec": None, "vocab": None}
+_TFIDF_MAX_ROWS = int(os.getenv("TFIDF_MAX_ROWS", "140000"))
+_DATASET_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data")) / "datasets" / "ArabicText-Large" / "data"
+
+def _split_tokens(s: str):
+    # الكوربس لدينا مُجزّأ مسبقًا (مسافات). لا تستعمل lambda كي يصلح الحفظ بـ joblib.
+    return s.split()
+
+def _iter_parquet_texts(max_rows=_TFIDF_MAX_ROWS):
+    if not _DATASET_DIR.exists():
+        return
+    remaining = max_rows
+    for pq in sorted(_DATASET_DIR.glob("*.parquet")):
+        try:
+            df = pd.read_parquet(pq)
+        except Exception as e:
+            print(f"[PARQUET] {pq}: {e}")
+            continue
+        if df.empty:
+            continue
+        text_cols = [c for c in df.columns if str(c).lower() in ("text","content","body","document")]
+        if not text_cols:
+            text_cols = df.select_dtypes(include=["object"]).columns.tolist()
+        if not text_cols:
+            continue
+        col = text_cols[0]
+        for v in df[col].astype(str).head(remaining):
+            yield " ".join(_tokenize_ar(v))
+        remaining -= min(len(df), remaining)
+        if remaining <= 0:
+            break
+
+def _load_tfidf_from_disk():
+    try:
+        if TFIDF_PATH.exists():
+            vec = joblib.load(TFIDF_PATH)
+            _TFIDF["vec"] = vec
+            _TFIDF["vocab"] = vec.get_feature_names_out()
+            print(f"[TFIDF] loaded from {TFIDF_PATH}")
+            return True
+    except Exception as e:
+        print(f"[TFIDF] load failed: {e}")
+    return False
+
+def _ensure_tfidf():
+    if _TFIDF["vec"] is not None:
+        return True
+    if TFIDF_PATH.exists():
+        try:
+            _TFIDF["vec"] = joblib.load(TFIDF_PATH)
+            _TFIDF["vocab"] = _TFIDF["vec"].get_feature_names_out()
+            return True
+        except Exception as e:
+            print(f"[TFIDF] load failed: {e}")
+
+    if not (_SK_TFIDF_OK and _DATASET_DIR.exists()):
+        return False
+    try:
+        corpus = list(_iter_parquet_texts(max_rows=140000))
+        if not corpus:
+            return False
+        vec = TfidfVectorizer(
+            tokenizer=_split_tokens,     # ← بدل lambda
+            preprocessor=None,
+            token_pattern=None,
+            ngram_range=(1, 2),
+            min_df=3,
+            max_df=0.8
+        )
+        vec.fit(corpus)
+        joblib.dump(vec, TFIDF_PATH)
+        _TFIDF["vec"] = vec
+        _TFIDF["vocab"] = vec.get_feature_names_out()
+        print(f"[TFIDF] fitted {len(corpus)} docs, {len(_TFIDF['vocab'])} terms")
+        return True
+    except Exception as e:
+        print(f"[TFIDF] build failed: {e}")
+        _TFIDF["vec"] = None
+        return False
+    
 def _clean_text_for_summary(text: str) -> str:
-    t = re.sub(r"\[[0-9.:]+(?:→[0-9.:]+)?\]", " ", text)
-    t = re.sub(r"\(.*?\)", " ", t)
+    t = re.sub(r"\[[0-9.:]+(?:→[0-9.:]+)?\]", " ", text)  # احذف التواقيت
+    t = re.sub(r"\(.*?\)", " ", t)                       # احذف (المتحدث)
     t = re.sub(r"\s+", " ", t)
     return t.strip()
 
 def extract_keywords(text, top_k=10):
+    """يرجّع كلمات مفتاحية: يفضّل TF-IDF من Parquet، وإلا عدّ تكراري بسيط."""
     try:
         t = _clean_text_for_summary(text)
+        # محاولة TF-IDF
+        if _ensure_tfidf():
+            doc = " ".join(_tokenize_ar(t))
+            if doc.strip():
+                v = _TFIDF["vec"].transform([doc]).toarray()[0]
+                idx = v.argsort()[::-1]
+                out = []
+                for i in idx:
+                    tok = _TFIDF["vocab"][i]
+                    if tok in _AR_STOP:
+                        continue
+                    out.append(tok)
+                    if len(out) >= top_k:
+                        break
+                if out:
+                    return ", ".join(out)
+        # احتياطي: تكرارات بسيطة
         toks = [w for w in _tokenize_ar(t) if w not in _AR_STOP]
         cnt = Counter(toks)
-        return ", ".join([w for w,_ in cnt.most_common(top_k)])
+        return ", ".join([w for w, _ in cnt.most_common(top_k)])
     except Exception as e:
         print(f"[KW] {e}")
         return ""
