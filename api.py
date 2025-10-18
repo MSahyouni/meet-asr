@@ -457,12 +457,14 @@ def _summarize_abstractive(text: str, target_len: int = 220) -> str:
         summaries = []
         for seg in parts:
             out = p(
-                seg,
-                max_length=min(220, target_len),
-                min_length=60,
+                f"لخّص المقطع التالي بأسلوب عربي فصيح وواضح، واحتفظ بجمال المعنى دون تحريف:\n{seg}",
+                max_length=min(280, target_len + 60),
+                min_length=100,
                 do_sample=False,
                 truncation=True,
-                num_beams=2,
+                num_beams=4,
+                no_repeat_ngram_size=3,
+                repetition_penalty=1.2,
             )
             summaries.append((out[0].get("summary_text") or "").strip())
         # دمج ثم ضغط ملخص الملخص
@@ -470,7 +472,17 @@ def _summarize_abstractive(text: str, target_len: int = 220) -> str:
         if not merged:
             return ""
         if len(parts) > 1:
-            out2 = p(merged, max_length=min(240, target_len+40), min_length=80, do_sample=False, truncation=True, num_beams=2)
+            # دمج الملخصات الجزئية بتوجيه لغوي أوضح وطول أكبر
+            out2 = p(
+                f"اكتب خلاصة موجزة وواضحة للنص التالي، بالعربية الفصحى، مع الحفاظ على الأفكار الأصلية دون حذف المعاني المهمة:\n{merged}",
+                max_length=min(400, target_len + 150),
+                min_length=120,
+                do_sample=False,
+                truncation=True,
+                num_beams=4,
+                no_repeat_ngram_size=3,
+                repetition_penalty=1.2,
+            )
             summ = (out2[0].get("summary_text") or "").strip()
         else:
             summ = merged.strip()
@@ -655,6 +667,8 @@ async def summarize_after(
     path: Optional[str] = Form(None),
     summary_mode: str = Form("lite"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    fake_file: Optional[UploadFile] = File(None),
+    request: Request = None
 ):
     # auth
     if API_TOKEN and (x_api_key or "") != API_TOKEN:
@@ -700,14 +714,16 @@ async def summarize_after(
     except Exception:
         sum_path = None
 
+    base = os.getenv('BASE_URL','').rstrip('/')
+    if (not base) and request:
+        base = str(request.base_url).rstrip('/')
+    summary_url = f"{base}/download?path={quote(sum_path)}" if (base and sum_path) else None
     return JSONResponse({
         "summary": s_text,
         "keywords": kw_csv or "",
         "summary_path": sum_path,
         "summary_source": globals().get("_SUMMARY_SOURCE", "local"),
-        "download_urls": {
-        "summary": (f"{os.getenv('BASE_URL','').rstrip('/')}/download?path={quote(sum_path)}") if (os.getenv('BASE_URL') and sum_path) else None
-       }
+        "download_urls": {"summary": summary_url}
     })
 
 # -------- أدوات مقاطع + SRT/VTT --------
