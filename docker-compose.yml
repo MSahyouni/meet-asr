@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  meet-asr:
+    build: .
+    container_name: meet-asr
+    ports:
+      - "8000:8000"
+    environment:
+      # تفعيل التحميل المسبق اختياري
+      - ASR_WARMUP=1
+      - ASR_ALLOWED_ORIGINS=*
+      - HF_HOME=/app/data/.hf
+      - ASR_DATA_DIR=/app/data
+      # ضع التوكن إن لزم نماذج خاصة
+      # - HF_TOKEN=hf_xxx
+    volumes:
+      - ./data:/app/data
+      - ./static:/app/static
+      - ./requirements.txt:/app/requirements.txt:ro
+      - ./api.py:/app/api.py:ro
+      - ./asr_core.py:/app/asr_core.py:ro
+      - ./nlp_core.py:/app/nlp_core.py:ro
+      - ./config.py:/app/config.py:ro
+    restart: unless-stopped

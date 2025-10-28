@@ -1,413 +1,245 @@
-# asr_core.py - نسخة مستقرة
-import os, pathlib, tempfile, subprocess, shutil, atexit, re, time
-from typing import Optional
-# خيوط أقل وذاكرة أخف
-os.environ.setdefault("OMP_NUM_THREADS","1")
-os.environ.setdefault("MKL_NUM_THREADS","1")
-os.environ.setdefault("NUMEXPR_NUM_THREADS","1")
-os.environ.setdefault("CT2_USE_MMAP","1")
-os.environ["SPEECHBRAIN_LOCAL_FILE_STRATEGY"] = "copy"
-os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-# كاش موحّد مع ضمان وجود المجلد + كتم ضجيج Transformers
-HF_DIR = (pathlib.Path(__file__).resolve().parent / "data" / ".hf")
-HF_DIR.mkdir(parents=True, exist_ok=True)
-os.environ["HF_HOME"] = str(HF_DIR)
-os.environ.pop("TRANSFORMERS_CACHE", None)
-os.environ.setdefault("ASR_DATA_DIR", str(pathlib.Path(__file__).resolve().parent / "data"))
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_DIR))
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+# asr_core.py — نسخة مرتبة وموحّدة
+import os
+import re
+import time
+import atexit
+import shutil
+import pathlib
+import tempfile
+import subprocess
+import traceback
+from typing import Optional, List, Dict
+from collections import defaultdict
 
 import numpy as np
 import soundfile as sf
 import resampy
-from faster_whisper import WhisperModel
 import librosa
 import noisereduce as nr
 import torch
-from collections import Counter
 from huggingface_hub import snapshot_download
-import pandas as pd
-import joblib
-_HF_TOKEN = (os.getenv("HF_TOKEN", "").strip() or None)
-# ---------- إعدادات عامة ----------
-IS_WIN = os.name == "nt"
+from faster_whisper import WhisperModel
+
+import nlp_core
+# اختياري: Pyannote ديازة
 try:
-    import multiprocessing as mp
-    if IS_WIN:
-        try: mp.set_start_method("spawn", force=True)
-        except RuntimeError: pass
-        try: torch.set_num_threads(1)
-        except Exception: pass
-except Exception:
-    pass
+    from pyannote.audio import Pipeline
+    _PYANNOTE_AVAILABLE = True
+except ImportError:
+    _PYANNOTE_AVAILABLE = False
+    print("[DIAR] pyannote.audio not found. Diarization disabled.")
 
-MODEL_CHOICES = ["light", "heavy"]  # light=medium, heavy=large-v3
-_HAS_CUDA = torch.cuda.is_available()
-DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "heavy" if _HAS_CUDA else "light")
-DEVICE = os.getenv("WHISPER_DEVICE", "cuda" if _HAS_CUDA else "cpu")
-COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE", "float16" if DEVICE == "cuda" else "int8_float32")
-# دقة ضرب المصفوفات في PyTorch 2.x لتحسين الاستدلال
+# اختياري: SpeechBrain للتعرّف على المتكلمين
 try:
-    if _HAS_CUDA and hasattr(torch, "set_float32_matmul_precision"):
-        torch.set_float32_matmul_precision("high")
+    from speechbrain.inference import SpeakerRecognition
+    _SB_AVAILABLE = True
 except Exception:
-    pass
+    _SB_AVAILABLE = False
+    print("[SB] speechbrain not found. Speaker recognition disabled.")
 
-GPU_ID = int(os.getenv("GPU_ID", "0"))
-ASR_VAD = os.getenv("ASR_VAD", "0") in ("1","true","True")
-ASR_CHUNK = int(os.getenv("ASR_CHUNK_LEN", "30"))
-ASR_BEAM  = int(os.getenv("ASR_BEAM", "3"))
-_MODEL_CACHE = {}
-LOG_LOAD = os.getenv("ASR_LOG_LOAD", "1") in ("1","true","True")
+# إعدادات خارجية
+from config import settings
 
-# مجلد بيانات موحد تحت data/
-DATA_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data"))
-OUTPUTS_DIR = DATA_DIR / "outputs"
-MODELS_DIR  = DATA_DIR / "models"
-SPK_DIR     = DATA_DIR / "voices"
-for _d in (OUTPUTS_DIR, MODELS_DIR, SPK_DIR):
-    _d.mkdir(parents=True, exist_ok=True)
-KW_DIR      = MODELS_DIR / "keywords"
-KW_DIR.mkdir(parents=True, exist_ok=True)
-TFIDF_PATH  = (KW_DIR / "tfidf_ar.joblib")
+# ===== بيئة أخف =====
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("CT2_USE_MMAP", "1")
+os.environ["SPEECHBRAIN_LOCAL_FILE_STRATEGY"] = "copy"
+os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["HF_HOME"] = str(settings.HF_DIR)
+os.environ.pop("TRANSFORMERS_CACHE", None)
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(settings.HF_DIR))
+
+# ===== ثوابت ومسارات =====
+_HF_TOKEN     = settings.HF_TOKEN
+_HAS_CUDA     = torch.cuda.is_available()
+DEFAULT_MODEL = settings.WHISPER_MODEL
+MODEL_CHOICES = ["light", "heavy"]
+
+if _HAS_CUDA and hasattr(torch, "set_float32_matmul_precision"):
+    torch.set_float32_matmul_precision("high")
+
+OUTPUTS_DIR = settings.OUTPUTS_DIR
+MODELS_DIR  = settings.MODELS_DIR
+SPK_DIR     = settings.SPK_DIR
+
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+SPK_DIR.mkdir(parents=True, exist_ok=True)
+
+_MODEL_CACHE: Dict = {}
 _SPKRECOG = None
-_ENROLLED = {}  # {name: np.ndarray(192,)}
-_DIAR_CACHE = {}  # {(wav_path, mtime, win, hop): np.ndarray[n_frames, 192]}
+_ENROLLED: Dict[str, np.ndarray] = {}
+_PYANNOTE_PIPELINE = None
 
-# ديازة
-DIAR_WIN = 1.0
-DIAR_HOP = 0.5
-AUTO_K_MAX = 5
-AUTO_K_MIN = 1
+# ===== أدوات مساعدة عامة =====
 
-# كائن خطأ موحّد ليرجِع دائمًا Dict
-def _err(msg: str):
+def _speaker_label(i: int) -> str:
+    return f"متكلم_{i:02d}"
+
+def _to_ar_speaker(label: str) -> str:
+    """تحويلات قوية للأشكال الشائعة: SPEAKER_00 / SPEAKER 00 / 00."""
+    s = str(label or "").strip()
+    if not s:
+        return _speaker_label(0)
+    u = s.upper()
+    if u.startswith("SPEAKER"):
+        m = re.search(r"(\d+)$", u)
+        if m:
+            return _speaker_label(int(m.group(1)))
+        return _speaker_label(0)
+    if re.fullmatch(r"\d+", s):
+        return _speaker_label(int(s))
+    return s
+
+def _err(msg: str) -> Dict:
     return {
-        "text": "",
-        "txt_path": None,
-        "summary": "",
-        "summary_path": None,
-        "keywords": "",
-        "segments": [],
+        "text": "", "txt_path": None,
+        "summary": "", "summary_path": None,
+        "keywords": "", "segments": [],
+        "srt_path": None, "vtt_path": None,
         "error": msg,
     }
-# ---------- أدوات ملفية ----------
-def _tmp_wav(suffix=".wav"):
+
+def _tmp_wav(suffix: str = ".wav") -> str:
     return tempfile.NamedTemporaryFile(prefix="asr_", suffix=suffix, delete=False).name
 
-def _safe_filename(p):
+def _safe_filename(p) -> str:
     try:
         base = pathlib.Path(str(p)).stem or "audio"
         return "".join(ch if (ch.isalnum() or ch in "-_.") else "_" for ch in base) or "audio"
     except Exception:
         return "audio"
 
-# ---------- نموذج Whisper مع كاش ----------
 def _resolve_model(name: str) -> str:
     n = (name or "").strip().lower()
-    if n in ("light", "medium"): return "medium"
-    if n in ("heavy", "large-v3"): return "large-v3"
-    # أي اسم آخر → light كافتراضي
-    return "medium"
+    return "large-v3" if n in ("heavy", "large-v3") else "medium"
 
-def get_model(name: str, device: str = None, compute_type: str = None):
-    name = _resolve_model(name)
-    dev = (device or DEVICE).lower()
-    ctp = (compute_type or COMPUTE_TYPE).lower()
-    key = (name, dev, ctp)
-
-    if key not in _MODEL_CACHE:
-        try:
-            # 📌 تحديد المسار ضمن data/models/
-            local_dir = MODELS_DIR / f"whisper-{name}"
-            if not local_dir.exists():
-                print(f"[CACHE] تنزيل الموديل {name} لأول مرة...")
-                snapshot_download(
-                    repo_id=f"Systran/faster-whisper-{name}",
-                    local_dir=local_dir.as_posix(),
-                    local_dir_use_symlinks=False,
-                    cache_dir=(DATA_DIR / ".hf").as_posix(),
-                    token=_HF_TOKEN
-                )
-            else:
-                if LOG_LOAD:
-                    print(f"[CACHE] استخدام النسخة المحلية: {local_dir.as_posix()}")                
-            dev, ctp = _safe_compute(dev, ctp)  # <-- حارس موحّد
-            if torch.cuda.is_available() and dev == "cuda":
-                _MODEL_CACHE[key] = WhisperModel(
-                    local_dir.as_posix(),
-                    device=dev,
-                    device_index=GPU_ID,
-                    compute_type=ctp,
-                    cpu_threads=max(1, os.cpu_count() // 2),
-                    download_root=MODELS_DIR.as_posix()
-                )
-            else:
-                _MODEL_CACHE[key] = WhisperModel(
-                    local_dir.as_posix(),
-                    device=dev,                 # cpu
-                    compute_type=ctp,           # يضمن int8_float32 على CPU
-                    cpu_threads=max(1, os.cpu_count() // 2),
-                    download_root=MODELS_DIR.as_posix()
-                )
-            if LOG_LOAD:
-                print(f"[WHISPER] loaded name={name} path={local_dir.as_posix()} device={dev} compute={ctp}")
-
-        except Exception as e:
-            print(f"[WHISPER] فشل تحميل {name}: {e} → استخدام fallback")
-            fb = "medium" if name != "medium" else "tiny"
-            fb_dir = MODELS_DIR / f"whisper-{fb}"
-            if not fb_dir.exists():
-                snapshot_download(
-                    repo_id=f"Systran/faster-whisper-{fb}",
-                    local_dir=fb_dir.as_posix(),
-                    local_dir_use_symlinks=False,
-                    cache_dir=(DATA_DIR / ".hf").as_posix(),
-                    token=_HF_TOKEN
-                )
-            fdev, fctp = _safe_compute(dev, ctp)
-            _MODEL_CACHE[key] = WhisperModel(
-                fb_dir.as_posix(), device=fdev, compute_type=fctp,
-                cpu_threads=max(1, os.cpu_count() // 2), download_root=MODELS_DIR.as_posix()
-            )
-            if LOG_LOAD:
-                print(f"[WHISPER] fallback name={fb} path={fb_dir.as_posix()} device={fdev} compute={fctp}")
-
-    return _MODEL_CACHE[key]
-
-# داخل مُحمّل Whisper أضف حارس الدقة إن لم يكن موجودًا:
-def _safe_compute(device, compute_type):
+def _safe_compute(device: Optional[str], compute_type: Optional[str]):
     dev = (device or ("cuda" if _HAS_CUDA else "cpu")).lower()
-    ctp = (compute_type or ("float16" if dev=="cuda" else "int8_float32")).lower()
+    ctp = (compute_type or ("float16" if dev == "cuda" else "int8_float32")).lower()
     if dev != "cuda" and ctp == "float16":
         ctp = "int8_float32"
     return dev, ctp
 
-def _squash_repeats(text: str) -> str:
-    # يطوي تكرار نفس الكلمة العربية القصيرة (1–4 أحرف) ≥3 مرات إلى مرتين فقط
-    patt = r'(?:(?<=\s)|^)([اأإآبتثجحخدذرزسشصضطظعغفقكلمنهوية]{1,4})(?:\s+\1){2,}(?=\s|$)'
-    text = re.sub(patt, r'\1 \1', text)
-    # حالات شائعة
-    text = re.sub(r'(اي\s*){3,}', 'اي اي ', text)
-    text = re.sub(r'(اه\s*){3,}', 'اه اه ', text)
-    text = re.sub(r'(او\s*){3,}', 'او او ', text)
-    return text
+# ===== تحميل نموذج Whisper =====
+def get_model(name: str, device: Optional[str] = None, compute_type: Optional[str] = None) -> WhisperModel:
+    name = _resolve_model(name)
+    dev, ctp = _safe_compute(device, compute_type)
+    key = (name, dev, ctp)
+    if key not in _MODEL_CACHE:
+        try:
+            local_dir = MODELS_DIR / f"whisper-{name}"
+            if not local_dir.exists():
+                snapshot_download(
+                    repo_id=f"Systran/faster-whisper-{name}",
+                    local_dir=str(local_dir),
+                    local_dir_use_symlinks=False,
+                    cache_dir=str(settings.HF_DIR),
+                    token=_HF_TOKEN,
+                )
+            model_args = {
+                "device": dev,
+                "compute_type": ctp,
+                "cpu_threads": settings.CPU_THREADS,
+                "download_root": str(MODELS_DIR),
+            }
+            if dev == "cuda":
+                model_args["device_index"] = settings.GPU_ID
+            _MODEL_CACHE[key] = WhisperModel(str(local_dir), **model_args)
+            if settings.ASR_LOG_LOAD:
+                print(f"[WHISPER] loaded name={name} path={local_dir} device={dev} compute={ctp}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load Whisper model {name}: {e}") from e
+    return _MODEL_CACHE[key]
 
-# -------- تنظيف كلام (حشو عربي + تكرارات) --------
-_FILLERS = {
-    "يعني","هيك","تمام","مزبوط","اوكي","أوكي","طيب","مم","اها","اهاه","اممم","اي","ايه","اها؟","طيب؟","اوكي؟",
-    "تمام؟","مزبوط؟","هي","هون","شو","اه","آه"
-}
-def _clean_utterance(t: str) -> str:
-    t0 = re.sub(r"\s+", " ", (t or "").strip())
-    # احذف كلمات الحشو المفردة
-    words, out, prev, run = t0.split(), [], None, 0
-    for w in words:
-        w0 = w.strip(".,،!؟").lower()
-        if w0 in _FILLERS: 
-            continue
-        if w0 == prev:
-            run += 1
-            if run > 3:
-                continue
-        else:
-            prev, run = w0, 1
-        out.append(w)
-    t1 = " ".join(out).strip()
-    # طيّ تكرارات قصيرة جدًا
-    return _squash_repeats(t1)
-
-# ---------- ترقيعات SpeechBrain ----------
-def _force_copy(fetched_file, destination, local_strategy=None):
-    dest = pathlib.Path(destination)
-    dest.parent.mkdir(parents=True, exist_ok=True)
+# ===== Pyannote Diarization =====
+def _load_pyannote_pipeline():
+    global _PYANNOTE_PIPELINE
+    if not _PYANNOTE_AVAILABLE:
+        return None
+    if _PYANNOTE_PIPELINE is not None:
+        return _PYANNOTE_PIPELINE
     try:
-        # إن كان المصدر غير موجود أو ليس ملفًا، أنشئ ملفًا فارغًا مكانه
-        src = pathlib.Path(str(fetched_file))
-        if src.exists() and src.is_file():
-            shutil.copy2(src, dest)
-        else:
-            dest.write_text("# stub", encoding="utf-8")
-    except Exception:
-        try: dest.write_text("# stub", encoding="utf-8")
-        except Exception: pass
-    return dest
+        print("[PYANNOTE] Loading diarization pipeline...")
+        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=_HF_TOKEN)
+        if _HAS_CUDA:
+            pipeline.to(torch.device("cuda"))
+        _PYANNOTE_PIPELINE = pipeline
+        print("[PYANNOTE] Pipeline loaded.")
+        return _PYANNOTE_PIPELINE
+    except Exception as e:
+        print(f"[PYANNOTE] Failed to load pipeline. Disabled. Error: {e}")
+        _PYANNOTE_PIPELINE = None
+        return None
 
+def diarize_with_pyannote(wav_path: str, num_speakers: int = 0) -> List[Dict]:
+    pipeline = _load_pyannote_pipeline()
+    if not pipeline:
+        return []
+    try:
+        params = {}
+        if num_speakers > 0:
+            params["num_speakers"] = num_speakers
+        diarization = pipeline(wav_path, **params)
+        return [
+            {"start": turn.start, "end": turn.end, "speaker": speaker}
+            for turn, _, speaker in diarization.itertracks(yield_label=True)
+        ]
+    except Exception as e:
+        print(f"[PYANNOTE] Diarization failed: {e}")
+        return []
+
+def _map_speakers_to_segments(whisper_segments: List[Dict], speaker_turns: List[Dict]) -> List[Dict]:
+    """إسناد معرفات المتكلمين من pyannote إلى مقاطع Whisper بالاعتماد على التداخل الزمني."""
+    if not speaker_turns:
+        for seg in whisper_segments:
+            seg["speaker"] = _speaker_label(0)
+        return whisper_segments
+
+    for seg in whisper_segments:
+        seg_start, seg_end = seg["start"], seg["end"]
+        overlap = defaultdict(float)
+        for turn in speaker_turns:
+            turn_start, turn_end = turn["start"], turn["end"]
+            o = max(0.0, min(seg_end, turn_end) - max(seg_start, turn_start))
+            if o > 0:
+                overlap[turn["speaker"]] += o
+        ar_label = max(overlap, key=overlap.get) if overlap else _speaker_label(0)
+        seg["speaker"] = _to_ar_speaker(ar_label)
+    return whisper_segments
+
+# ===== Speaker Recognition via SpeechBrain =====
 def get_spkrec():
     global _SPKRECOG
     if _SPKRECOG is not None:
         return _SPKRECOG
+    if not _SB_AVAILABLE:
+        return None
     try:
-        from huggingface_hub import snapshot_download
-        from speechbrain.inference import SpeakerRecognition
-        try:
-            import speechbrain.utils.fetching as sb_fetch
-        except ImportError:
-            from speechbrain.utils import data_utils as sb_fetch
-        try:
-            import speechbrain.inference.interfaces as sb_interfaces
-        except Exception:
-            class _SBInterfacesFallback:
-                def fetch(*a, **k): raise RuntimeError("interfaces missing")
-                def link_with_strategy(*a, **k): return None
-            sb_interfaces = _SBInterfacesFallback()
-
-        DUMMY_FILE = (DATA_DIR / "pretrained_models" / "_dummy_custom.py")
-        DUMMY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        if not DUMMY_FILE.exists():
-            DUMMY_FILE.write_text("# stub\n", encoding="utf-8")
-
-        if hasattr(sb_fetch, "link_with_strategy"): sb_fetch.link_with_strategy = _force_copy
-        if hasattr(sb_interfaces, "link_with_strategy"): sb_interfaces.link_with_strategy = _force_copy
-
-        def _wrap_fetch_module(mod):
-            fname = "fetch" if hasattr(mod, "fetch") else ("download_file" if hasattr(mod, "download_file") else None)
-            if not fname: return
-            original = getattr(mod, fname)
-            def wrapper(*args, **kwargs):
-                code = getattr(original, "__code__", None)
-                names = tuple(getattr(code, "co_varnames", ())) if code else ()
-                if "filename" in names and "filename" not in kwargs and "save_filename" not in kwargs:
-                    kwargs["filename"] = str(DUMMY_FILE)
-                return original(*args, **kwargs)
-            setattr(mod, fname, wrapper)
-        _wrap_fetch_module(sb_fetch); _wrap_fetch_module(sb_interfaces)
-
-        local_dir = (MODELS_DIR / "spkrec_ecapa_cpu").as_posix()
-        snapshot_download(
-            repo_id="speechbrain/spkrec-ecapa-voxceleb",
-            local_dir=local_dir,
-            local_dir_use_symlinks=False,
-            cache_dir=(DATA_DIR / ".hf").as_posix(),
-            token=_HF_TOKEN
-        )
+        local_dir_path = (MODELS_DIR / "spkrec_ecapa_cpu")
+        local_dir = local_dir_path.as_posix()
+        if not local_dir_path.exists():
+            print("[SB] Downloading ECAPA model...")
+            snapshot_download(
+                repo_id="speechbrain/spkrec-ecapa-voxceleb",
+                local_dir=local_dir,
+                local_dir_use_symlinks=False,
+                cache_dir=str(settings.HF_DIR),
+                token=_HF_TOKEN,
+            )
         _SPKRECOG = SpeakerRecognition.from_hparams(
-            source=local_dir, savedir=local_dir,
-            run_opts={"device": "cpu"},
-            hparams_file="hyperparams.yaml",
+            source=local_dir, savedir=local_dir, run_opts={"device": "cpu"}
         )
     except Exception as e:
         print(f"[SB] فشل تحميل ECAPA: {e}")
         _SPKRECOG = None
     return _SPKRECOG
 
-# ---------- I/O صوت ----------
-def _is_container(p: str) -> bool:
-    try:
-        return pathlib.Path(p).suffix.lower() in {".mp4",".m4a",".mov",".3gp",".mkv",".webm",".avi"}
-    except Exception:
-        return False
-
-def _ffmpeg_extract(src: str, dst_wav: str, target_sr=16000):
-    try:
-        cmd = ["ffmpeg","-nostdin","-y","-hide_banner","-loglevel","error",
-               "-i",src,"-ac","1","-ar",str(target_sr),"-vn","-acodec","pcm_s16le",dst_wav]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        err = (e.stderr or b"").decode(errors="ignore")
-        print(f"[FFMPEG] {err[:300]}")
-        raise RuntimeError("ffmpeg_extract_failed") from e
-    except Exception as e:
-        print(f"[FFMPEG] خطأ عام: {e}")
-        raise RuntimeError("ffmpeg_extract_failed") from e
-
-def _wav_read_mono(path, target_sr=16000):
-    try:
-        y, sr = sf.read(path, dtype="float32", always_2d=False)
-        if isinstance(y, np.ndarray) and y.ndim > 1:
-            y = y.mean(axis=1)
-        if sr != target_sr:
-            y = resampy.resample(y, sr, target_sr)
-            sr = target_sr
-        return y.astype(np.float32, copy=False), sr
-    except Exception as e:
-        print(f"[READ] {path}: {e}")
-        return np.array([0.0], dtype=np.float32), target_sr
-
-def to_wav16k(path, target_sr=16000):
-    if not path or not os.path.exists(str(path)):
-        raise ValueError(f"الملف غير موجود: {path}")
-    if _is_container(path):
-        tmp = _tmp_wav()
-        _ffmpeg_extract(path, tmp, target_sr)
-        return tmp
-    y, sr = _wav_read_mono(path, target_sr)
-    y = np.clip(y, -1.0, 1.0)
-    tmp = _tmp_wav()
-    sf.write(tmp, (y*32767).astype(np.int16), target_sr, subtype="PCM_16")
-    return tmp
-
-# ---------- تحسين ----------
-def noisereduce(y, sr, strong=False):
-    try:
-        return nr.reduce_noise(y=y, sr=sr, prop_decrease=0.9 if strong else 0.6, stationary=False)
-    except Exception as e:
-        print(f"[NR] {e}")
-        return y
-
-def enhance_audio(y, sr, strong=False, gain_db=6.0):
-    try:
-        y = librosa.effects.preemphasis(y, coef=0.85)
-        y = noisereduce(y, sr, strong=strong)
-        rms = float(np.sqrt(np.mean(y**2) + 1e-9))
-        target_rms = 0.08
-        if rms > 0: y *= (target_rms / rms)
-        y = np.clip(y * (10 ** (gain_db/20.0)), -1.0, 1.0)
-        return y.astype(np.float32, copy=False)
-    except Exception as e:
-        print(f"[ENH] {e}")
-        return y
-
-def to_wav16k_enhanced(path, enhance=False, whisper_mode="normal", target_sr=16000):
-    wav = to_wav16k(path, target_sr)
-    if not enhance:
-        return wav
-    y, sr = _wav_read_mono(wav, target_sr)
-    strong = (whisper_mode == "whisper")
-    y = enhance_audio(y, sr, strong=strong, gain_db=8.0 if strong else 5.0)
-    tmp = _tmp_wav()
-    sf.write(tmp, (y*32767).astype(np.int16), sr, subtype="PCM_16")
-    return tmp
-
-# ---------- ASR ----------
-def run_asr(wav_path, model_obj, whisper_mode="normal"):
-    try:
-        init_prompt = "لغة عربية عامية سورية." if whisper_mode == "whisper" else "لغة عربية فصحى."
-        segments, info = model_obj.transcribe(
-            wav_path,
-            language="ar",
-            task="transcribe",
-            vad_filter=True,
-            vad_parameters=dict(
-                threshold=0.7,
-                min_silence_duration_ms=700 if whisper_mode == "whisper" else 900,
-                speech_pad_ms=100,
-            ),
-            condition_on_previous_text=False,
-            temperature=[0.0, 0.2, 0.4],
-            beam_size=5,
-            best_of=5,
-            compression_ratio_threshold=2.4,
-            log_prob_threshold=-0.3,
-            no_speech_threshold=0.6 if whisper_mode == "whisper" else 0.55,
-            word_timestamps=False,
-            initial_prompt=init_prompt,
-        )
-        seglist = [s for s in segments]
-        lines = [f"[{s.start:.2f}→{s.end:.2f}] {s.text.strip()}" for s in seglist]
-        duration = getattr(info, "duration", 0.0) or 0.0
-        language = getattr(info, "language", "ar") or "ar"
-        probability = getattr(info, "language_probability", 0.0) or 0.0
-        meta = f"المدة: {duration:.1f}s | اللغة: {language} | ثقة: {probability:.2f}"
-        return meta + "\n\n" + "\n".join(lines), seglist
-    except Exception as e:
-        print(f"[ASR] {e}")
-        return f"خطأ في المعالجة: {e}", []
-
-# ---------- بصمات المتكلمين ----------
-def cosine(a, b):
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     try:
         an = a / (np.linalg.norm(a) + 1e-9)
         bn = b / (np.linalg.norm(b) + 1e-9)
@@ -415,45 +247,47 @@ def cosine(a, b):
     except Exception:
         return 0.0
 
-def _to1d(emb):
+def _to1d(emb) -> np.ndarray:
     try:
         if isinstance(emb, torch.Tensor):
             emb = emb.detach().cpu().numpy()
         arr = np.asarray(emb)
-        if arr.ndim == 1: return arr
-        if arr.shape[-1] == 192: return arr.reshape(-1, 192).mean(axis=0)
+        if arr.ndim == 1:
+            return arr
+        if arr.shape[-1] == 192:
+            return arr.reshape(-1, 192).mean(axis=0)
         return arr.reshape(-1)[:192]
     except Exception:
         return np.zeros(192, dtype=np.float32)
 
-def _embed_file(path):
+def _embed_audio_chunk(chunk: np.ndarray) -> np.ndarray:
+    """إنتاج تمثيل متجه للصوت الخام."""
     try:
         rec = get_spkrec()
         if rec is None:
             return np.zeros(192, dtype=np.float32)
-        wav, sr = _wav_read_mono(path, 16000)
-        t = torch.from_numpy(wav).float().unsqueeze(0)
+        t = torch.from_numpy(chunk).float().unsqueeze(0)
         with torch.no_grad():
             emb = _to1d(rec.encode_batch(t))
         return emb
     except Exception as e:
-        print(f"[EMB] {e}")
+        print(f"[EMB_CHUNK] {e}")
         return np.zeros(192, dtype=np.float32)
 
-def load_enrolled():
+def load_enrolled() -> List[str]:
     try:
         _ENROLLED.clear()
         for p in SPK_DIR.iterdir():
             if p.is_dir():
-                emb = p / "embedding.npy"
-                if emb.exists():
-                    _ENROLLED[p.name] = np.load(emb)
+                emb_path = p / "embedding.npy"
+                if emb_path.exists():
+                    _ENROLLED[p.name] = np.load(emb_path)
         return list(_ENROLLED.keys())
     except Exception as e:
         print(f"[ENROLL_LOAD] {e}")
         return []
 
-def get_speaker_files(name: str):
+def get_speaker_files(name: str) -> List[str]:
     try:
         name = (name or "").strip()
         if not name:
@@ -461,11 +295,11 @@ def get_speaker_files(name: str):
         p = SPK_DIR / name
         if not p.exists() or not p.is_dir():
             return []
-        files = []
-        for fp in sorted(p.iterdir()):
-            if fp.is_file() and fp.name != "embedding.npy":
-                files.append(fp.as_posix())
-        return files
+        return [
+            fp.as_posix()
+            for fp in sorted(p.iterdir())
+            if fp.is_file() and fp.name != "embedding.npy"
+        ]
     except Exception as e:
         print(f"[ENROLL_LIST] {e}")
         return []
@@ -479,29 +313,31 @@ def delete_speaker(name: str):
         if not p.exists():
             return False, "غير موجود."
         shutil.rmtree(p, ignore_errors=True)
-        if name in _ENROLLED:
-            _ENROLLED.pop(name, None)
+        _ENROLLED.pop(name, None)
         return True, "تم الحذف."
     except Exception as e:
         return False, f"فشل الحذف: {e}"
 
-def enroll_voice(name: str, files: list):
+def enroll_voice(name: str, files: List[str]):
     try:
         name = (name or "").strip()
         if not name or not files:
-            return False, "أدخل اسمًا ورفَع ملفات صوتية."
+            return False, "أدخل اسمًا وملفات صوتية."
         user_dir = SPK_DIR / name
-        if user_dir.exists(): shutil.rmtree(user_dir)
+        if user_dir.exists():
+            shutil.rmtree(user_dir)
         user_dir.mkdir(parents=True, exist_ok=True)
         embs = []
-        for f in files:
+        for fpath in files:
             try:
-                fpath = f["name"] if isinstance(f, dict) and "name" in f else (f.name if hasattr(f, "name") else f)
-                if not fpath or not os.path.exists(str(fpath)): continue
+                if not os.path.exists(fpath):
+                    continue
                 dst = user_dir / pathlib.Path(fpath).name
                 shutil.copyfile(fpath, dst)
-                emb = _embed_file(str(dst))
-                if emb is not None: embs.append(emb)
+                wav, sr = _wav_read_mono(dst)
+                emb = _embed_audio_chunk(wav)
+                if emb is not None and np.any(emb):
+                    embs.append(emb)
             except Exception as e:
                 print(f"[ENROLL_FILE] {e}")
         if not embs:
@@ -513,404 +349,291 @@ def enroll_voice(name: str, files: list):
     except Exception as e:
         return False, f"خطأ في التسجيل: {e}"
 
-# ---------- ديازة ----------
-try:
-    from sklearn.cluster import AgglomerativeClustering
-    from sklearn.metrics import silhouette_score
-    SKLEARN_AVAILABLE = True
-except Exception:
-    SKLEARN_AVAILABLE = False
-    print("[DIAR] sklearn غير متوفر، سيتم تعطيل التجميع")
+def _map_generic_to_enrolled_speakers(wav_path: str, seg_rows: List[Dict], threshold: float) -> List[Dict]:
+    """استبدال وسوم المتكلمين العامة بأسماء مسجّلة إذا تشابهت المتجهات."""
+    if not seg_rows or not _ENROLLED:
+        load_enrolled()
+    if get_spkrec() is None or not _ENROLLED:
+        return seg_rows
 
-def label_speakers(wav_path, seglist, threshold=0.65):
-    if not SKLEARN_AVAILABLE:
-        return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
     try:
-        if not _ENROLLED: load_enrolled()
         y, sr = _wav_read_mono(wav_path, 16000)
-        win = int(DIAR_WIN * sr); hop = int(DIAR_HOP * sr)
+        # تجميع مقاطع كل متكلم عام
+        speaker_audio_chunks = defaultdict(list)
+        for seg in seg_rows:
+            start_sample = int(seg["start"] * sr)
+            end_sample   = int(seg["end"]   * sr)
+            speaker_audio_chunks[seg["speaker"]].append(y[start_sample:end_sample])
 
-        frames, tcur, i = [], 0.0, 0
-        while i + win <= len(y):
-            frames.append((tcur, tcur + DIAR_WIN, y[i:i+win]))
-            i += hop; tcur += DIAR_HOP
-        if not frames:
-            return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
+        speaker_mapping = {}
+        used_enrolled_names = set()
 
-        rec = get_spkrec()
-        if rec is None:
-            return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
-
-        # كاش embeddings على مستوى الملف
-        key = (wav_path, pathlib.Path(wav_path).stat().st_mtime, win, hop)
-        X = _DIAR_CACHE.get(key)
-        if X is None:
-            Xl = []
-            with torch.no_grad():
-                for (_, _, chunk) in frames:
-                    t = torch.from_numpy(chunk).float().unsqueeze(0)
-                    v = _to1d(rec.encode_batch(t))
-                    Xl.append(v)
-            if not Xl:
-                return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
-            X = np.stack(Xl, axis=0)
-            _DIAR_CACHE[key] = X
-        if X.size == 0:
-            return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
-        X = np.stack(X, axis=0)
-
-        def _cluster_with_k(k):
-            try:
-                try:
-                    model = AgglomerativeClustering(n_clusters=k, metric="cosine", linkage="average")
-                except TypeError:
-                    model = AgglomerativeClustering(n_clusters=k, affinity="cosine", linkage="average")
-                labels = model.fit_predict(X)
-                score = -1.0
-                if not IS_WIN and k > 1 and len(set(labels)) > 1:
-                    try:
-                        score = silhouette_score(X, labels, metric="cosine")
-                    except Exception:
-                        score = -1.0
-                return labels, score
-            except Exception as e:
-                print(f"[CLUSTER] {e}")
-                return np.zeros(len(X), dtype=int), -1.0
-
-        k_best = max(1, int(getattr(label_speakers, "_k", 2)))
-        auto_k = bool(getattr(label_speakers, "_auto_k", True))
-        if auto_k:
-            labels_best, score_best = None, -1.0
-            for k in range(AUTO_K_MIN, min(AUTO_K_MAX, len(X)) + 1):
-                lbls, sc = _cluster_with_k(k)
-                if sc > score_best:
-                    score_best, labels_best, k_best = sc, lbls, k
-            z = labels_best if labels_best is not None else np.zeros(len(X), dtype=int)
-        else:
-            z, _ = _cluster_with_k(k_best)
-
-        cluster_names = {}
-        for c in sorted(set(z)):
-            idx = np.where(z == c)[0]
-            c_emb = X[idx].mean(axis=0)
-            best_name, best_sim = None, -1.0
-            for name, ref in _ENROLLED.items():
-                sim = cosine(c_emb, ref)
+        for generic_speaker, chunks in speaker_audio_chunks.items():
+            if not chunks:
+                continue
+            full_chunk = np.concatenate(chunks)
+            if len(full_chunk) < sr * 1.0:
+                continue  # أقل من ثانية
+            embedding = _embed_audio_chunk(full_chunk)
+            best_sim, best_name = -1.0, None
+            for enrolled_name, enrolled_emb in _ENROLLED.items():
+                if enrolled_name in used_enrolled_names:
+                    continue
+                sim = _cosine(embedding, enrolled_emb)
                 if sim > best_sim:
-                    best_sim, best_name = sim, name
-            cluster_names[c] = best_name if (best_name and best_sim >= max(threshold, 0.7)) else None
+                    best_sim, best_name = sim, enrolled_name
+            if best_name and best_sim >= threshold:
+                speaker_mapping[generic_speaker] = best_name
+                used_enrolled_names.add(best_name)
 
-        diar_segs = []
-        if len(frames) > 0:
-            cur_c = z[0]; cur_start = frames[0][0]; cur_end = frames[0][1]
-            for j in range(1, len(frames)):
-                if z[j] == cur_c and abs(frames[j][0] - cur_end) < 1e-6:
-                    cur_end = frames[j][1]
-                else:
-                    diar_segs.append((cur_start, cur_end, cur_c))
-                    cur_c = z[j]; cur_start = frames[j][0]; cur_end = frames[j][1]
-            diar_segs.append((cur_start, cur_end, cur_c))
-        # دمج فجوات قصيرة لنفس المتكلم (< 0.3s)
-        merged = []
-        GAP = 0.3
-        for seg in diar_segs:
-            if not merged:
-                merged.append(list(seg)); continue
-            ps, pe, pc = merged[-1]
-            cs, ce, cc = seg
-            if pc == cc and (cs - pe) <= GAP:
-                merged[-1][1] = ce  # وسّع النهاية
+        # تطبيق الاستبدال
+        final_seg_rows = []
+        unmapped_counter = 1
+        unmapped_map = {}
+        for seg in seg_rows:
+            g = seg["speaker"]
+            if g in speaker_mapping:
+                seg["speaker"] = speaker_mapping[g]
             else:
-                merged.append(list(seg))
-        diar_segs = [tuple(t) for t in merged]
-
-        def _overlap(a0,a1,b0,b1): return max(0.0, min(a1,b1) - max(a0,b0))
-
-        labels_out, anon_map, anon_counter = [], {}, 1
-        for s in seglist:
-            s0, s1 = float(s.start), float(s.end)
-            best_c, best_ov = None, 0.0
-            for (d0, d1, cc) in diar_segs:
-                ov = _overlap(s0, s1, d0, d1)
-                if ov > best_ov:
-                    best_ov, best_c = ov, cc
-            if best_c is None:
-                labels_out.append("متكلم 1"); continue
-            name = cluster_names.get(best_c)
-            if name:
-                labels_out.append(name)
-            else:
-                if best_c not in anon_map:
-                    anon_map[best_c] = f"متكلم {anon_counter}"; anon_counter += 1
-                labels_out.append(anon_map[best_c])
-        return labels_out
+                if g not in unmapped_map:
+                    unmapped_map[g] = _speaker_label(unmapped_counter)
+                    unmapped_counter += 1
+                seg["speaker"] = unmapped_map[g]
+            final_seg_rows.append(seg)
+        return final_seg_rows
     except Exception as e:
-        print(f"[DIAR] {e}")
-        return ["متكلم 1" for _ in seglist] if seglist else ["متكلم 1"]
+        print(f"[MAP_ENROLLED] Failed to map speakers: {e}")
+        return seg_rows
 
-# ---------- تلخيص وكلمات مفتاحية بالعربية ----------
-_AR_STOP = set("""
-في على الى إلى مع عن من ما هذا هذه ذلك تلك هناك هنا ثم حيث لقد قد كان كانت يكون كانوا كنت إن أن لكن لأن لو إذا إذ كما ربما حتى بين لدى لديهم لدي إليها فيها منه منها فيه بها بنا لكم لنا فقط جدا جدًا حقا حقيقة أيضًا أيضاً قبل بعد خلال أثناء ضد عبر نحو فوق تحت بين إلا بأن وإن أنّ لا لم لن ليس بدون غير كافة جميع بعض أي أحد نعم مثل ايضا ايضاً جداً جدا حقاً حقا
-""".split())
+# ===== Audio I/O & Enhancement =====
+def _is_container(p: str) -> bool:
+    return pathlib.Path(p).suffix.lower() in {".mp4", ".m4a", ".mov", ".3gp", ".mkv", ".webm", ".avi"}
 
-def _normalize_ar(s: str) -> str:
-    s = s.replace("\u0640","")
-    s = re.sub("[\u0617-\u061A\u064B-\u0652]", "", s)
-    s = re.sub("[\u0622\u0623\u0625]", "\u0627", s)
-    s = s.replace("ى","ي").replace("ئ","ي").replace("ؤ","و").replace("ة","ه")
-    return s
-
-def _tokenize_ar(s: str):
-    s = _normalize_ar(s)
-    return re.findall(r"[اأإآابتثجحخدذرزسشصضطظعغفقكلمنهوية]{2,}", s)
-
-# ========= TF-IDF اختياري اعتماداً على Parquet =========
-try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    _SK_TFIDF_OK = True
-except Exception:
-    _SK_TFIDF_OK = False
-
-_TFIDF = {"vec": None, "vocab": None}
-_TFIDF_MAX_ROWS = int(os.getenv("TFIDF_MAX_ROWS", "140000"))
-_DATASET_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data")) / "datasets" / "ArabicText-Large" / "data"
-
-def _split_tokens(s: str):
-    # الكوربس لدينا مُجزّأ مسبقًا (مسافات). لا تستعمل lambda كي يصلح الحفظ بـ joblib.
-    return s.split()
-
-def _iter_parquet_texts(max_rows=_TFIDF_MAX_ROWS):
-    if not _DATASET_DIR.exists():
-        return
-    remaining = max_rows
-    for pq in sorted(_DATASET_DIR.glob("*.parquet")):
-        try:
-            df = pd.read_parquet(pq)
-        except Exception as e:
-            print(f"[PARQUET] {pq}: {e}")
-            continue
-        if df.empty:
-            continue
-        text_cols = [c for c in df.columns if str(c).lower() in ("text","content","body","document")]
-        if not text_cols:
-            text_cols = df.select_dtypes(include=["object"]).columns.tolist()
-        if not text_cols:
-            continue
-        col = text_cols[0]
-        for v in df[col].astype(str).head(remaining):
-            yield " ".join(_tokenize_ar(v))
-        remaining -= min(len(df), remaining)
-        if remaining <= 0:
-            break
-
-def _load_tfidf_from_disk():
+def _ffmpeg_extract(src: str, dst_wav: str, target_sr=16000):
     try:
-        if TFIDF_PATH.exists():
-            vec = joblib.load(TFIDF_PATH)
-            _TFIDF["vec"] = vec
-            _TFIDF["vocab"] = vec.get_feature_names_out()
-            print(f"[TFIDF] loaded from {TFIDF_PATH}")
-            return True
-    except Exception as e:
-        print(f"[TFIDF] load failed: {e}")
-    return False
+        cmd = [
+            "ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", src, "-ac", "1", "-ar", str(target_sr), "-vn", "-acodec", "pcm_s16le", dst_wav
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"ffmpeg failed: {(e.stderr or b'').decode(errors='ignore')[:300]}") from e
 
-def _ensure_tfidf():
-    if _TFIDF["vec"] is not None:
-        return True
-    if TFIDF_PATH.exists():
-        try:
-            _TFIDF["vec"] = joblib.load(TFIDF_PATH)
-            _TFIDF["vocab"] = _TFIDF["vec"].get_feature_names_out()
-            return True
-        except Exception as e:
-            print(f"[TFIDF] load failed: {e}")
+def _wav_read_mono(path, target_sr=16000):
+    y, sr = sf.read(path, dtype="float32", always_2d=False)
+    if y.ndim > 1:
+        y = y.mean(axis=1)
+    if sr != target_sr:
+        y = resampy.resample(y, sr, target_sr)
+        sr = target_sr
+    return y.astype(np.float32, copy=False), sr
 
-    if not (_SK_TFIDF_OK and _DATASET_DIR.exists()):
-        return False
+def to_wav16k(path, target_sr=16000):
+    if not os.path.exists(str(path)):
+        raise ValueError(f"File not found: {path}")
+    tmp = _tmp_wav()
+    if _is_container(path):
+        _ffmpeg_extract(path, tmp, target_sr)
+    else:
+        y, _ = _wav_read_mono(path, target_sr)
+        sf.write(tmp, (np.clip(y, -1.0, 1.0) * 32767).astype(np.int16), target_sr)
+    return tmp
+
+def enhance_audio(y: np.ndarray, sr: int, strong=False, gain_db=6.0) -> np.ndarray:
     try:
-        corpus = list(_iter_parquet_texts(max_rows=140000))
-        if not corpus:
-            return False
-        vec = TfidfVectorizer(
-            tokenizer=_split_tokens,     # ← بدل lambda
-            preprocessor=None,
-            token_pattern=None,
-            ngram_range=(1, 2),
-            min_df=3,
-            max_df=0.8
-        )
-        vec.fit(corpus)
-        joblib.dump(vec, TFIDF_PATH)
-        _TFIDF["vec"] = vec
-        _TFIDF["vocab"] = vec.get_feature_names_out()
-        print(f"[TFIDF] fitted {len(corpus)} docs, {len(_TFIDF['vocab'])} terms")
-        return True
-    except Exception as e:
-        print(f"[TFIDF] build failed: {e}")
-        _TFIDF["vec"] = None
-        return False
-    
-def _clean_text_for_summary(text: str) -> str:
-    t = re.sub(r"\[[0-9.:]+(?:→[0-9.:]+)?\]", " ", text)  # احذف التواقيت
-    t = re.sub(r"\(.*?\)", " ", t)                       # احذف (المتحدث)
-    t = re.sub(r"\s+", " ", t)
-    return t.strip()
+        y = librosa.effects.preemphasis(y, coef=0.85)
+        y = nr.reduce_noise(y=y, sr=sr, prop_decrease=0.9 if strong else 0.6, stationary=False)
+        rms = float(np.sqrt(np.mean(y**2) + 1e-9))
+        if rms > 0:
+            y *= (0.08 / rms)
+        y = np.clip(y * (10 ** (gain_db / 20.0)), -1.0, 1.0)
+        return y.astype(np.float32, copy=False)
+    except Exception:
+        return y
 
-def extract_keywords(text, top_k=10):
-    """يرجّع كلمات مفتاحية: يفضّل TF-IDF من Parquet، وإلا عدّ تكراري بسيط."""
-    try:
-        t = _clean_text_for_summary(text)
-        # محاولة TF-IDF
-        if _ensure_tfidf():
-            doc = " ".join(_tokenize_ar(t))
-            if doc.strip():
-                v = _TFIDF["vec"].transform([doc]).toarray()[0]
-                idx = v.argsort()[::-1]
-                out = []
-                for i in idx:
-                    tok = _TFIDF["vocab"][i]
-                    if tok in _AR_STOP:
-                        continue
-                    out.append(tok)
-                    if len(out) >= top_k:
-                        break
-                if out:
-                    return ", ".join(out)
-        # احتياطي: تكرارات بسيطة
-        toks = [w for w in _tokenize_ar(t) if w not in _AR_STOP]
-        cnt = Counter(toks)
-        return ", ".join([w for w, _ in cnt.most_common(top_k)])
-    except Exception as e:
-        print(f"[KW] {e}")
+def to_wav16k_enhanced(path, enhance=False, whisper_mode="normal", target_sr=16000):
+    wav = to_wav16k(path, target_sr)
+    if not enhance:
+        return wav
+    y, sr = _wav_read_mono(wav, target_sr)
+    strong = (whisper_mode == "whisper")
+    y = enhance_audio(y, sr, strong=strong, gain_db=8.0 if strong else 5.0)
+    tmp = _tmp_wav()
+    sf.write(tmp, (y * 32767).astype(np.int16), sr)
+    return tmp
+
+# ===== ASR =====
+def run_asr(wav_path: str, model_obj: WhisperModel, whisper_mode: str = "normal"):
+    # يمكنك تمرير initial_prompt إذا أردت توجيه النمط
+    init_prompt = "لغة عربية عامية سورية." if whisper_mode == "whisper" else "لغة عربية فصحى."
+    segments_generator, info = model_obj.transcribe(
+        wav_path,
+        language="ar",
+        task="transcribe",
+        vad_filter=True,
+        vad_parameters={"threshold": 0.7, "min_silence_duration_ms": 800, "speech_pad_ms": 100},
+        beam_size=5,
+        temperature=[0.0, 0.2, 0.4],
+        initial_prompt=init_prompt,
+    )
+    seglist = [{"start": s.start, "end": s.end, "text": s.text.strip()} for s in segments_generator]
+    meta = f"المدة: {info.duration:.1f}s | اللغة: {info.language} | ثقة: {info.language_probability:.2f}"
+    return meta, seglist
+
+# ===== تنظيف نص + كلمات مفتاحية =====
+def _clean_utterance(t: str) -> str:
+    """تنظيف خفيف لعرض النص للمستخدم: يزيل الحشويات والتكرارات فقط."""
+    if not t:
         return ""
+    _FILLERS = {"يعني","تمام","طيب","هيك","مم","اها","اه","آه","بس"}
+    t = re.sub(r"\s+", " ", t).strip()
+    t = re.sub(r"([.!؟?،,:;])\1+", r"\1", t)        # دمج تكرار الترقيم
+    t = t.replace("?", "؟")                          # توحيد علامة السؤال
+    # تقليص تكرار الكلمات المتتالية 3+ إلى 2 (اه اه اه -> اه اه)
+    t = re.sub(r"\b(\w+)(?:\s+\1){2,}\b", r"\1 \1", t)
+    words = [w for w in t.split() if w.lower() not in _FILLERS]
+    cleaned = " ".join(words)
+    cleaned = re.sub(r"\s*([،,:;.!؟])\s*", r"\1 ", cleaned).strip()
+    return cleaned
 
-def summarize_text(text, summary_mode="off"):
-    return ""
+# ===== ترقيم المتكلمين =====
+def _renumber_speakers(text: str) -> str:
+    """إعادة ترقيم المتكلمين بترتيب الظهور إلى متكلم_01, متكلم_02..."""
+    mapping: Dict[str, int] = {}
+    next_id = 1
+    def repl(m):
+        nonlocal next_id
+        old_num = m.group(1)  # يلتقط الرقم سواء بعد مسافة أو شرطة سفلية
+        if old_num not in mapping:
+            mapping[old_num] = next_id
+            next_id += 1
+        return f"(متكلم_{mapping[old_num]:02d})"
+    # يدعم (متكلم 3) و(متكلم_07)
+    return re.sub(r"\(متكلم[_\s]+(\d+)\)", repl, text)
 
-# ---------- توليد SRT/VTT وإصدار ----------
+# ===== توليد ترجمات SRT/VTT =====
 def _fmt_ts(t: float) -> str:
-    t = max(0.0, float(t))
-    total_ms = int(round(t * 1000.0))   # ← أدق
-    s, ms = divmod(total_ms, 1000)
-    m, s = divmod(s, 60)
-    h, m = divmod(m, 60)
+    ms = int(round(t * 1000))
+    s, ms = divmod(ms, 1000)
+    m, s  = divmod(s, 60)
+    h, m  = divmod(m, 60)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-def segments_to_srt(segments, base_txt_path: str) -> str:
-    p = pathlib.Path(base_txt_path) if base_txt_path else (OUTPUTS_DIR / "transcript")
-    srt_path = p.with_suffix(".srt")
-    with open(srt_path, "w", encoding="utf-8", newline="\n") as f:
+def segments_to_srt(segments: List[Dict], base_path: str, out_path: Optional[str] = None) -> str:
+    """
+    يكتب SRT لمقاطع معطاة.
+    إذا تم تمرير out_path يُستخدم مباشرة، وإلا يُشتق من base_path بامتداد .srt.
+    """
+    p = pathlib.Path(out_path) if out_path else pathlib.Path(base_path).with_suffix(".srt")
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        rlm = "\u200F"  # Right-to-Left Mark لتثبيت الاتجاه في بعض المشغلات
         for i, seg in enumerate(segments, 1):
-            f.write(
-                f"{i}\n{_fmt_ts(seg['start'])} --> {_fmt_ts(seg['end'])}\n"
-                f"{seg['speaker']}: {seg['text']}\n\n"
-            )
-    return srt_path.as_posix()
+            spk = _to_ar_speaker(seg.get('speaker',''))
+            f.write(f"{i}\n{_fmt_ts(seg['start'])} --> {_fmt_ts(seg['end'])}\n{rlm}{spk}: {seg['text']}\n\n")
+    return str(p)
 
-def segments_to_vtt(segments, base_txt_path: str) -> str:
-    p = pathlib.Path(base_txt_path) if base_txt_path else (OUTPUTS_DIR / "transcript")
-    vtt_path = p.with_suffix(".vtt")
-    with open(vtt_path, "w", encoding="utf-8", newline="\n") as f:
+def segments_to_vtt(segments: List[Dict], base_path: str, out_path: Optional[str] = None) -> str:
+    """
+    يكتب VTT لمقاطع معطاة.
+    إذا تم تمرير out_path يُستخدم مباشرة، وإلا يُشتق من base_path بامتداد .vtt.
+    """
+    p = pathlib.Path(out_path) if out_path else pathlib.Path(base_path).with_suffix(".vtt")
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
         f.write("WEBVTT\n\n")
+        rlm = "\u200F"
         for seg in segments:
             st = _fmt_ts(seg["start"]).replace(",", ".")
             en = _fmt_ts(seg["end"]).replace(",", ".")
-            f.write(f"{st} --> {en}\n{seg['speaker']}: {seg['text']}\n\n")
-    return vtt_path.as_posix()
+            spk = _to_ar_speaker(seg.get('speaker',''))
+            f.write(f"{st} --> {en}\n{rlm}{spk}: {seg['text']}\n\n")
+    return str(p)
 
-def version() -> str:
-    return "asr_core/1.0.0"
-
-# ---------- نقاط الدخول ----------
-def _normalize_single_file_input(file_path):
+# ===== المسار الرئيسي =====
+def process(
+    file_path: str,
+    model_name: Optional[str] = None,
+    enhance: bool = False,
+    whisper_mode: str = "normal",
+    diarize: bool = False,
+    auto_k: bool = True,
+    max_speakers: int = 2,
+    enroll_threshold: float = 0.65,
+    device_sel: str = "auto",
+    compute_sel: str = "auto",
+    punctuate: bool = False,
+    summary_mode: str = "best",
+):
+    if not os.path.exists(file_path):
+        return _err(f"File not found: {file_path}")
     try:
-        if isinstance(file_path, dict):
-            file_path = file_path.get("name") or file_path.get("path")
-        return str(file_path) if file_path else ""
-    except Exception:
-        return ""
-
-def process(file_path, model_name=None, enhance=False, whisper_mode="normal",
-            diarize=False, auto_k=True, max_speakers=2, enroll_threshold=0.65,
-            device_sel="auto", compute_sel="auto", summary_mode="best",
-            punctuate=False):
-    file_path = _normalize_single_file_input(file_path)
-    if not file_path:
-        return _err("الرجاء رفع ملف صحيح.")
-    try:
-        if not os.path.exists(file_path):
-            return _err(f"الملف غير موجود: {file_path}")
-    except Exception as e:
-        return _err(f"خطأ في التحقق من الملف: {str(e)}")
-
-    try:
-        if (device_sel or "auto") == "auto":
-            device_sel = "cuda" if _HAS_CUDA else "cpu"
-        if (compute_sel or "auto") == "auto":
-            compute_sel = "float16" if device_sel == "cuda" else "int8_float32"
-
-        if IS_WIN and diarize:
-            # تقليل التعقيد لتجنّب أخطاء PIPE/MP
-            auto_k = False if auto_k is None else bool(auto_k)
-            max_speakers = min(2, int(max_speakers or 2))
-
+        # 1) تحضير الصوت والنموذج
         wav = to_wav16k_enhanced(file_path, enhance=enhance, whisper_mode=whisper_mode)
         model = get_model(model_name or DEFAULT_MODEL, device_sel, compute_sel)
-        header_txt, seglist = run_asr(wav, model, whisper_mode=whisper_mode)
 
-        if diarize:
-            label_speakers._auto_k = bool(auto_k)
-            label_speakers._k = int(max(1, int(max_speakers or 2)))
-            spk_labels = label_speakers(wav, seglist, threshold=float(enroll_threshold or 0.65))
+        # 2) ASR
+        header_txt, whisper_segments = run_asr(wav, model, whisper_mode=whisper_mode)
+
+        # 3) ديازة اختيارية
+        if diarize and _PYANNOTE_AVAILABLE:
+            num_spk = max_speakers if not auto_k else 0
+            speaker_turns = diarize_with_pyannote(wav, num_speakers=num_spk)
+            seg_rows = _map_speakers_to_segments(whisper_segments, speaker_turns)
+            seg_rows = _map_generic_to_enrolled_speakers(wav, seg_rows, enroll_threshold)
         else:
-            spk_labels = ["غير معروف"] * len(seglist)
+            seg_rows = _map_speakers_to_segments(whisper_segments, [])
+
+        # 4) نص نهائي
+        # ترقيم اختياري قبل التنظيف الخفيف
+        if punctuate:
+            try:
+                for s in seg_rows:
+                    s["text"] = nlp_core.restore_punct(s.get("text",""))
+            except Exception as _e:
+                print(f"[PUNCT] failed: {_e}")
+        # RTL-friendly formatting:
+        # متكلم_XX
+        # [00.00 → 12.34]
+        # النص
+        # ────────────────
+        RLM = "\u200F"  # Right-to-Left Mark لتثبيت الاتجاه العربي
+        LRM = "\u200E"  # Left-to-Right Mark لضبط اتجاه الأرقام داخل العربية
 
         lines = []
-        seg_rows = []
-        last_end = None
-        for s, who in zip(seglist, spk_labels):
-            st = float(s.start); en = float(s.end)
-            txt = _clean_utterance(s.text.strip())
-            # تنقيط بسيط حسب فجوة الصمت
-            if punctuate and last_end is not None and (st - last_end) >= 1.2 and txt and not txt.endswith(("؟","!",".")):
-                txt += "."
-            lines.append(f"[{st:.2f}→{en:.2f}] ({who}) {txt}")
-            seg_rows.append({"start": st, "end": en, "speaker": who, "text": txt})
-            last_end = en
+        for s in seg_rows:
+            spk = _to_ar_speaker(s.get("speaker",""))
+            st  = f"{LRM}{s['start']:.2f}{LRM}"
+            en  = f"{LRM}{s['end']:.2f}{LRM}"
+            txt = _clean_utterance(s['text'])
+            lines.append(
+                f"{RLM}{spk}\n"
+                f"{RLM}[{st} → {en}]\n"
+                f"{RLM}{txt}\n"
+                f"••••••••••••••••••••••••••••••••"
+            )
+        full_txt = header_txt + "\n\n" + "\n".join(lines)
 
-        full_txt = header_txt.split("\n\n", 1)[0] + "\n\n" + "\n".join(lines)
-        full_txt = _squash_repeats(full_txt)
+        raw_text_for_keywords = "\n".join([s.get("text", "") for s in seg_rows])
+        keywords = nlp_core.extract_keywords(raw_text_for_keywords)
 
-        summary_text = ""
-        keywords = extract_keywords(full_txt)
-
-        OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+        # 6) حفظ الملفات
         base = _safe_filename(file_path)
-        out_path = (OUTPUTS_DIR / f"{base}_transcript.txt").as_posix()
-        try:
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(full_txt)
-        except Exception as e:
-            print(f"[SAVE_TXT] {e}"); out_path = None
+        out_path = str(OUTPUTS_DIR / f"{base}_transcript.txt")
+        pathlib.Path(out_path).write_text(full_txt, encoding="utf-8")
 
-        sum_path = None
+        # 7) ترجمات
+        for s in seg_rows:
+            s["speaker"] = _to_ar_speaker(s.get("speaker",""))
+        srt_path = segments_to_srt(seg_rows, out_path)
+        vtt_path = segments_to_vtt(seg_rows, out_path)
 
-        # توليد ملفات SRT/VTT
-        srt_path = vtt_path = None
-        try:
-            if seg_rows:
-                srt_path = segments_to_srt(seg_rows, out_path)
-                vtt_path = segments_to_vtt(seg_rows, out_path)
-        except Exception as e:
-            print(f"[TIMECODES] {e}")
+        # ترقيم المتكلمين النهائي
+        numbered_text = _renumber_speakers(full_txt)
 
-        # كائن موحّد للنتيجة
         return {
-            "text": full_txt,
+            "text": numbered_text,
             "txt_path": out_path,
             "summary": "",
-            "summary_path": sum_path,
+            "summary_path": None,
             "keywords": keywords,
             "segments": seg_rows,
             "srt_path": srt_path,
@@ -918,105 +641,97 @@ def process(file_path, model_name=None, enhance=False, whisper_mode="normal",
         }
 
     except Exception as e:
-        msg = f"خطأ أثناء المعالجة: {str(e)}"
-        print(f"[PROCESS] {msg}")
+        msg = f"Error during processing: {e}"
+        print(f"[PROCESS] {msg}\n{traceback.format_exc()}")
         return _err(msg)
 
+def process_many(file_paths: List[str], **kwargs):
+    """
+    تفريغ مجموعة ملفات مع دعم الدمج الزمني للمقاطع والترجمات.
 
-def process_many(file_paths, model_name=None, enhance=False, whisper_mode="normal",
-                 diarize=False, auto_k=True, max_speakers=2, enroll_threshold=0.65,
-                 device_sel="auto", compute_sel="auto", summary_mode="best",
-                 punctuate=False):
+    المعاملات الاختيارية في kwargs:
+      - merge_outputs: دمج المقاطع زمنيًا عبر الملفات (افتراضي True)
+      - tag_sources: وسم نص كل مقطع باسم الملف [name] عند الدمج (افتراضي True)
+
+    القيمة المرجعة:
+      - قاموس بالمخرجات المدمجة، ويشمل المفتاح "items" الذي يحوي
+        نتائج كل ملف على حدة كما تُعيدها الدالة process.
+    """
     if not file_paths:
         return _err("الرجاء رفع ملفات.")
-    try:
-        if isinstance(file_paths, dict):
-            fp = file_paths.get("name") or file_paths.get("path")
-            file_paths = [fp] if fp else []
-        if not isinstance(file_paths, (list, tuple)):
-            file_paths = [file_paths]
 
-        norm_paths = []
-        for fp in file_paths:
-            if not fp: continue
-            if isinstance(fp, dict):
-                p = fp.get("name") or fp.get("path")
-                if p: norm_paths.append(str(p))
-            else:
-                norm_paths.append(str(fp))
-        if not norm_paths:
-            return _err("لم أتعرف على مسارات صالحة.")
+    merge_outputs = kwargs.pop("merge_outputs", True)
+    tag_sources   = kwargs.pop("tag_sources", True)
 
-        if (device_sel or "auto") == "auto":
-            device_sel = "cuda" if _HAS_CUDA else "cpu"
-        if (compute_sel or "auto") == "auto":
-            compute_sel = "float16" if device_sel == "cuda" else "int8_float32"
-        if IS_WIN and diarize:
-            # قيود آمنة لويندوز: عدد متكلمين صغير ودون تقدير تلقائي مكلف
-            auto_k = False if auto_k is None else bool(auto_k)
-            max_speakers = min(2, int(max_speakers or 2))
+    per_file_results: List[Dict] = []
+    all_text_blocks: List[str]   = []
+    all_raw_text: List[str]      = []
+    all_segments: List[Dict]     = []
+    cumulative_offset = 0.0
 
-        OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-        all_texts, all_summaries = [], []
-        for fp in norm_paths:
-            res = process(
-                fp, model_name, enhance, whisper_mode, diarize,
-                auto_k, max_speakers, enroll_threshold,
-                device_sel, compute_sel, "off", punctuate=punctuate
-            )
+    for fp in file_paths:
+        res = process(fp, **kwargs)
+        per_file_results.append(res)
+        name = pathlib.Path(fp).stem
 
-            txt = _squash_repeats((res or {}).get("text",""))
+        all_text_blocks.append(f"### ملف: {name}\n{res.get('text','')}\n")
+        raw_from_segments = "\n".join([s.get("text", "") for s in res.get("segments", [])])
+        all_raw_text.append(raw_from_segments)
 
-            name = pathlib.Path(fp).name
-            all_texts.append(f"### ملف: {name}\n{txt}\n")
-            if res and res.get("summary"):
-                all_summaries.append(f"### ملخص {name}:\n{res['summary']}\n")
+        if merge_outputs:
+            segs = res.get("segments", [])
+            for s in segs:
+                new_seg = dict(s)
+                new_seg["start"] = float(s["start"]) + cumulative_offset
+                new_seg["end"]   = float(s["end"])   + cumulative_offset
+                if tag_sources:
+                    new_seg["text"] = f"[{name}] {new_seg.get('text','')}"
+                all_segments.append(new_seg)
+            if segs:
+                cumulative_offset += max(float(s["end"]) for s in segs)
 
-        merged_text = "\n\n".join(all_texts).strip()
-        merged_summary = "\n\n".join(all_summaries).strip() if all_summaries else ""
+    # ملف نصي موحّد
+    merged_text = "\n\n".join(all_text_blocks).strip()
+    merged_txt_path = str(OUTPUTS_DIR / "batch_transcripts.txt")
+    pathlib.Path(merged_txt_path).write_text(merged_text, encoding="utf-8")
 
-        merged_path = (OUTPUTS_DIR / "batch_transcripts.txt").as_posix()
-        try:
-            with open(merged_path, "w", encoding="utf-8") as f:
-                f.write(merged_text)
-        except Exception as e:
-            print(f"[SAVE_BATCH_TXT] {e}"); merged_path = None
+    merged_keywords = nlp_core.extract_keywords("\n".join(all_raw_text))
 
-        merged_sum_path = None
-        if merged_summary:
-            merged_sum_path = (OUTPUTS_DIR / "batch_summaries.txt").as_posix()
-            try:
-                with open(merged_sum_path, "w", encoding="utf-8") as f:
-                    f.write(merged_summary)
-            except Exception as e:
-                print(f"[SAVE_BATCH_SUM] {e}"); merged_sum_path = None
+    # ترقيم المتكلمين في النص المدمج
+    merged_text = _renumber_speakers(merged_text)
 
-        return {
-            "text": merged_text,
-            "txt_path": merged_path,
-            "summary": "",
-            "summary_path": None,
-            "keywords": "",
-            "segments": [],
-            "srt_path": None,
-            "vtt_path": None,
-        }
+    merged_srt_path = None
+    merged_vtt_path = None
+    if merge_outputs and all_segments:
+        all_segments.sort(key=lambda s: (float(s["start"]), float(s["end"])))
+        srt_out = OUTPUTS_DIR / "batch_merged.srt"
+        vtt_out = OUTPUTS_DIR / "batch_merged.vtt"
+        merged_srt_path = segments_to_srt(all_segments, base_path="", out_path=str(srt_out))
+        merged_vtt_path = segments_to_vtt(all_segments, base_path="", out_path=str(vtt_out))
 
-    except Exception as e:
-        msg = f"خطأ في معالجة الملفات المتعددة: {str(e)}"
-        print(f"[PROCESS_MANY] {msg}")
-        return _err(msg)
+    return {
+        "text": merged_text,
+        "txt_path": merged_txt_path,
+        "summary": "",
+        "summary_path": None,
+        "keywords": merged_keywords,
+        "segments": all_segments if merge_outputs else [],
+        "srt_path": merged_srt_path,
+        "vtt_path": merged_vtt_path,
+        "items": per_file_results,
+    }
 
-# ---------- تنظيف مؤقت ----------
+# ===== تنظيف مؤقت =====
 def cleanup_temp_files():
     try:
         temp_dir = pathlib.Path(tempfile.gettempdir())
+        cutoff = time.time() - 86400  # 24h
         for temp_file in temp_dir.glob("asr_*.wav"):
-            if temp_file.stat().st_mtime < (time.time() - 86400):  # أقدم من يوم
-                try:
+            try:
+                if temp_file.stat().st_mtime < cutoff:
                     temp_file.unlink()
-                except Exception:
-                    pass
+            except Exception:
+                pass
     except Exception:
         pass
 

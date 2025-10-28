@@ -1,84 +1,69 @@
 # api.py - نسخة مستقرة مُحسّنة
-import os, tempfile, shutil, pathlib, re, collections, subprocess, traceback
-from typing import List, Tuple, Optional, Set
+import tempfile, shutil, pathlib, re, traceback, secrets, json, sys, asyncio, subprocess
+from typing import List, Tuple, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Request
 import contextvars
 import warnings
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, FileResponse, Response, PlainTextResponse
+from fastapi.responses import JSONResponse, FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from urllib.parse import quote
 import logging
+import os
 import platform
+import aiofiles
 
-HF_DIR = (pathlib.Path(__file__).resolve().parent / "data" / ".hf")
-HF_DIR.mkdir(parents=True, exist_ok=True)            # ← تأكد من وجود المجلد
-os.environ["HF_HOME"] = str(HF_DIR)                 # ← اعتمد HF_HOME فقط
-os.environ.pop("TRANSFORMERS_CACHE", None)          # ← أزل الكاش القديم
-os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+from config import settings
+import nlp_core
 
-import sys, asyncio
+# ——— تحذيرات طرف ثالث ———
+warnings.filterwarnings("ignore", category=UserWarning, message=".*TypedStorage is deprecated.*")
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*TypedStorage is deprecated.*")
+warnings.filterwarnings("ignore", message="You are using the default legacy behaviour of the <class 'transformers.models.t5.tokenization_t5.T5Tokenizer'>")
+warnings.filterwarnings("ignore", message="The sentencepiece tokenizer that you are converting to a fast tokenizer uses the byte fallback option.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*pkg_resources is deprecated as an API.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*torchaudio._backend.set_audio_backend has been deprecated.*")
+warnings.filterwarnings("ignore", message=".*deprecated.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*symlinks on Windows.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*legacy behaviour of the <class 'transformers.*", category=UserWarning)
 if sys.platform.startswith("win"):
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     except Exception:
         pass
 
-try:
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM, pipeline  # type: ignore
-    try:
-        # اختياري: للتكميم 4-بت إذا توفّر
-        from transformers import BitsAndBytesConfig  # type: ignore
-    except Exception:
-        BitsAndBytesConfig = None  # type: ignore
-    _TF_AVAILABLE = True
-except Exception:
-    _TF_AVAILABLE = False
-
-warnings.filterwarnings("ignore", message=".*TypedStorage is deprecated.*", category=UserWarning)
-warnings.filterwarnings("ignore", message=".*TypedStorage is deprecated.*", category=FutureWarning)
-warnings.filterwarnings("ignore", message="You are using the default legacy behaviour of the <class 'transformers.models.t5.tokenization_t5.T5Tokenizer'>")
-warnings.filterwarnings("ignore", message="The sentencepiece tokenizer that you are converting to a fast tokenizer uses the byte fallback option.*")
+os.makedirs("data/logs", exist_ok=True)
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.WARNING),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    handlers=[
+        logging.FileHandler("data/logs/server.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger("asr_api")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
+for name in [
+    "speechbrain", "speechbrain.utils.checkpoints", "pyannote",
+    "huggingface_hub", "transformers", "httpx", "urllib3"
+]:
+    logging.getLogger(name).handlers.clear()
+    logging.getLogger(name).propagate = False
+    logging.getLogger(name).setLevel(logging.WARNING)
 app = FastAPI(title="Arabic ASR API", version="0.1.2")
 _RID: contextvars.ContextVar[str] = contextvars.ContextVar("rid", default="")
 
-# جذر البيانات الموحد
-DATA_DIR = pathlib.Path(os.getenv("ASR_DATA_DIR", "data")).resolve()
-OUTPUTS_DIR = (DATA_DIR / "outputs").resolve()
-OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-
-# ===================== تعديل: تفضيل النماذج المحلية =====================
-LOCAL_MODELS = (DATA_DIR / "models").resolve()
-E5_BASE_DIR  = (LOCAL_MODELS / "multilingual-e5-base")
-SUM_MT5_DIR  = (LOCAL_MODELS / "summarizers" / "mT5_XLSum")
-
-# إذا وُجد المسار المحلي خذه، وإلا استخدم الاسم الافتراضي
-def _prefer_local(path: pathlib.Path, fallback: str):
-    return path.as_posix() if path.exists() else fallback
-
-# RAG embeddings model
-_rag_mname = os.getenv("RAG_EMB_MODEL",
-    _prefer_local(E5_BASE_DIR, "intfloat/multilingual-e5-base"))
-
-# Summarizer model
-_TF_MODEL = os.getenv("SUMMARIZER_MODEL",
-    _prefer_local(SUM_MT5_DIR, "csebuetnlp/mT5_multilingual_XLSum"))
-
-# حدود تلخيص آمنة للذاكرة
-SUM_MAX_INPUT_TOKENS = max(256, int(os.getenv("SUM_MAX_INPUT_TOKENS", "800")))  # إدخال كل جزء
-SUM_MAX_PARTS = max(1, int(os.getenv("SUM_MAX_PARTS", "8")))  # حد أقصى لعدد الأجزاء
-
-os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", (LOCAL_MODELS).as_posix())
 # Lifespan replaces deprecated on_event("startup")
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    if os.getenv("ASR_WARMUP", "0") in ("1", "true", "True"):
+    """
+    دورة حياة التطبيق. حاليًا لا يتم التحميل المسبق حسب الطلب.
+    يمكن إضافة منطق التحميل المسبق هنا إذا تغيرت المتطلبات.
+    """
+    # ملاحظة: تم تعطيل التحميل المسبق بناءً على طلب المستخدم
+    if settings.ASR_WARMUP:
         try:
             _ = _get_core()  # preload models, ffmpeg check happens later in /health
         except Exception as e:
@@ -89,8 +74,7 @@ app.router.lifespan_context = _lifespan
 if pathlib.Path("static").exists():
     app.mount("/static", StaticFiles(directory="static", html=False), name="static")
 
-# api.py
-allow = os.getenv("ASR_ALLOWED_ORIGINS", "").split(",") if os.getenv("ASR_ALLOWED_ORIGINS") else []
+allow = settings.ASR_ALLOWED_ORIGINS.split(",") if settings.ASR_ALLOWED_ORIGINS else []
 app.add_middleware(CORSMiddleware, allow_origins=allow or ["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
@@ -106,8 +90,8 @@ class _LimitUploadSize(BaseHTTPMiddleware):
         cl = request.headers.get("content-length")
         ip = request.client.host if request.client else ""
         try:
-            if cl and float(cl) > MAX_UPLOAD_MB * 1024 * 1024:
-                resp = _response_error(413, "file_too_large", f"max={MAX_UPLOAD_MB}MB")
+            if cl and float(cl) > settings.MAX_UPLOAD_MB * 1024 * 1024:
+                resp = _response_error(413, "file_too_large", f"max={settings.MAX_UPLOAD_MB}MB")
                 resp.headers["x-request-id"] = rid
                 return resp
         except Exception:
@@ -126,98 +110,6 @@ class _LimitUploadSize(BaseHTTPMiddleware):
         return resp
     
 app.add_middleware(_LimitUploadSize)
-
-# افتراضيات
-_DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "light")
-_HAS_CUDA = False
-
-API_TOKEN = os.getenv("API_TOKEN", "").strip()
-MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "50"))
-ALLOWED_EXT = {".wav",".mp3",".m4a",".mp4",".ogg",".flac",".webm",".aac",".3gp",".opus"}
-_DOWNLOAD_ALLOW = {".txt", ".srt", ".vtt", ".json"}
-
-# إعدادات المُلخِّصات
-_TF_FALLBACK = True
-_TF_DEVICE = int(os.getenv("HF_DEVICE_ID", "-1"))  # CPU=-1
-# ULTRA = Jais-13B-Chat عبر Transformers (يدعم العربية بقوة)
-# يمكن تمرير مسار محلي أو معرف HF عبر ULTRA_MODEL
-_ULTRA_MODEL   = os.getenv("ULTRA_MODEL", "inceptionai/jais-13b-chat")
-_ULTRA_4BIT    = os.getenv("ULTRA_4BIT", "1").lower() in ("1","true","yes")
-_HF_TOKEN      = os.getenv("HF_TOKEN", "").strip() or None
-_TRUST_REMOTE  = True  # مطلوب لـ Jais
-_ULTRA_PROMPT_MODE = os.getenv("ULTRA_PROMPT_MODE", "auto").lower()
-
-# ==================== ArabicText-Large RAG ====================
-_RAG_ENABLED = os.getenv("RAG_ENABLE", "0").lower() in ("1","true","yes")
-import json, numpy as np
-try:
-    import faiss  # اختياري
-    _FAISS_OK = True
-except Exception:
-    faiss = None
-    _FAISS_OK = False
-try:
-    from sentence_transformers import SentenceTransformer  # اختياري
-    _ST_OK = True
-except Exception:
-    SentenceTransformer = None
-    _ST_OK = False
-
-_RAG_DIR = (DATA_DIR / "rag" / "arabictext_large").resolve()
-_RAG_INDEX = _RAG_DIR / "index.faiss"
-_RAG_DOCS = _RAG_DIR / "docs.jsonl"
-_rag_index = None
-_rag_model = None
-_rag_texts = []
-_rag_dim   = None
-
-def _rag_load():
-    """تحميل الفهرس والنصوص والـembeddings"""
-    global _rag_index, _rag_model, _rag_texts, _rag_dim
-    if not _RAG_ENABLED:
-        return
-    if _rag_index is not None:
-        return
-    # عطّل إذا المكتبات أو الملفات غير متوفرة
-    if not (_FAISS_OK and _ST_OK):
-        print("[RAG] disabled (faiss or sentence-transformers missing).")
-        return
-    if not _RAG_INDEX.exists() or not _RAG_DOCS.exists():
-        print("[RAG] no ArabicText-Large index found.")
-        return
-    print("[RAG] loading FAISS + docs ...")
-    _rag_index = faiss.read_index(_RAG_INDEX.as_posix())
-    with open(_RAG_DOCS, "r", encoding="utf-8") as f:
-        _rag_texts = [json.loads(line).get("text", "") for line in f]
-    _rag_model = SentenceTransformer(_rag_mname)
-    try:
-        print(f"[RAG] model={_rag_mname} loaded")
-    except Exception: pass
-    _rag_dim = getattr(_rag_model, "get_sentence_embedding_dimension", lambda: None)()
-    try:
-        if _rag_dim and _rag_index.d != int(_rag_dim):
-            print(f"[RAG] dim mismatch: index.d={_rag_index.d} vs model.d={_rag_dim} → disabling RAG")
-            _rag_index = None  # عطّل RAG لمنع الأخطاء
-    except Exception as e:
-        print(f"[RAG] dim check failed: {e}")
-
-def _rag_retrieve(query: str, k: int = 6) -> str:
-    """يسترجع مقاطع مشابهة من ArabicText-Large"""
-    if not query.strip():
-        return ""
-    _rag_load()
-    if _rag_index is None:
-        return ""
-    qv = _rag_model.encode([f"query: {query}"], normalize_embeddings=True)
-    qv = np.asarray(qv, dtype="float32")
-    try:
-        k = max(1, min(k, getattr(_rag_index, "ntotal", k)))
-        D, I = _rag_index.search(qv, k)
-    except Exception as e:
-        print(f"[RAG] search failed: {e}")
-        return ""
-    ctx = "\n\n".join(_rag_texts[i] for i in I[0] if i < len(_rag_texts))
-    return ctx.strip()
 
 @app.get("/robots.txt")
 def robots():
@@ -240,7 +132,7 @@ def _get_core():
     
 @app.delete("/delete-speaker")
 def delete_speaker(name: str = Query(...), x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
     core = _get_core()
     ok, msg = core.delete_speaker(name)
@@ -248,13 +140,30 @@ def delete_speaker(name: str = Query(...), x_api_key: Optional[str] = Header(Non
 
 @app.get("/speaker-files")
 def speaker_files(name: str = Query(...), x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
     core = _get_core()
     return {"files": core.get_speaker_files(name)}
 
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda r, e: _response_error(429, "rate_limited", "too many requests"))
+app.add_middleware(SlowAPIMiddleware)
+
+@app.middleware("http")
+async def add_process_time_header(request, call_next):
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = "10/minute"
+    return response
+
 @app.get("/health")
-def health():
+@limiter.limit("10/minute")
+def health(request: Request):
     try:
         core = _get_core()
         # فحص ffmpeg مبسّط
@@ -272,20 +181,20 @@ def health():
             pass
         return {
             "status": "ok",
-            "model_default": getattr(core, "DEFAULT_MODEL", _DEFAULT_MODEL),
-            "cuda": getattr(core, "_HAS_CUDA", _HAS_CUDA),
+            "model_default": getattr(core, "DEFAULT_MODEL", settings.WHISPER_MODEL),
+            "cuda": getattr(core, "_HAS_CUDA", False),
             "ollama_enabled": False,
             "ffmpeg": ffmpeg_ok,
             "gpu_name": gpu_name,
-            "data_dir": str(OUTPUTS_DIR.parent),
-            "max_upload_mb": MAX_UPLOAD_MB,
-            "allowed_ext": sorted(ALLOWED_EXT),
+            "data_dir": str(settings.OUTPUTS_DIR.parent),
+            "max_upload_mb": settings.MAX_UPLOAD_MB,
+            "allowed_ext": sorted(list(settings.ALLOWED_EXT)),
             "versions": {
                 "python": platform.python_version(),
-                "transformers": (__import__("transformers").__version__ if _TF_AVAILABLE else ""),
+                "transformers": nlp_core.get_transformers_version(),
             },
         }
-    except Exception:
+    except Exception as e:
         gpu_name = ""
         try:
             import torch
@@ -295,24 +204,24 @@ def health():
             pass
         return {
             "status": "degraded",
-            "model_default": _DEFAULT_MODEL,
-            "cuda": _HAS_CUDA,
+            "detail": str(e),
+            "model_default": settings.WHISPER_MODEL,
+            "cuda": False,
             "ollama_enabled": False,
             "ffmpeg": False,
             "gpu_name": gpu_name,
-            "data_dir": str(OUTPUTS_DIR.parent),
-            "max_upload_mb": MAX_UPLOAD_MB,
-            "allowed_ext": sorted(ALLOWED_EXT),
+            "data_dir": str(settings.OUTPUTS_DIR.parent),
+            "max_upload_mb": settings.MAX_UPLOAD_MB,
+            "allowed_ext": sorted(list(settings.ALLOWED_EXT)),
             "versions": {
                 "python": platform.python_version(),
-                "transformers": (__import__("transformers").__version__ if _TF_AVAILABLE else ""),
+                "transformers": nlp_core.get_transformers_version(),
             },
         }
     
-# ---- RAG health (اختياري) ----
 @app.get("/rag-health")
 def rag_health():
-    rag_dir = (DATA_DIR / "rag" / "arabictext_large").resolve()
+    rag_dir = settings.RAG_DIR
     idx = rag_dir / "index.faiss"
     docs = rag_dir / "docs.jsonl"
     raw  = rag_dir / "raw.jsonl"
@@ -351,6 +260,7 @@ def rag_health():
     # فحص قراءة FAISS (اختياري — يُتجاوز إذا لم تتوفر المكتبة)
     faiss_ok = None
     faiss_nt = None
+    from nlp_core import _FAISS_OK, faiss
     if _FAISS_OK and idx.exists():
         try:
             index = faiss.read_index(idx.as_posix())
@@ -373,251 +283,9 @@ def rag_health():
         "faiss_ntotal": faiss_nt,
     })
 
-# ======================= أدوات العربية ========================
-_AR_STOP = set("""
-في على الى إلى مع عن من ما هذا هذه ذلك تلك هناك هنا ثم حيث لقد قد كان كانت يكون كانوا كنت إن أن لكن لأن لو إذا إذ كما ربما حتى بين لدى لديهم لدي إليها فيها منه منها فيه بها بهان بنا لكم لنا فقط جدا جدًا حقا حقيقة أيضًا أيضاً قبل بعد خلال أثناء ضد عبر نحو فوق تحت بين إلا علًى إلًى بأن وإنّ أنّ لا لم لن ليس بدون غير كافة جميع بعض أي أحد
-نعم مثل ايضا ايضاً جداً جدا حقاً حقا
-""".split())
-
-def _normalize_ar(s: str) -> str:
-    s = s.replace("\u0640", "")
-    s = re.sub("[\u0617-\u061A\u064B-\u0652]", "", s)
-    s = re.sub("[\u0622\u0623\u0625]", "\u0627", s)
-    s = s.replace("ى", "ي").replace("ئ", "ي").replace("ؤ", "و").replace("ة", "ه")
-    return s
-
-def _tokenize_ar(s: str) -> list:
-    s = _normalize_ar(s)
-    toks = re.findall(r"[اأإآابتثجحخدذرزسشصضطظعغفقكلمنهوية]+", s)
-    return [t for t in toks if t not in _AR_STOP and len(t) > 1]
-
-def _keywords_ar(text: str, k: int = 8) -> list:
-    cnt = collections.Counter(_tokenize_ar(text))
-    return [w for w, _ in cnt.most_common(k)]
-
-def _clean_for_summary(text: str) -> str:
-    text = re.sub(r"(?m)^\s*المدة\s*:\s*.*?(?:\|\s*اللغة\s*:\s*.*)?(?:\|\s*ثقة\s*:\s*.*)?\s*$", " ", text)
-    text = re.sub(r"(?m)^\s*[^:\n]{0,20}\s*\|\s*اللغة\s*:.*$", " ", text)
-    text = re.sub(r"\[\d+(?:\.\d+)?[^\]]*\]", " ", text)
-    text = re.sub(r"\(متكلم\s*\d+\)", " ", text)
-    text = re.sub(r"###\s*ملف:.*", " ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-# ------------------- Summarizers -------------------
-_ABST_PIPE = None
-def _load_abstractive_pipe():
-    """mT5 للوضع lite فقط."""
-    global _ABST_PIPE
-    if _ABST_PIPE is not None or not (_TF_AVAILABLE and _TF_FALLBACK):
-        return _ABST_PIPE
-    try:
-        tok = AutoTokenizer.from_pretrained(_TF_MODEL, token=_HF_TOKEN, use_fast=False)
-        mdl = AutoModelForSeq2SeqLM.from_pretrained(_TF_MODEL, token=_HF_TOKEN)
-        try:
-            tok.model_max_length = min(getattr(tok, "model_max_length", 1_000_000), 1024)
-        except Exception:
-            pass
-        _ABST_PIPE = pipeline("summarization", model=mdl, tokenizer=tok, device=_TF_DEVICE)
-        return _ABST_PIPE
-    except Exception as e:
-        print(f"[TF] mT5 load failed: {e}")
-        return None
-    
-def _chunks_by_tokens(text: str, tok, max_tokens: int) -> list:
-    """
-    قصّ على مرحلتين لمنع تحذير 17261>1024 وتسريع العمل:
-    1) تقطيع خشن بالحروف إلى كتل ~6000 حرف.
-    2) لكل كتلة: ترميز ثم تقطيع إلى أجزاء <= max_tokens.
-    """
-    parts: list[str] = []
-    rough_step = 6000
-    blocks = [text[i:i+rough_step] for i in range(0, len(text), rough_step)] or [text]
-    for blk in blocks:
-        try:
-            ids = tok.encode(blk, add_special_tokens=False)
-            for i in range(0, len(ids), max_tokens):
-                seg = tok.decode(ids[i:i+max_tokens], skip_special_tokens=True).strip()
-                if seg:
-                    parts.append(seg)
-        except Exception:
-            parts.append(blk.strip())
-        if len(parts) >= SUM_MAX_PARTS:
-            break
-    return parts[:SUM_MAX_PARTS] or [text]
-
-def _summarize_abstractive(text: str, target_len: int = 220) -> str:
-    p = _load_abstractive_pipe()
-    if p is None:
-        return ""
-    clean = _clean_for_summary(text)
-    try:
-        tok = p.tokenizer
-        parts = _chunks_by_tokens(clean, tok, max_tokens=min(SUM_MAX_INPUT_TOKENS, getattr(tok, "model_max_length", 1024)))
-        summaries = []
-        for seg in parts:
-            out = p(
-                f"لخّص المقطع التالي بأسلوب عربي فصيح وواضح، واحتفظ بجمال المعنى دون تحريف:\n{seg}",
-                max_length=min(280, target_len + 60),
-                min_length=100,
-                do_sample=False,
-                truncation=True,
-                num_beams=4,
-                no_repeat_ngram_size=3,
-                repetition_penalty=1.2,
-            )
-            summaries.append((out[0].get("summary_text") or "").strip())
-        # دمج ثم ضغط ملخص الملخص
-        merged = " ".join(s for s in summaries if s)
-        if not merged:
-            return ""
-        if len(parts) > 1:
-            # دمج الملخصات الجزئية بتوجيه لغوي أوضح وطول أكبر
-            out2 = p(
-                f"اكتب خلاصة موجزة وواضحة للنص التالي، بالعربية الفصحى، مع الحفاظ على الأفكار الأصلية دون حذف المعاني المهمة:\n{merged}",
-                max_length=min(400, target_len + 150),
-                min_length=120,
-                do_sample=False,
-                truncation=True,
-                num_beams=4,
-                no_repeat_ngram_size=3,
-                repetition_penalty=1.2,
-            )
-            summ = (out2[0].get("summary_text") or "").strip()
-        else:
-            summ = merged.strip()
-        if summ:
-            globals()["_SUMMARY_SOURCE"] = f"transformers:{_TF_MODEL}"
-        return summ
-    except Exception as e:
-        print(f"[TF] mT5 summarize failed: {e}")
-        return ""
-
-_ULTRA_PIPE = None
-def _load_ultra_pipe():
-    """تحميل Jais-13B-Chat للتوليد (وضع ultra)."""
-    global _ULTRA_PIPE
-    if _ULTRA_PIPE is not None:
-        return _ULTRA_PIPE
-    if not _TF_AVAILABLE:
-        return None
-    try:
-        # يحمّل محليًا إن وُجد أو من HF. وجوب trust_remote_code لـ Jais.
-        tok = AutoTokenizer.from_pretrained(
-            _ULTRA_MODEL,
-            token=_HF_TOKEN,
-            trust_remote_code=_TRUST_REMOTE,
-            use_fast=False
-        )
-        if _ULTRA_4BIT and BitsAndBytesConfig is not None:
-            bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype="float16")  # type: ignore
-            mdl = AutoModelForCausalLM.from_pretrained(
-                _ULTRA_MODEL,
-                token=_HF_TOKEN,
-                trust_remote_code=_TRUST_REMOTE,
-                device_map="auto",
-                quantization_config=bnb
-            )
-        else:
-            mdl = AutoModelForCausalLM.from_pretrained(
-                _ULTRA_MODEL,
-                token=_HF_TOKEN,
-                trust_remote_code=_TRUST_REMOTE,
-                device_map="auto",
-                torch_dtype="auto"
-            )
-        # ملاحظة: عند تمرير model محمّل بـ device_map، لا نحتاج لتحديد device في pipeline
-        _ULTRA_PIPE = pipeline("text-generation", model=mdl, tokenizer=tok)
-        return _ULTRA_PIPE
-    except Exception as e:
-        print(f"[TF] ULTRA load failed: {e}")
-        return None
-
-def _summarize_ultra(text: str, target_len: int = 220) -> str:
-    p = _load_ultra_pipe()
-    if p is None:
-        return ""
-    clean = _clean_for_summary(text)
-    # تحديد نمط البرومبت
-    mode = _ULTRA_PROMPT_MODE
-    if mode == "auto":
-        name = (_ULTRA_MODEL or "").lower()
-        mode = "chat" if ("-chat" in name) else "plain"
-    if mode == "chat":
-        prompt = (
-            "### Instruction: لخّص النص التالي بالعربية الفصحى في 4-6 جمل قصيرة وواضحة،"
-            " امنع الحشو وكرر الأفكار الأساسية فقط.\n"
-            f"### Input: [|Human|] {clean}\n"
-            "### Response: [|AI|]"
-        )
-    else:
-        prompt = (
-            "لخّص النص التالي بالعربية الفصحى في 4-6 جمل قصيرة وواضحة،"
-            " بدون حشو وبتركيز على الأفكار الأساسية:\n\n"
-            f"{clean}\n\nالملخص:"
-        )
-    try:
-        out = p(
-            prompt,
-            max_new_tokens=min(300, target_len+120),
-            do_sample=False
-        )[0]["generated_text"]
-        if mode == "chat":
-            spl = out.split("### Response: [|AI|]")
-            summ = (spl[-1] if len(spl) > 1 else out).strip()
-        else:
-            summ = out.split("الملخص:")[-1].strip() if "الملخص:" in out else out.strip()
-        if summ:
-            globals()["_SUMMARY_SOURCE"] = f"transformers:{_ULTRA_MODEL}"
-        return summ
-    except Exception as e:
-        print(f"[TF] ULTRA summarize failed: {e}")
-        return ""
-
-def _summarize(text: str, mode: str = "lite") -> Tuple[str, str]:
-    if not text or not mode:
-        globals()["_SUMMARY_SOURCE"] = "off"
-        return ("", "")
-    clean = _clean_for_summary(text)
-    m = mode.lower()
-
-    # off
-    if m == "off":
-        globals()["_SUMMARY_SOURCE"] = "off"
-        return ("", "")
-    
-    # lite = mT5 (XLSum)
-    if m == "lite":
-        print("[SUM] lite -> mT5 (XLSum)")
-        s_abs = _summarize_abstractive(clean, target_len=220)
-        if s_abs:
-            globals()["_SUMMARY_SOURCE"] = f"transformers:{_TF_MODEL}"
-        return (s_abs or "", ", ".join(_keywords_ar(clean, k=10)) if s_abs else "")
-
-    # ultra = ALLaM-13B-Instruct + RAG اختياري
-    if m == "ultra":
-        print("[SUM] ultra -> Jais-13B-Chat")
-        ctx = _rag_retrieve(clean, k=3)
-        prompt = f"السياق المسترجع:\n{ctx}\n\nالنص:\n{clean}" if ctx else clean
-        s_ultra = _summarize_ultra(prompt, target_len=220)
-        return (s_ultra or "", ", ".join(_keywords_ar(clean, k=10)) if s_ultra else "")
-
-    # أي قيمة أخرى غير مدعومة
-    raise HTTPException(status_code=400, detail=f"unsupported summary_mode: {mode}")
-
 @app.get("/ultra-health")
 def ultra_health():
-    return {"ultra_model": _ULTRA_MODEL, "ultra_4bit": _ULTRA_4BIT, "trust_remote": _TRUST_REMOTE, "prompt_mode": _ULTRA_PROMPT_MODE}
-
-def _renumber_speakers(text: str) -> str:
-    mapping, next_id = {}, 1
-    def repl(m):
-        nonlocal next_id
-        old = m.group(1)
-        if old not in mapping:
-            mapping[old] = str(next_id); next_id += 1
-        return f"(متكلم {mapping[old]})"
-    return re.sub(r"\(متكلم\s+(\d+)\)", repl, text)
+    return {"ultra_model": settings.ULTRA_MODEL, "ultra_4bit": settings.ULTRA_4BIT, "trust_remote": settings.ULTRA_TRUST_REMOTE, "prompt_mode": settings.ULTRA_PROMPT_MODE}
 
 # --------- أدوات استجابة موحدة ---------
 def _response_ok(text: str, summary: str, keywords: str,
@@ -625,7 +293,7 @@ def _response_ok(text: str, summary: str, keywords: str,
                  segments: Optional[list] = None,
                  srt_path: Optional[str] = None, vtt_path: Optional[str] = None,
                  segments_path: Optional[str] = None) -> JSONResponse:
-    base_url = os.getenv("BASE_URL", "").rstrip("/")
+    base_url = settings.BASE_URL.rstrip("/")
     data = {
         "text": text or "",
         "summary": summary or "",
@@ -633,7 +301,7 @@ def _response_ok(text: str, summary: str, keywords: str,
         "request_id": _RID.get(),
         "txt_path": txt_path,
         "summary_path": summary_path,
-        "summary_source": globals().get("_SUMMARY_SOURCE", "local"),
+        "summary_source": nlp_core.get_summary_source(),
         "segments": segments or [],
         "srt_path": srt_path,
         "vtt_path": vtt_path,
@@ -655,122 +323,168 @@ def _response_error(code: int, err: str, detail: Optional[str] = None) -> JSONRe
         "request_id": _RID.get(),
         "text": "", "summary": "", "keywords": "",
         "txt_path": None, "summary_path": None,
-        "summary_source": globals().get("_SUMMARY_SOURCE","local"),
+        "summary_source": nlp_core.get_summary_source(),
         "segments": [], "srt_path": None, "vtt_path": None, "segments_path": None,
         "download_urls": {"txt": None, "srt": None, "vtt": None, "summary": None},
     }
     return JSONResponse(payload, status_code=code)
 
+# --- Job store ---
+JOBS_DIR = settings.OUTPUTS_DIR / "jobs"
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+# حالة داخلية خفيفة
+_JOBS = {}  # job_id -> {"status": "queued|running|done|error", "result_path": str|None, "error": str|None}
+
+def _job_file(job_id: str) -> pathlib.Path:
+    return JOBS_DIR / f"{job_id}.json"
+
+def _job_payload(status: str, result: dict | None = None, error: str | None = None) -> dict:
+    return {"status": status, "result": result or {}, "error": error or ""}
+
+async def _run_transcribe_job(job_id: str, tmp_path: pathlib.Path, kwargs: dict):
+    core = _get_core()
+    _JOBS[job_id] = {"status": "running", "result_path": None, "error": None}
+    try:
+        result = await asyncio.to_thread(core.process, str(tmp_path), **kwargs)
+        if not isinstance(result, dict):
+            raise RuntimeError("unexpected_result_type")
+        payload = _job_payload("done", result, None)
+        out = _job_file(job_id)
+        out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        _JOBS[job_id]["status"] = "done"
+        _JOBS[job_id]["result_path"] = out.as_posix()
+    except Exception as e:
+        payload = _job_payload("error", None, str(e))
+        out = _job_file(job_id)
+        out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        _JOBS[job_id]["status"] = "error"
+        _JOBS[job_id]["error"] = str(e)
+    finally:
+        try:
+            tmp_dir = tmp_path.parent
+            tmp_path.unlink(missing_ok=True)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
 @app.post("/summarize")
+@limiter.limit("12/minute")
 async def summarize_after(
     text: Optional[str] = Form(None),
     path: Optional[str] = Form(None),
     summary_mode: str = Form("lite"),
+    async_mode: bool = Form(False),   # <-- جديد
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     fake_file: Optional[UploadFile] = File(None),
     request: Request = None
 ):
-    # auth
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
-    # احضر النص: من path (موثّق داخل outputs/) أو من text
+
     body = (text or "").strip()
     if (path or "").strip():
         try:
             p = pathlib.Path(path).expanduser().resolve()
-            base = OUTPUTS_DIR
+            base = settings.OUTPUTS_DIR
             if base not in p.parents and base != p.parent:
                 return _response_error(403, "forbidden_path", "outside outputs/")
             if not p.exists() or not p.is_file():
                 return _response_error(404, "file_not_found", p.as_posix())
             body = p.read_text(encoding="utf-8", errors="ignore")
-            out_base = p
+            out_base_path = p
         except Exception as e:
             return _response_error(500, "read_failed", str(e))
     else:
-        out_base = OUTPUTS_DIR / "manual_summary"
+        out_base_path = settings.OUTPUTS_DIR / "manual_summary"
 
     if not body:
         return _response_error(400, "no_text", "nothing to summarize")
 
-    # لخّص
-    s_text, kw_csv = _summarize(body, mode=summary_mode)
-    if not s_text.strip():
-        globals()["_SUMMARY_SOURCE"] = "off"
+    if not async_mode:
+        # المسار المتزامن كما كان
+        s_text, kw_csv = nlp_core.summarize(body, mode=summary_mode)
+        if not s_text.strip():
+            nlp_core.set_summary_source("off")
+            return JSONResponse({"summary": "", "keywords": "", "summary_path": None, "summary_source": "off"})
+        try:
+            sum_path = str(out_base_path.with_suffix(".summary.txt"))
+            pathlib.Path(sum_path).write_text(
+                s_text + (("\n\nالكلمات المفتاحية: " + (kw_csv or "")) if kw_csv else ""),
+                encoding="utf-8"
+            )
+        except Exception:
+            sum_path = None
+        base = settings.BASE_URL.rstrip('/') or str(request.base_url).rstrip('/')
+        summary_url = f"{base}/download?path={quote(sum_path)}" if (base and sum_path) else None
         return JSONResponse({
-            "summary": "",
-            "keywords": "",
-            "summary_path": None,
-            "summary_source": "off",
+            "summary": s_text, "keywords": kw_csv or "", "summary_path": sum_path,
+            "summary_source": nlp_core.get_summary_source(),
+            "download_urls": {"summary": summary_url}
         })
 
-    # اكتب ملف الملخص بجانب التفريغ إن وُجد
-    try:
-        sum_path = str(out_base.with_suffix(".summary.txt"))
-        pathlib.Path(sum_path).write_text(
-            s_text + (("\n\nالكلمات المفتاحية: " + (kw_csv or "")) if kw_csv else ""),
-            encoding="utf-8"
-        )
-    except Exception:
-        sum_path = None
+    # مسار المهمة الخلفية
+    job_id = str(uuid.uuid4())
+    _JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
+    asyncio.create_task(_run_summary_job(job_id, body, out_base_path, summary_mode))
+    base = settings.BASE_URL.rstrip('/') or str(request.base_url).rstrip('/')
+    return JSONResponse(
+        {"job_id": job_id, "status": "queued", "poll_url": f"{base}/job/{job_id}", "result_url": f"{base}/job/{job_id}/download"},
+        status_code=202
+    )
 
-    base = os.getenv('BASE_URL','').rstrip('/')
-    if (not base) and request:
-        base = str(request.base_url).rstrip('/')
-    summary_url = f"{base}/download?path={quote(sum_path)}" if (base and sum_path) else None
-    return JSONResponse({
-        "summary": s_text,
-        "keywords": kw_csv or "",
-        "summary_path": sum_path,
-        "summary_source": globals().get("_SUMMARY_SOURCE", "local"),
-        "download_urls": {"summary": summary_url}
-    })
+@app.post("/ner")
+async def ner_endpoint(
+    text: Optional[str] = Form(None),
+    path: Optional[str] = Form(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
+        return _response_error(401, "unauthorized", "invalid api key")
+    body = (text or "").strip()
+    if (path or "").strip():
+        try:
+            p = pathlib.Path(path).expanduser().resolve()
+            base = settings.OUTPUTS_DIR
+            if base not in p.parents and base != p.parent:
+                return _response_error(403, "forbidden_path", "outside outputs/")
+            if not p.exists() or not p.is_file():
+                return _response_error(404, "file_not_found", p.as_posix())
+            body = p.read_text(encoding="utf-8", errors="ignore")
+        except Exception as e:
+            return _response_error(500, "read_failed", str(e))
+    if not body:
+        return _response_error(400, "no_text", "nothing to analyze")
+    ents = nlp_core.extract_entities(body)
+    return JSONResponse({"entities": ents})
 
 # -------- أدوات مقاطع + SRT/VTT --------
-def _fmt_hhmmss(t: float) -> str:
-    ms = int(round(t * 1000))
-    s, ms = divmod(ms, 1000)
-    m, s = divmod(s, 60)
-    h, m = divmod(m, 60)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
 def _parse_segments(text: str) -> list:
     segs = []
-    for line in (text or "").splitlines():
-        line = line.strip()
-        # [12.34→56.78] (اسم/متكلم 1) النص
-        m = re.match(r"^\[(\d+(?:\.\d+)?)\s*[\u2192\-\>]\s*(\d+(?:\.\d+)?)\]\s*\((.*?)\)\s*(.+)$", line)
-        if m:
-            st = float(m.group(1)); en = float(m.group(2))
-            who = m.group(3).strip()
-            txt = m.group(4).strip()
+    for raw in (text or "").splitlines():
+        line = raw.strip().lstrip("\u200f")  # إزالة RLM إن وُجد
+        # النمط 1: [12.34→56.78] (المتكلم) النص
+        m1 = re.match(
+            r"^\[(\d+(?:\.\d+)?)\s*[\u2192\-\>]\s*(\d+(?:\.\d+)?)\]\s*\((.*?)\)\s*(.+)$",
+            line
+        )
+        if m1:
+            st = float(m1.group(1)); en = float(m1.group(2))
+            who = m1.group(3).strip()
+            txt = m1.group(4).strip()
+            segs.append({"start": st, "end": en, "speaker": who, "text": txt})
+            continue
+        # النمط 2: (المتكلم) [12.34→56.78] النص  ← كما ينتجه asr_core
+        m2 = re.match(
+            r"^\((.*?)\)\s*\[(\d+(?:\.\d+)?)\s*[\u2192\-\>]\s*(\d+(?:\.\d+)?)\]\s*(.+)$",
+            line
+        )
+        if m2:
+            who = m2.group(1).strip()
+            st = float(m2.group(2)); en = float(m2.group(3))
+            txt = m2.group(4).strip()
             segs.append({"start": st, "end": en, "speaker": who, "text": txt})
     return segs
-
-from typing import Optional, Tuple
-def _write_srt_vtt(segments: list, base_txt_path: str) -> Tuple[Optional[str], Optional[str]]:
-    if not base_txt_path:
-        return None, None
-    p = pathlib.Path(base_txt_path)
-    srt = p.with_suffix(".srt")
-    vtt = p.with_suffix(".vtt")
-    # حضّر السطور مرة واحدة
-    srt_lines = []
-    vtt_lines = ["WEBVTT", ""]
-    for i, s in enumerate(segments, 1):
-        t0s = _fmt_hhmmss(s['start']); t1s = _fmt_hhmmss(s['end'])
-        label = f"({s.get('speaker','')}) " if s.get("speaker") else ""
-        text = (label + s.get("text","")).strip()
-        srt_lines += [str(i), f"{t0s} --> {t1s}", text, ""]
-        vtt_lines += [f"{t0s.replace(',','.') } --> {t1s.replace(',','.')}", text, ""]
-    # اكتب الملفين
-    try:
-        with open(srt, "w", encoding="utf-8", newline="\n") as f: f.write("\n".join(srt_lines))
-    except Exception: srt = None
-    try:
-        with open(vtt, "w", encoding="utf-8", newline="\n") as f: f.write("\n".join(vtt_lines))
-    except Exception: vtt = None
-    return srt.as_posix() if srt else None, vtt.as_posix() if vtt else None
 
 def _write_segments_json(segments: list, base_txt_path: str) -> Optional[str]:
     try:
@@ -786,136 +500,16 @@ def _write_segments_json(segments: list, base_txt_path: str) -> Optional[str]:
 # ===============================================================================
 
 @app.post("/transcribe")
+@limiter.limit("6/minute")
 async def transcribe(
     file: UploadFile = File(...),
     audio: UploadFile = File(None),
-    model_name: Optional[str] = Form(None),
-    enhance: bool = Form(True),
-    whisper_mode: str = Form("normal"),   # "normal" | "whisper"
-    diarize: bool = Form(True),
-    auto_k: bool = Form(True),
-    max_speakers: int = Form(2),
-    enroll_threshold: float = Form(0.65),
-    device_sel: str = Form("auto"),       # "auto" | "cpu" | "cuda"
-    compute_sel: str = Form("auto"),      # "auto" | "int8" | "float16" | "float32"
-    summary_mode: str = Form("off"),  # "off" | "lite(mT5)" | "ultra(Jais-13B)"
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    request: Request = None,
-):
-    # مفتاح API اختياري: يُفعَّل إذا ضُبط المتغير
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
-        return _response_error(401, "unauthorized", "invalid api key")
-    core = _get_core()
-    uf = file or audio
-    if uf is None:
-        return _response_error(400, "no_file", "use form field 'file' or 'audio'")
-    globals()["_SUMMARY_SOURCE"] = "local"
-    try:
-        logger.info(f"[REQ] model_name={model_name or core.DEFAULT_MODEL} device_sel={device_sel} compute_sel={compute_sel} diarize={diarize} summary_mode={summary_mode}")
-    except Exception: pass
-    
-    tmpdir = tempfile.mkdtemp(prefix="asr_")
-    try:
-        dst = pathlib.Path(tmpdir) / ((uf.filename) or "audio.wav")
-        with open(dst, "wb") as f:
-            shutil.copyfileobj(uf.file, f)
-           # حجم وحد أقصى
-        try:
-            if dst.stat().st_size > MAX_UPLOAD_MB * 1024 * 1024:
-                return _response_error(413, "file_too_large", f"max={MAX_UPLOAD_MB}MB")
-        except Exception:
-            pass
-        # رفض امتداد غير مدعوم
-        if pathlib.Path(dst).suffix.lower() not in ALLOWED_EXT:
-            return _response_error(415, "unsupported_media_type", pathlib.Path(dst).suffix.lower())
-
-        try:
-            # asr_core.process يُتوقع أن يعيد 3 أو 6 عناصر
-            result = core.process(
-                str(dst),
-                model_name or core.DEFAULT_MODEL,
-                enhance, whisper_mode, diarize, auto_k, max_speakers,
-                enroll_threshold, device_sel, compute_sel, "off",  # تعطيل تلخيص core افتراضيًا
-                punctuate=True
-            )
-
-            # توحيد الحقول
-            if isinstance(result, dict):
-                txt = result.get("text","")
-                out_path = result.get("txt_path")
-                summary_text = result.get("summary","") or ""
-                keywords = result.get("keywords","") or ""
-                sum_path = result.get("summary_path")
-            elif isinstance(result, (list, tuple)):
-                # توافق قديم
-                if len(result) == 6:
-                    txt, out_path, _dl1, summary_text, keywords, sum_path = result
-                elif len(result) == 3:
-                    txt, out_path, _dl1 = result
-                    summary_text, keywords, sum_path = "", "", None
-                else:
-                    return _response_error(500, "unexpected_result_shape", f"got {len(result)} items")
-            else:
-                return _response_error(500, "unexpected_result_type")
-
-            # ترقيم المتكلمين
-            txt = _renumber_speakers(txt or "")
-
-            # إجبار عدم التلخيص داخل /transcribe دائماً
-            summary_mode = "off"
-            if False and summary_mode and summary_mode.lower() != "off":
-                if not summary_text:
-                    try:
-                        s_text, kw_csv = _summarize(txt, mode=summary_mode)
-                    except HTTPException as he:
-                        # مرّر كـ استجابة FastAPI القياسية
-                        raise he
-                    summary_text = s_text
-                    keywords = kw_csv
-                try:
-                    if (summary_text or "").strip():
-                        sum_path = str(pathlib.Path(out_path).with_suffix(".summary.txt"))
-                        pathlib.Path(sum_path).write_text(
-                            summary_text + (("\n\nالكلمات المفتاحية: " + (keywords or "")) if keywords else ""),
-                            encoding="utf-8"
-                        )
-                except Exception as e:
-                    print(f"[WRITE_SUMMARY] {e}")
-            else:
-                globals()["_SUMMARY_SOURCE"] = "off"
-            # استعمل مخرجات core إن وُجدت، وإلا اسقط إلى التوليد
-            segments = (result.get("segments") if isinstance(result, dict) else None) or _parse_segments(txt)
-            srt_path = (result.get("srt_path") if isinstance(result, dict) else None)
-            vtt_path = (result.get("vtt_path") if isinstance(result, dict) else None)
-            seg_path = (result.get("segments_path") if isinstance(result, dict) else None)
-            if not srt_path or not vtt_path:
-                _srt2, _vtt2 = _write_srt_vtt(segments, out_path)
-                srt_path = srt_path or _srt2
-                vtt_path = vtt_path or _vtt2
-            if not seg_path:
-                seg_path = _write_segments_json(segments, out_path)
-            return _response_ok(txt, summary_text, keywords, out_path, sum_path, segments, srt_path, vtt_path, seg_path)
-
-        except HTTPException as he:
-            # أعدّ تمرير أخطاء HTTP (503 مثلاً)
-            raise he
-        except Exception:
-            # تتبّع كامل مفيد لتشخيص WinError 233 وغيرها
-            return _response_error(500, "processing_failed", traceback.format_exc())
-
-    finally:
-        try:
-            shutil.rmtree(tmpdir)
-        except Exception:
-            pass
-
-@app.post("/transcribe-batch")
-async def transcribe_batch(
-    files: List[UploadFile] = File(...),
+    async_mode: bool = Form(False),   # <--- جديد
     model_name: Optional[str] = Form(None),
     enhance: bool = Form(True),
     whisper_mode: str = Form("normal"),
     diarize: bool = Form(True),
+    punctuate: bool = Form(False),
     auto_k: bool = Form(True),
     max_speakers: int = Form(2),
     enroll_threshold: float = Form(0.65),
@@ -925,72 +519,175 @@ async def transcribe_batch(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     request: Request = None,
 ):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
     core = _get_core()
-    globals()["_SUMMARY_SOURCE"] = "local"
+    uf = file or audio
+    if uf is None:
+        return _response_error(400, "no_file", "use form field 'file' or 'audio'")
+    nlp_core.set_summary_source("local")
+
+    tmpdir = tempfile.mkdtemp(prefix="asr_")
+    dst = pathlib.Path(tmpdir) / ((uf.filename) or "audio.wav")
+    async with aiofiles.open(dst, "wb") as f:
+        content = await uf.read()
+        await f.write(content)
+
+    # تحقق أساسي
+    try:
+        if dst.stat().st_size > settings.MAX_UPLOAD_MB * 1024 * 1024:
+            try:
+                shutil.rmtree(tmpdir)
+            finally:
+                return _response_error(413, "file_too_large", f"max={settings.MAX_UPLOAD_MB}MB")
+    except Exception:
+        pass
+    if dst.suffix.lower() not in settings.ALLOWED_EXT:
+        try:
+            shutil.rmtree(tmpdir)
+        finally:
+            return _response_error(415, "unsupported_media_type", dst.suffix.lower())
+
+    # مسار متزامن القديم
+    if not async_mode:
+        try:
+            result = await asyncio.to_thread(
+                core.process,
+                str(dst),
+                model_name = model_name or settings.WHISPER_MODEL,
+                enhance = enhance,
+                whisper_mode = whisper_mode,
+                diarize = diarize,
+                auto_k = auto_k,
+                max_speakers = max_speakers,
+                enroll_threshold = enroll_threshold,
+                device_sel = device_sel,
+                compute_sel = compute_sel,
+                summary_mode = "off",
+                punctuate = punctuate,
+            )
+            seg_path = result.get("segments_path") or _write_segments_json(result.get("segments") or [], result.get("txt_path"))
+            return _response_ok(result.get("text",""), result.get("summary","") or "", result.get("keywords","") or "",
+                                result.get("txt_path"), result.get("summary_path"),
+                                result.get("segments") or [], result.get("srt_path"), result.get("vtt_path"), seg_path)
+        finally:
+            try: shutil.rmtree(tmpdir)
+            except Exception: pass
+
+    # مسار المهام الخلفية
+    # جهّز kwargs للـ core.process
+    kwargs = dict(
+        model_name = model_name or settings.WHISPER_MODEL,
+        enhance = enhance,
+        whisper_mode = whisper_mode,
+        diarize = diarize,
+        auto_k = auto_k,
+        max_speakers = max_speakers,
+        enroll_threshold = enroll_threshold,
+        device_sel = device_sel,
+        compute_sel = compute_sel,
+        summary_mode = "off",
+        punctuate = punctuate,
+    )
+    job_id = str(uuid.uuid4())
+    _JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
+    asyncio.create_task(_run_transcribe_job(job_id, dst, kwargs))
+    base = settings.BASE_URL.rstrip('/') or str(request.base_url).rstrip('/')
+    return JSONResponse(
+        {"job_id": job_id, "status": "queued", "poll_url": f"{base}/job/{job_id}", "result_url": f"{base}/job/{job_id}/download"},
+        status_code=202
+    )
+
+@app.post("/transcribe-batch")
+async def transcribe_batch(
+    files: List[UploadFile] = File(...),
+    model_name: Optional[str] = Form(None),
+    enhance: bool = Form(True),
+    whisper_mode: str = Form("normal"),
+    diarize: bool = Form(True),
+    punctuate: bool = Form(False),
+    auto_k: bool = Form(True),
+    max_speakers: int = Form(2),
+    enroll_threshold: float = Form(0.65),
+    device_sel: str = Form("auto"),
+    compute_sel: str = Form("auto"),
+    summary_mode: str = Form("off"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    request: Request = None,
+):
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
+        return _response_error(401, "unauthorized", "invalid api key")
+    core = _get_core()
+    nlp_core.set_summary_source("local")
 
     tmpdir = tempfile.mkdtemp(prefix="asr_batch_")
     try:
         saved: List[str] = []
         for uf in files:
             dst = pathlib.Path(tmpdir) / (uf.filename or f"audio_{len(saved)}.wav")
-            with open(dst, "wb") as f:
-                shutil.copyfileobj(uf.file, f)
+            async with aiofiles.open(dst, "wb") as f:
+                content = await uf.read()
+                await f.write(content)
+            # تحقق سريع لكل ملف
+            if dst.suffix.lower() not in settings.ALLOWED_EXT:
+                dst.unlink(missing_ok=True)
+                return _response_error(415, "unsupported_media_type", dst.suffix.lower())
+            if dst.stat().st_size > settings.MAX_UPLOAD_MB * 1024 * 1024:
+                dst.unlink(missing_ok=True)
+                return _response_error(413, "file_too_large", f"max={settings.MAX_UPLOAD_MB}MB")
             saved.append(str(dst))
 
         try:
-            result = core.process_many(
+            result = await asyncio.to_thread(
+                core.process_many,
                 saved,
-                model_name or core.DEFAULT_MODEL,
-                enhance, whisper_mode, diarize, auto_k, max_speakers,
-                enroll_threshold, device_sel, compute_sel, "off", punctuate=True
+                model_name = model_name or settings.WHISPER_MODEL,
+                enhance = enhance,
+                whisper_mode = whisper_mode,
+                diarize = diarize,
+                auto_k = auto_k,
+                max_speakers = max_speakers,
+                enroll_threshold = enroll_threshold,
+                device_sel = device_sel,
+                compute_sel = compute_sel,
+                summary_mode = "off",
+                punctuate = punctuate,
             )
 
-            if isinstance(result, dict):
-                merged_text = result.get("text","")
-                merged_path = result.get("txt_path")
-                merged_sum = result.get("summary","") or ""
-                keywords = result.get("keywords","") or ""
-                merged_sum_path = result.get("summary_path")
-            elif isinstance(result, (list, tuple)):
-                # توافق قديم
-                if len(result) == 6:
-                    merged_text, merged_path, _dl1, merged_sum, keywords, merged_sum_path = result
-                elif len(result) == 3:
-                    merged_text, merged_path, _dl1 = result
-                    merged_sum, merged_sum_path, keywords = "", None, ""
-                else:
-                    return _response_error(500, "unexpected_result_shape", f"got {len(result)} items")
-            else:
+            if not isinstance(result, dict):
                 return _response_error(500, "unexpected_result_type")
 
-            # ترقيم
-            merged_text = _renumber_speakers(merged_text or "")
+            merged_text = result.get("text","")
+            merged_path = result.get("txt_path")
+            merged_sum = result.get("summary","") or ""
+            keywords = result.get("keywords","") or ""
+            merged_sum_path = result.get("summary_path")
 
             if summary_mode and summary_mode.lower() != "off":
                 if not (merged_sum or "").strip():
                     try:
-                        s_text, kw_csv = _summarize(merged_text, mode=summary_mode)
+                        s_text, kw_csv = nlp_core.summarize(merged_text, mode=summary_mode)
                     except HTTPException as he:
                         raise he
                     merged_sum, keywords = s_text, kw_csv
                 try:
                     if (merged_sum or "").strip():
-                        merged_sum_path = str(pathlib.Path(merged_path).with_suffix(".summary.txt"))
-                        pathlib.Path(merged_sum_path).write_text(
+                        sum_p = pathlib.Path(merged_path).with_suffix(".summary.txt")
+                        sum_p.write_text(
                             merged_sum + (("\n\nالكلمات المفتاحية: " + (keywords or "")) if keywords else ""),
                             encoding="utf-8"
                         )
+                        merged_sum_path = str(sum_p)
                 except Exception as e:
                     print(f"[WRITE_SUMMARY_BATCH] {e}")
             else:
-                globals()["_SUMMARY_SOURCE"] = "off"
+                nlp_core.set_summary_source("off")
 
-            # دمج: اسقط إلى التوليد لأن core لا يعيد مسار JSON/ترجمات مدمجة
-            segs = _parse_segments(merged_text)
-            srt_path, vtt_path = _write_srt_vtt(segs, merged_path)
-            seg_path = _write_segments_json(segs, merged_path)
+            # استخدم مخرجات asr_core.process_many مباشرة
+            segs      = result.get("segments") or _parse_segments(merged_text)
+            srt_path  = result.get("srt_path")
+            vtt_path  = result.get("vtt_path")
+            seg_path  = result.get("segments_path") or _write_segments_json(segs, merged_path)
             return _response_ok(merged_text, merged_sum, keywords, merged_path, merged_sum_path, segs, srt_path, vtt_path, seg_path)
 
         except HTTPException as he:
@@ -1007,17 +704,17 @@ async def transcribe_batch(
 @app.get("/download")
 def download_txt(path: str = Query(..., description="Absolute or outputs-relative path to txt file"),
                  x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
     try:
-        base = OUTPUTS_DIR
+        base = settings.OUTPUTS_DIR
         p = pathlib.Path(path).expanduser().resolve()
         if base not in p.parents and base != p.parent:
             return _response_error(403, "forbidden_path", "outside outputs/")
         if not p.exists() or not p.is_file():
             return _response_error(404, "file_not_found", p.as_posix())
         # حظر الامتدادات غير المسموح تنزيلها
-        if p.suffix.lower() not in _DOWNLOAD_ALLOW:
+        if p.suffix.lower() not in settings.DOWNLOAD_ALLOW:
             return _response_error(403, "forbidden_extension", p.suffix.lower())
         return FileResponse(p.as_posix(), media_type="text/plain", filename=p.name)
     except Exception as e:
@@ -1026,10 +723,11 @@ def download_txt(path: str = Query(..., description="Absolute or outputs-relativ
 @app.get("/export.srt")
 def export_srt(path: str = Query(..., description="Absolute or outputs-relative path to txt transcript"),
                x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
     try:
-        base = OUTPUTS_DIR
+        base = settings.OUTPUTS_DIR
+        core = _get_core()
         p = pathlib.Path(path).expanduser().resolve()
         if base not in p.parents and base != p.parent:
             return _response_error(403, "forbidden_path", "outside outputs/")
@@ -1042,7 +740,7 @@ def export_srt(path: str = Query(..., description="Absolute or outputs-relative 
         else:
             txt = p.read_text(encoding="utf-8", errors="ignore")
             segs = _parse_segments(txt)
-            srt_path, _ = _write_srt_vtt(segs, p.as_posix())
+            srt_path = core.segments_to_srt(segs, p.as_posix())
         if not srt_path:
             return _response_error(500, "srt_failed")
         return FileResponse(srt_path, media_type="application/x-subrip", filename=pathlib.Path(srt_path).name)
@@ -1052,10 +750,11 @@ def export_srt(path: str = Query(..., description="Absolute or outputs-relative 
 @app.get("/export.vtt")
 def export_vtt(path: str = Query(..., description="Absolute or outputs-relative path to txt transcript"),
                x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
     try:
-        base = OUTPUTS_DIR
+        base = settings.OUTPUTS_DIR
+        core = _get_core()
         p = pathlib.Path(path).expanduser().resolve()
         if base not in p.parents and base != p.parent:
             return _response_error(403, "forbidden_path", "outside outputs/")
@@ -1068,7 +767,7 @@ def export_vtt(path: str = Query(..., description="Absolute or outputs-relative 
         else:
             txt = p.read_text(encoding="utf-8", errors="ignore")
             segs = _parse_segments(txt)
-            _, vtt_path = _write_srt_vtt(segs, p.as_posix())
+            vtt_path = core.segments_to_vtt(segs, p.as_posix())
         if not vtt_path:
             return _response_error(500, "vtt_failed")
         return FileResponse(vtt_path, media_type="text/vtt", filename=pathlib.Path(vtt_path).name)
@@ -1079,9 +778,9 @@ def export_vtt(path: str = Query(..., description="Absolute or outputs-relative 
 def segments_json(path: str = Query(..., description="Absolute or outputs-relative path to txt transcript"),
                   x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
                   request: Request = None):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
-    base = OUTPUTS_DIR
+    base = settings.OUTPUTS_DIR
     p = pathlib.Path(path).expanduser().resolve()
     if base not in p.parents and base != p.parent:
         return _response_error(403, "forbidden_path", "outside outputs/")
@@ -1094,9 +793,9 @@ def segments_json(path: str = Query(..., description="Absolute or outputs-relati
 def segments_download(path: str = Query(..., description="Absolute or outputs-relative path to txt transcript"),
                       x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
                       request: Request = None):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
-    base = OUTPUTS_DIR
+    base = settings.OUTPUTS_DIR
     p = pathlib.Path(path).expanduser().resolve()
     if base not in p.parents and base != p.parent:
         return _response_error(403, "forbidden_path", "outside outputs/")
@@ -1104,12 +803,59 @@ def segments_download(path: str = Query(..., description="Absolute or outputs-re
         return _response_error(404, "file_not_found", p.as_posix())
     txt = p.read_text(encoding="utf-8", errors="ignore")
     segs = _parse_segments(txt)
-    fname = pathlib.Path(p).with_suffix(".segments.json").name
+    fname = p.with_suffix(".segments.json").name
     return Response(
-        content=json.dumps(segs, ensure_ascii=False),
+        content=json.dumps(segs, ensure_ascii=False, indent=2),
         media_type="application/json; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'}
     )
+
+@app.get("/job/{job_id}")
+def job_status(job_id: str):
+    meta = _JOBS.get(job_id, None)
+    file = _job_file(job_id)
+    if file.exists():
+        data = json.loads(file.read_text(encoding="utf-8"))
+        return data  # يحتوي status و result أو error
+    if meta is None:
+        return _response_error(404, "job_not_found")
+    return JSONResponse({"status": meta["status"], "result": {}, "error": meta.get("error") or ""})
+
+@app.get("/job/{job_id}/download")
+def job_download(job_id: str):
+    p = _job_file(job_id)
+    if not p.exists():
+        return _response_error(404, "job_not_ready")
+    return FileResponse(p.as_posix(), media_type="application/json", filename=p.name)
+
+# --- Summary job ---
+async def _run_summary_job(job_id: str, body: str, out_base_path: pathlib.Path, summary_mode: str):
+    try:
+        s_text, kw_csv = nlp_core.summarize(body, mode=summary_mode)
+        if not s_text.strip():
+            payload = _job_payload("done", {
+                "summary": "", "keywords": "", "summary_path": None, "summary_source": "off"
+            })
+        else:
+            try:
+                sum_path = str(out_base_path.with_suffix(".summary.txt"))
+                pathlib.Path(sum_path).write_text(
+                    s_text + (("\n\nالكلمات المفتاحية: " + (kw_csv or "")) if kw_csv else ""),
+                    encoding="utf-8"
+                )
+            except Exception:
+                sum_path = None
+            payload = _job_payload("done", {
+                "summary": s_text, "keywords": kw_csv or "", "summary_path": sum_path,
+                "summary_source": nlp_core.get_summary_source()
+            })
+        out = _job_file(job_id)
+        out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        _JOBS[job_id] = {"status": "done", "result_path": out.as_posix(), "error": None}
+    except Exception as e:
+        out = _job_file(job_id)
+        out.write_text(json.dumps(_job_payload("error", None, str(e)), ensure_ascii=False), encoding="utf-8")
+        _JOBS[job_id] = {"status": "error", "result_path": None, "error": str(e)}
 
 @app.get("/models")
 def get_available_models():
@@ -1117,10 +863,10 @@ def get_available_models():
         core = _get_core()
         return {
             "models": getattr(core, "MODEL_CHOICES", ["light", "heavy"]),
-            "default": getattr(core, "DEFAULT_MODEL", _DEFAULT_MODEL),
+            "default": getattr(core, "DEFAULT_MODEL", settings.WHISPER_MODEL),
         }
     except Exception:
-        return {"models": ["light", "heavy"], "default": _DEFAULT_MODEL}
+        return {"models": ["light", "heavy"], "default": settings.WHISPER_MODEL}
 
 @app.post("/enroll-speaker")
 async def enroll_speaker(
@@ -1128,7 +874,7 @@ async def enroll_speaker(
     files: List[UploadFile] = File(...),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
        return _response_error(401, "unauthorized", "invalid api key")
     core = _get_core()
     tmpdir = tempfile.mkdtemp(prefix="enroll_")
@@ -1136,15 +882,16 @@ async def enroll_speaker(
         saved_files: List[str] = []
         for uf in files:
             dst = pathlib.Path(tmpdir) / (uf.filename or f"voice_{len(saved_files)}.wav")
-            with open(dst, "wb") as f:
-                shutil.copyfileobj(uf.file, f)
+            async with aiofiles.open(dst, "wb") as f:
+                content = await uf.read()
+                await f.write(content)
             try:
-                if dst.stat().st_size > MAX_UPLOAD_MB * 1024 * 1024:
-                    return _response_error(413, "file_too_large", f"max={MAX_UPLOAD_MB}MB")
+                if dst.stat().st_size > settings.MAX_UPLOAD_MB * 1024 * 1024:
+                    return _response_error(413, "file_too_large", f"max={settings.MAX_UPLOAD_MB}MB")
             except Exception:
                 pass
-            if pathlib.Path(dst).suffix.lower() not in ALLOWED_EXT:
-                return _response_error(415, "unsupported_media_type", pathlib.Path(dst).suffix.lower())   
+            if dst.suffix.lower() not in settings.ALLOWED_EXT:
+                return _response_error(415, "unsupported_media_type", dst.suffix.lower())
             saved_files.append(str(dst))
         success, message = core.enroll_voice(name, saved_files)
         return JSONResponse({"success": bool(success), "message": message or ""})
@@ -1158,7 +905,7 @@ async def enroll_speaker(
 
 @app.get("/enrolled-speakers")
 def get_enrolled_speakers(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
-    if API_TOKEN and (x_api_key or "") != API_TOKEN:
+    if settings.API_TOKEN and not secrets.compare_digest(x_api_key or "", settings.API_TOKEN):
         return _response_error(401, "unauthorized", "invalid api key")
     try:
         core = _get_core()
@@ -1166,4 +913,3 @@ def get_enrolled_speakers(x_api_key: Optional[str] = Header(None, alias="X-API-K
         return {"speakers": speakers}
     except Exception as e:
         return _response_error(500, "failed_to_load_speakers", str(e))
-    
