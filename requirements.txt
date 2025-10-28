@@ -45,4 +45,6 @@ gradio_client==1.13.3
 # ==== Utilities ====
 coloredlogs==15.0.1
 rich==14.1.0
+
 PyYAML==6.0.3
+python-dotenv==1.0.1
