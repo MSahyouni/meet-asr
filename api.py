@@ -16,6 +16,7 @@ import platform
 import aiofiles
 
 from config import settings
+import nlp_core
 
 # ——— تحذيرات طرف ثالث ———
 warnings.filterwarnings("ignore", category=UserWarning, message=".*TypedStorage is deprecated.*")
@@ -61,10 +62,10 @@ async def _lifespan(_: FastAPI):
     دورة حياة التطبيق. حاليًا لا يتم التحميل المسبق حسب الطلب.
     يمكن إضافة منطق التحميل المسبق هنا إذا تغيرت المتطلبات.
     """
-      # warmup اختياري لتعجيل أول طلب، نعطّله في CI
-    if settings.ASR_WARMUP and os.getenv("CI") != "true":
+    # ملاحظة: تم تعطيل التحميل المسبق بناءً على طلب المستخدم
+    if settings.ASR_WARMUP:
         try:
-            _ = _get_core()
+            _ = _get_core()  # preload models, ffmpeg check happens later in /health
         except Exception as e:
             print(f"[warmup] skipped: {e}")
     yield
@@ -78,20 +79,6 @@ app.add_middleware(CORSMiddleware, allow_origins=allow or ["*"], allow_credentia
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # حدّ حجم الطلب قبل الكتابة على القرص
-
-def _get_core():
-    """الحصول على النواة مع استيراد كسول لتفادي فشل import في CI."""
-    global _CORE
-    if _CORE is not None:
-        return _CORE
-    try:
-        # الاستيراد هنا فقط عند الحاجة
-        import nlp_core  # type: ignore
-    except Exception as e:
-        raise RuntimeError(f"nlp_core unavailable: {e}")
-    _CORE = nlp_core.get_core_singleton(settings)  # أو المُنشئ المناسب في nlp_core
-    return _CORE
-
 from starlette.middleware.base import BaseHTTPMiddleware
 import uuid, time
 class _LimitUploadSize(BaseHTTPMiddleware):
