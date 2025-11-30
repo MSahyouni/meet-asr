@@ -1,10 +1,16 @@
 import os
 import json
+import warnings
 from pathlib import Path
 from typing import Tuple, Optional, Any, Dict, List
 import gradio as gr
 import requests
 import time
+
+# قمع تحذيرات pyannote.audio و torchaudio
+warnings.filterwarnings("ignore", message=".*torchaudio.backend.common.AudioMetaData.*")
+warnings.filterwarnings("ignore", message=".*torchaudio._backend.*")
+warnings.filterwarnings("ignore", message=".*deprecated.*")
 
 # عناوين خادم الـ API (يمكن تعديلها من الواجهة أو عبر المتغيرات)
 DEFAULT_API_URL = os.getenv("ASR_API_URL", "http://127.0.0.1:8000/transcribe")
@@ -47,6 +53,7 @@ def call_api(
     mic_path: Optional[str],
     model_name: str,
     enhance: bool,
+    enhance_level: str,
     whisper_mode: str,
     diarize: bool,
     auto_k: bool,
@@ -88,6 +95,7 @@ def call_api(
             data: Dict[str, str] = {
                 "model_name": model_name,
                 "enhance": str(enhance).lower(),
+                "enhance_level": enhance_level,
                 "whisper_mode": whisper_mode,
                 "diarize": str(diarize).lower(),
                 "auto_k": str(auto_k).lower(),
@@ -98,7 +106,8 @@ def call_api(
                 "summary_mode": _normalize_mode(summary_mode),
             }
             headers = {"X-API-Key": api_key.strip()} if api_key and api_key.strip() else {}
-            # لا ترسل مفتاح summary_mode إذا كان "off"
+            # إذا كان defer_sum مفعّل، اجعل summary_mode = "off"
+            # (سيتم التعامل معه في الواجهة)
             if (data.get("summary_mode") or "").lower() == "off":
                 data.pop("summary_mode", None)
 
@@ -161,6 +170,7 @@ def call_api_batch(
     files_list: Optional[List[str]],
     model_name: str,
     enhance: bool,
+    enhance_level: str,
     whisper_mode: str,
     diarize: bool,
     auto_k: bool,
@@ -193,6 +203,7 @@ def call_api_batch(
     data: Dict[str, str] = {
         "model_name": model_name,
         "enhance": str(enhance).lower(),
+        "enhance_level": enhance_level,
         "whisper_mode": whisper_mode,
         "diarize": str(diarize).lower(),
         "auto_k": str(auto_k).lower(),
@@ -268,6 +279,160 @@ def call_api_batch(
             try: fh.close()
             except Exception: pass
 
+def enroll_speaker_api(
+    api_base_url: str,
+    name: str,
+    files_list: Optional[List[str]],
+    mic_path: Optional[str],
+    api_key: str,
+    timeout_s: int = DEFAULT_TIMEOUT,
+) -> str:
+    """يسجل بصمة صوت لمتكلم جديد عبر API."""
+    if not name or not name.strip():
+        return "الرجاء إدخال اسم المتكلم."
+    
+    api_url = f"{api_base_url.rstrip('/')}/enroll-speaker"
+    file_paths = [p for p in (files_list or []) if p]
+    if mic_path:
+        file_paths.append(mic_path)
+    
+    if not file_paths:
+        return "الرجاء رفع ملفات صوتية أو تسجيل صوت."
+    
+    headers = {"X-API-Key": api_key.strip()} if api_key and api_key.strip() else {}
+    
+    file_handles = []
+    try:
+        for pth in file_paths:
+            if not os.path.exists(pth):
+                continue
+            fh = open(pth, "rb")
+            file_handles.append((fh, pth))
+        
+        if not file_handles:
+            return "لم يتم العثور على ملفات صالحة."
+        
+        def build_files():
+            built = []
+            for fh, pth in file_handles:
+                fh.seek(0)
+                built.append(("files", (Path(pth).name, fh, "application/octet-stream")))
+            return built
+        
+        data = {"name": name.strip()}
+        
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = requests.post(api_url, files=build_files(), data=data, headers=headers, timeout=timeout_s)
+                break
+            except requests.Timeout as e:
+                if attempt < MAX_RETRIES:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                raise
+        
+        if resp.status_code != 200:
+            try:
+                j = resp.json()
+                err = j.get("error") or ""
+                det = j.get("detail") or ""
+                msg = f"HTTP {resp.status_code}: {err} {('| ' + det) if det else ''}".strip()
+            except Exception:
+                msg = f"HTTP {resp.status_code}: {resp.text[:160]}"
+            return msg
+        
+        res = resp.json()
+        success = res.get("success", False)
+        message = res.get("message", "")
+        return message if success else f"فشل التسجيل: {message}"
+    
+    except requests.Timeout:
+        return "انتهت مهلة الاتصال بالخادم (Timeout)."
+    except Exception as e:
+        return f"حدث خطأ: {e}"
+    finally:
+        for fh, _ in file_handles:
+            try:
+                fh.close()
+            except Exception:
+                pass
+
+def list_speakers_api(
+    api_base_url: str,
+    api_key: str,
+    timeout_s: int = DEFAULT_TIMEOUT,
+) -> List[str]:
+    """يعيد قائمة بأسماء المتحدثين المسجلين."""
+    api_url = f"{api_base_url.rstrip('/')}/enrolled-speakers"
+    headers = {"X-API-Key": api_key.strip()} if api_key and api_key.strip() else {}
+    
+    try:
+        resp = requests.get(api_url, headers=headers, timeout=timeout_s)
+        if resp.status_code != 200:
+            return []
+        res = resp.json()
+        return res.get("speakers", [])
+    except Exception:
+        return []
+
+def delete_speaker_api(
+    api_base_url: str,
+    name: str,
+    api_key: str,
+    timeout_s: int = DEFAULT_TIMEOUT,
+) -> str:
+    """يحذف متحدثاً مسجلاً."""
+    if not name or not name.strip():
+        return "الرجاء تحديد اسم المتكلم."
+    
+    api_url = f"{api_base_url.rstrip('/')}/delete-speaker"
+    headers = {"X-API-Key": api_key.strip()} if api_key and api_key.strip() else {}
+    params = {"name": name.strip()}
+    
+    try:
+        resp = requests.delete(api_url, headers=headers, params=params, timeout=timeout_s)
+        if resp.status_code != 200:
+            try:
+                j = resp.json()
+                err = j.get("error") or ""
+                det = j.get("detail") or ""
+                msg = f"HTTP {resp.status_code}: {err} {('| ' + det) if det else ''}".strip()
+            except Exception:
+                msg = f"HTTP {resp.status_code}: {resp.text[:160]}"
+            return msg
+        
+        res = resp.json()
+        success = res.get("success", False)
+        message = res.get("message", "")
+        return message if success else f"فشل الحذف: {message}"
+    except requests.Timeout:
+        return "انتهت مهلة الاتصال بالخادم (Timeout)."
+    except Exception as e:
+        return f"حدث خطأ: {e}"
+
+def get_speaker_files_api(
+    api_base_url: str,
+    name: str,
+    api_key: str,
+    timeout_s: int = DEFAULT_TIMEOUT,
+) -> List[str]:
+    """يعيد قائمة بملفات متحدث مسجل."""
+    if not name or not name.strip():
+        return []
+    
+    api_url = f"{api_base_url.rstrip('/')}/speaker-files"
+    headers = {"X-API-Key": api_key.strip()} if api_key and api_key.strip() else {}
+    params = {"name": name.strip()}
+    
+    try:
+        resp = requests.get(api_url, headers=headers, params=params, timeout=timeout_s)
+        if resp.status_code != 200:
+            return []
+        res = resp.json()
+        return res.get("files", [])
+    except Exception:
+        return []
+
 def summarize_now(
     api_summary_url: str,
     txt_path_state: str,
@@ -336,6 +501,12 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
                                    info="light = medium, heavy = large-v3")
             whisper_mode = gr.Radio(["normal", "whisper"], value="normal", label="وضع الحساسية")
             enhance_cb = gr.Checkbox(value=True, label="تحسين الصوت")
+            enhance_level_dd = gr.Dropdown(
+                ["light", "medium", "strong", "aggressive"],
+                value="medium",
+                label="مستوى تحسين الصوت",
+                info="light = خفيف | medium = متوسط | strong = قوي | aggressive = قوي جداً (للملفات القديمة)"
+            )
             diarize_cb = gr.Checkbox(value=True, label="تمييز المتكلمين (ديازة)")
             auto_k_cb = gr.Checkbox(value=True, label="تقدير عدد المتكلمين تلقائيًا")
             max_k_dd = gr.Dropdown([1, 2, 3, 4, 5], value=2, label="عدد المتكلمين (إذا عطّلت التقدير التلقائي)")
@@ -344,13 +515,15 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
             device_dd = gr.Dropdown(["auto", "cpu", "cuda"], value="auto", label="الجهاز")
             compute_dd = gr.Dropdown(["auto", "int8", "float16", "float32"], value="auto", label="الدقة")
 
-            # وضع التلخيص عند الطلب
+            # وضع التلخيص
+            gr.Markdown("#### 🧠 التلخيص")
             later_mode = gr.Dropdown(
                 ["off", "lite", "ultra"],
                 value="off",
-                label="وضع التلخيص عند الطلب",
-                info="lite = mT5 | ultra = Jais-13B"
+                label="وضع التلخيص",
+                info="off = بدون | lite = mT5 | ultra = Jais-13B"
             )
+            defer_sum_cb = gr.Checkbox(value=True, label="تلخيص لاحقًا لتخفيف الحمل", info="سيتم تعطيل التلخيص التلقائي ويمكنك التلخيص لاحقاً")
             btn = gr.Button("🚀 إرسال ملف واحد", variant="primary")
             btn_multi = gr.Button("📦 إرسال عدة ملفات", variant="secondary")
             later_btn = gr.Button("🧠 لخّص الآن", variant="secondary")
@@ -365,6 +538,92 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
             dl_urls = gr.Textbox(visible=False)
             dl_md = gr.Markdown(visible=True)
             sum_file_path = gr.Textbox(visible=False)
+
+    # ===== قسم إدارة المتحدثين =====
+    gr.Markdown("---\n### 👤 تسجيل بصمة صوت (Enroll)")
+    with gr.Row():
+        with gr.Column(scale=1):
+            spk_name_in = gr.Textbox(label="اسم المتكلم", placeholder="مثال: خالد")
+        with gr.Column(scale=1):
+            spk_mic_in = gr.Audio(sources=["microphone"], type="filepath", label="🎙️ سجّل مقطع للمتكلم")
+    with gr.Row():
+        spk_files_in = gr.Files(label="حمّل 3–5 مقاطع قصيرة للمتكلم (WAV/MP3/MP4...)", type="filepath", file_count="multiple")
+    enroll_btn = gr.Button("تسجيل/تحديث البصمة", variant="primary")
+    enroll_out = gr.Textbox(label="نتيجة التسجيل", interactive=False, lines=2)
+
+    gr.Markdown("---\n### 🗂️ إدارة المتكلمين")
+    with gr.Row():
+        refresh_spk_btn = gr.Button("📃 تحديث قائمة الأسماء", variant="secondary")
+        del_spk_btn = gr.Button("🗑️ حذف المتكلم المحدد", variant="stop")
+    with gr.Row():
+        spk_list_dd = gr.Dropdown(choices=[], label="الأسماء المسجّلة", value=None, interactive=True)
+        spk_files_list_dd = gr.Dropdown(choices=[], label="ملفات المتكلم", value=None, interactive=True)
+    with gr.Row():
+        spk_audio_player = gr.Audio(label="تشغيل عيّنة", interactive=False)
+
+    # حالة لمسار نص التفريغ (ليُستخدم في التلخيص عند الطلب)
+    txt_path_state = gr.State("")
+
+    # ===== دوال المتحدثين =====
+    def _enroll_speaker(name, files, mic_path, api_key, timeout):
+        """تسجيل متحدث جديد."""
+        files_list = list(files or []) if files else []
+        base_url = DEFAULT_API_URL.replace("/transcribe", "")
+        return enroll_speaker_api(base_url, name or "", files_list, mic_path, api_key or "", timeout or DEFAULT_TIMEOUT)
+    
+    def _refresh_speakers(api_key, timeout):
+        """تحديث قائمة المتحدثين."""
+        base_url = DEFAULT_API_URL.replace("/transcribe", "")
+        names = list_speakers_api(base_url, api_key or "", timeout or DEFAULT_TIMEOUT)
+        return gr.update(choices=names, value=(names[0] if names else None))
+    
+    def _load_speaker_files(name, api_key, timeout):
+        """تحميل ملفات متحدث."""
+        if not name:
+            return gr.update(choices=[], value=None), None
+        base_url = DEFAULT_API_URL.replace("/transcribe", "")
+        files = get_speaker_files_api(base_url, name, api_key or "", timeout or DEFAULT_TIMEOUT)
+        return gr.update(choices=files, value=(files[0] if files else None)), (files[0] if files else None)
+    
+    def _delete_speaker(name, api_key, timeout):
+        """حذف متحدث."""
+        if not name:
+            return "الرجاء تحديد متحدث.", gr.update(choices=[], value=None), gr.update(choices=[], value=None), None
+        base_url = DEFAULT_API_URL.replace("/transcribe", "")
+        msg = delete_speaker_api(base_url, name, api_key or "", timeout or DEFAULT_TIMEOUT)
+        names = list_speakers_api(base_url, api_key or "", timeout or DEFAULT_TIMEOUT)
+        return msg, gr.update(choices=names, value=(names[0] if names else None)), gr.update(choices=[], value=None), None
+    
+    def _play_speaker_file(file_path):
+        """تشغيل ملف متحدث."""
+        return file_path if file_path else None
+
+    # ===== ربط أزرار المتحدثين =====
+    enroll_btn.click(
+        _enroll_speaker,
+        inputs=[spk_name_in, spk_files_in, spk_mic_in, api_key_in, timeout_in],
+        outputs=[enroll_out]
+    )
+    refresh_spk_btn.click(
+        _refresh_speakers,
+        inputs=[api_key_in, timeout_in],
+        outputs=[spk_list_dd]
+    )
+    spk_list_dd.change(
+        _load_speaker_files,
+        inputs=[spk_list_dd, api_key_in, timeout_in],
+        outputs=[spk_files_list_dd, spk_audio_player]
+    )
+    spk_files_list_dd.change(
+        _play_speaker_file,
+        inputs=[spk_files_list_dd],
+        outputs=[spk_audio_player]
+    )
+    del_spk_btn.click(
+        _delete_speaker,
+        inputs=[spk_list_dd, api_key_in, timeout_in],
+        outputs=[enroll_out, spk_list_dd, spk_files_list_dd, spk_audio_player]
+    )
 
     # حالة لمسار نص التفريغ (ليُستخدم في التلخيص عند الطلب)
     txt_path_state = gr.State("")
@@ -390,13 +649,31 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
             return " | ".join(mk) if mk else ""
         except Exception:
             return ""
+    
+    # دالة لتحديد summary_mode بناءً على defer_sum
+    def _get_summary_mode_for_api(defer_sum, later_mode):
+        return "off" if defer_sum else later_mode
+    
+    def _call_api_with_defer(*args):
+        summary_mode = _get_summary_mode_for_api(args[14], args[15])
+        return call_api(
+            args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9],
+            args[10], args[11], args[12], args[13], summary_mode, args[16], args[17]
+        )
+    
+    def _call_api_batch_with_defer(*args):
+        summary_mode = _get_summary_mode_for_api(args[12], args[13])
+        return call_api_batch(
+            args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
+            args[8], args[9], args[10], args[11], summary_mode, args[14], args[15]
+        )
 
     btn.click(
-        call_api,
+        _call_api_with_defer,
         inputs=[
             api_url_state, source_radio, file_in, mic_in,
-            model_dd, enhance_cb, whisper_mode, diarize_cb, auto_k_cb,
-            max_k_dd, thr_slider, device_dd, compute_dd, summary_dd,
+            model_dd, enhance_cb, enhance_level_dd, whisper_mode, diarize_cb, auto_k_cb,
+            max_k_dd, thr_slider, device_dd, compute_dd, defer_sum_cb, later_mode,
             api_key_in, timeout_in
         ],
         outputs=[out_txt, out_summary, out_keywords, segs_json, srt_path, vtt_path, dl_urls, txt_path_state],
@@ -406,10 +683,10 @@ with gr.Blocks(title="🎙️ Arabic ASR Pro API Proxy", css=CUSTOM_CSS, theme=g
      )
     # إرسال عدة ملفات إلى /transcribe-batch
     btn_multi.click(
-        call_api_batch,
+        _call_api_batch_with_defer,
         inputs=[
-            api_batch_state, files_in, model_dd, enhance_cb, whisper_mode, diarize_cb, auto_k_cb,
-            max_k_dd, thr_slider, device_dd, compute_dd, summary_dd, api_key_in, timeout_in
+            api_batch_state, files_in, model_dd, enhance_cb, enhance_level_dd, whisper_mode, diarize_cb, auto_k_cb,
+            max_k_dd, thr_slider, device_dd, compute_dd, defer_sum_cb, later_mode, api_key_in, timeout_in
         ],
         outputs=[out_txt, out_summary, out_keywords, segs_json, srt_path, vtt_path, dl_urls, txt_path_state],
         api_name="send_to_api_batch"

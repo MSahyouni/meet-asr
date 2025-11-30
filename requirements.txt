@@ -16,8 +16,7 @@ torch==2.1.0
 torchaudio==2.1.0
 pytorch-lightning==2.1.0 # Dependency for Pyannote
 
-# ==== Summarization & NLP (CTranslate2 & Transformers) ====
-ctranslate2==4.6.0
+# ==== Summarization & NLP (Transformers) ====
 sentencepiece==0.2.1
 transformers==4.43.0
 huggingface-hub==0.35.1
@@ -34,18 +33,15 @@ resampy==0.4.3
 noisereduce==3.0.3
 librosa==0.11.0
 numpy==1.24.4
-pandas==2.3.2
 numba==0.57.1
 llvmlite==0.40.1
+scipy==1.11.4
 
 # ==== واجهات Gradio ====
 gradio==5.47.2
 gradio_client==1.13.3
 
 # ==== Utilities ====
-coloredlogs==15.0.1
-rich==14.1.0
-
 PyYAML==6.0.3
 python-dotenv==1.0.1
 slowapi==0.1.9

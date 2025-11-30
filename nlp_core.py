@@ -92,7 +92,11 @@ def _ensure_tfidf() -> bool:
             print(f"[TFIDF] Failed to load from disk: {e}")
 
     # (Optional) Build logic if you have parquet files can be added here
-    print("[TFIDF] Model file not found and build logic is disabled.")
+    # TFIDF اختياري - التطبيق يعمل بدونه باستخدام طريقة بسيطة لاستخراج الكلمات المفتاحية
+    # يمكن بناء النموذج لاحقاً من بيانات parquet إذا توفرت
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug("[TFIDF] Model file not found. Using fallback keyword extraction method.")
     return False
 
 def score_sentences_by_tfidf(sentences: List[str]) -> List[Tuple[str, float]]:

@@ -8,8 +8,48 @@ import pathlib
 import tempfile
 import subprocess
 import traceback
+import warnings
+import os
 from typing import Optional, List, Dict
 from collections import defaultdict
+
+# قمع تحذيرات pyannote.audio و torchaudio و torchvision
+warnings.filterwarnings("ignore", message=".*torchaudio.backend.common.AudioMetaData.*")
+warnings.filterwarnings("ignore", message=".*torchaudio._backend.*")
+warnings.filterwarnings("ignore", message=".*deprecated.*")
+warnings.filterwarnings("ignore", message=".*torchvision.*")
+warnings.filterwarnings("ignore", message=".*cannot save figures.*")
+# قمع print statements من pyannote.audio
+import sys
+_original_stdout_asr = sys.stdout
+class _SuppressTorchvisionPrint:
+    def __init__(self):
+        self.buffer = ""
+    def write(self, text):
+        if not text:
+            return
+        # فحص مباشر للنص
+        if "torchvision" in text.lower() or "cannot save figures" in text.lower():
+            return
+        self.buffer += text
+        if "\n" in text:
+            lines = self.buffer.split("\n")
+            self.buffer = lines[-1] if lines else ""
+            for line in lines[:-1]:
+                if line and ("torchvision" not in line.lower() and "cannot save figures" not in line.lower()):
+                    _original_stdout_asr.write(line + "\n")
+    def flush(self):
+        if self.buffer:
+            if "torchvision" not in self.buffer.lower() and "cannot save figures" not in self.buffer.lower():
+                _original_stdout_asr.write(self.buffer)
+            self.buffer = ""
+        _original_stdout_asr.flush()
+    def __getattr__(self, name):
+        return getattr(_original_stdout_asr, name)
+sys.stdout = _SuppressTorchvisionPrint()
+# قمع تحذيرات torchvision من pyannote.audio
+import logging
+logging.getLogger("pyannote").setLevel(logging.ERROR)
 
 import numpy as np
 import soundfile as sf
@@ -17,13 +57,23 @@ import resampy
 import librosa
 import noisereduce as nr
 import torch
+try:
+    from scipy.signal import butter, sosfilt
+    _SCIPY_AVAILABLE = True
+except ImportError:
+    _SCIPY_AVAILABLE = False
+    print("[WARN] scipy not available. Some audio enhancement features will be limited.")
 from huggingface_hub import snapshot_download
 from faster_whisper import WhisperModel
 
 import nlp_core
 # اختياري: Pyannote ديازة
 try:
-    from pyannote.audio import Pipeline
+    # قمع تحذير torchvision قبل استيراد pyannote
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*torchvision.*")
+        warnings.filterwarnings("ignore", message=".*cannot save figures.*")
+        from pyannote.audio import Pipeline
     _PYANNOTE_AVAILABLE = True
 except ImportError:
     _PYANNOTE_AVAILABLE = False
@@ -439,25 +489,139 @@ def to_wav16k(path, target_sr=16000):
         sf.write(tmp, (np.clip(y, -1.0, 1.0) * 32767).astype(np.int16), target_sr)
     return tmp
 
-def enhance_audio(y: np.ndarray, sr: int, strong=False, gain_db=6.0) -> np.ndarray:
+def enhance_audio(y: np.ndarray, sr: int, enhance_level: str = "medium", gain_db: float = 6.0) -> np.ndarray:
+    """
+    تحسين جودة الصوت خاصة للملفات القديمة ذات الجودة السيئة.
+    
+    Args:
+        y: إشارة الصوت (numpy array)
+        sr: معدل العينة (sample rate)
+        enhance_level: مستوى التحسين ("light", "medium", "strong", "aggressive")
+        gain_db: كسب الصوت بالديسيبل
+    
+    Returns:
+        إشارة الصوت المحسّنة
+    """
     try:
-        y = librosa.effects.preemphasis(y, coef=0.85)
-        y = nr.reduce_noise(y=y, sr=sr, prop_decrease=0.9 if strong else 0.6, stationary=False)
+        # تحويل enhance_level إلى إعدادات
+        levels = {
+            "light": {"noise_reduction": 0.5, "preemphasis": 0.75, "highpass": 40, "lowpass": 7000, "compression": 0.3},
+            "medium": {"noise_reduction": 0.7, "preemphasis": 0.85, "highpass": 60, "lowpass": 7500, "compression": 0.5},
+            "strong": {"noise_reduction": 0.85, "preemphasis": 0.90, "highpass": 80, "lowpass": 8000, "compression": 0.7},
+            "aggressive": {"noise_reduction": 0.95, "preemphasis": 0.95, "highpass": 100, "lowpass": 8000, "compression": 0.9}
+        }
+        
+        # استخدام "medium" كافتراضي إذا لم يكن المستوى معروفاً
+        config = levels.get(enhance_level.lower(), levels["medium"])
+        
+        # 1. Pre-emphasis لتحسين الترددات العالية
+        y = librosa.effects.preemphasis(y, coef=config["preemphasis"])
+        
+        # 2. High-pass filter لإزالة الضوضاء منخفضة التردد (مثل الهمهمة)
+        if config["highpass"] > 0 and _SCIPY_AVAILABLE:
+            try:
+                sos = butter(4, config["highpass"], btype='high', fs=sr, output='sos')
+                y = sosfilt(sos, y)
+            except Exception:
+                pass  # إذا فشل الفلتر، استمر بدون تغيير
+        
+        # 3. تقليل الضوضاء باستخدام noisereduce
+        try:
+            y = nr.reduce_noise(
+                y=y, 
+                sr=sr, 
+                prop_decrease=config["noise_reduction"], 
+                stationary=False,
+                n_std_thresh_stationary=1.5 if enhance_level in ["strong", "aggressive"] else 1.0
+            )
+        except Exception:
+            pass  # إذا فشل، استمر بدون تغيير
+        
+        # 4. Low-pass filter لإزالة الضوضاء عالية التردد
+        if config["lowpass"] > 0 and config["lowpass"] < sr / 2 and _SCIPY_AVAILABLE:
+            try:
+                sos = butter(4, config["lowpass"], btype='low', fs=sr, output='sos')
+                y = sosfilt(sos, y)
+            except Exception:
+                pass
+        
+        # 5. Dynamic Range Compression لتوحيد مستوى الصوت
+        if config["compression"] > 0:
+            try:
+                # حساب RMS
+                rms = float(np.sqrt(np.mean(y**2) + 1e-9))
+                if rms > 0:
+                    # تطبيق ضغط ديناميكي
+                    threshold = 0.1
+                    ratio = 1.0 + config["compression"] * (rms / threshold - 1.0) if rms > threshold else 1.0
+                    y = y * min(ratio, 2.0)  # حد أقصى للضغط
+            except Exception:
+                pass
+        
+        # 6. Normalization لتوحيد مستوى الصوت
         rms = float(np.sqrt(np.mean(y**2) + 1e-9))
         if rms > 0:
-            y *= (0.08 / rms)
+            # استخدام target_rms أعلى قليلاً للملفات القديمة
+            target_rms = 0.10 if enhance_level in ["strong", "aggressive"] else 0.08
+            y *= (target_rms / rms)
+        
+        # 7. تطبيق Gain
         y = np.clip(y * (10 ** (gain_db / 20.0)), -1.0, 1.0)
+        
+        # 8. De-essing (تقليل الأصوات الحادة) للمستويات العالية
+        if enhance_level in ["strong", "aggressive"] and _SCIPY_AVAILABLE:
+            try:
+                # تطبيق فلاتر بسيطة لتقليل الأصوات الحادة في نطاق 4-8 kHz
+                sos_de = butter(2, [3500, 8500], btype='band', fs=sr, output='sos')
+                y_hf = sosfilt(sos_de, y)
+                # تقليل مكونات التردد العالي بنسبة صغيرة
+                y = y - 0.15 * y_hf
+            except Exception:
+                pass
+        
+        # 9. تطبيق فلاتر نهائية لإزالة أي تشويه
+        y = np.clip(y, -1.0, 1.0)
+        
         return y.astype(np.float32, copy=False)
-    except Exception:
-        return y
+    except Exception as e:
+        # في حالة أي خطأ، أرجع الإشارة الأصلية
+        return y.astype(np.float32, copy=False)
 
-def to_wav16k_enhanced(path, enhance=False, whisper_mode="normal", target_sr=16000):
+def to_wav16k_enhanced(path, enhance=False, whisper_mode="normal", enhance_level="medium", target_sr=16000):
+    """
+    تحويل الملف إلى WAV 16kHz مع تحسين اختياري.
+    
+    Args:
+        path: مسار الملف الصوتي
+        enhance: تفعيل/تعطيل التحسين
+        whisper_mode: وضع Whisper ("normal" أو "whisper")
+        enhance_level: مستوى التحسين ("light", "medium", "strong", "aggressive")
+        target_sr: معدل العينة المستهدف (افتراضي 16000)
+    
+    Returns:
+        مسار ملف WAV المحسّن
+    """
     wav = to_wav16k(path, target_sr)
     if not enhance:
         return wav
     y, sr = _wav_read_mono(wav, target_sr)
-    strong = (whisper_mode == "whisper")
-    y = enhance_audio(y, sr, strong=strong, gain_db=8.0 if strong else 5.0)
+    
+    # تحديد مستوى التحسين بناءً على whisper_mode إذا لم يُحدد
+    if enhance_level == "medium":
+        # إذا كان whisper_mode == "whisper"، استخدم "strong" للملفات القديمة
+        if whisper_mode == "whisper":
+            enhance_level = "strong"
+    
+    # تحديد gain_db بناءً على مستوى التحسين
+    gain_levels = {
+        "light": 4.0,
+        "medium": 5.0,
+        "strong": 7.0,
+        "aggressive": 8.0
+    }
+    gain_db = gain_levels.get(enhance_level, 5.0)
+    
+    y = enhance_audio(y, sr, enhance_level=enhance_level, gain_db=gain_db)
     tmp = _tmp_wav()
     sf.write(tmp, (y * 32767).astype(np.int16), sr)
     return tmp
@@ -554,6 +718,7 @@ def process(
     model_name: Optional[str] = None,
     enhance: bool = False,
     whisper_mode: str = "normal",
+    enhance_level: str = "medium",
     diarize: bool = False,
     auto_k: bool = True,
     max_speakers: int = 2,
@@ -567,7 +732,7 @@ def process(
         return _err(f"File not found: {file_path}")
     try:
         # 1) تحضير الصوت والنموذج
-        wav = to_wav16k_enhanced(file_path, enhance=enhance, whisper_mode=whisper_mode)
+        wav = to_wav16k_enhanced(file_path, enhance=enhance, whisper_mode=whisper_mode, enhance_level=enhance_level)
         model = get_model(model_name or DEFAULT_MODEL, device_sel, compute_sel)
 
         # 2) ASR

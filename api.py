@@ -19,15 +19,50 @@ from config import settings
 import nlp_core
 
 # ——— تحذيرات طرف ثالث ———
+# قمع جميع التحذيرات قبل استيراد أي مكتبة
+warnings.filterwarnings("ignore", message=".*torchvision.*")
+warnings.filterwarnings("ignore", message=".*cannot save figures.*")
+warnings.filterwarnings("ignore", message=".*torchvision is not available.*")
+# قمع print statements من pyannote.audio
+import sys
+_original_stdout = sys.stdout
+class _SuppressTorchvisionWarning:
+    def __init__(self):
+        self.buffer = ""
+    def write(self, text):
+        if not text:
+            return
+        # فحص مباشر للنص
+        if "torchvision" in text.lower() or "cannot save figures" in text.lower():
+            return
+        self.buffer += text
+        if "\n" in text:
+            lines = self.buffer.split("\n")
+            self.buffer = lines[-1] if lines else ""
+            for line in lines[:-1]:
+                if line and ("torchvision" not in line.lower() and "cannot save figures" not in line.lower()):
+                    _original_stdout.write(line + "\n")
+    def flush(self):
+        if self.buffer:
+            if "torchvision" not in self.buffer.lower() and "cannot save figures" not in self.buffer.lower():
+                _original_stdout.write(self.buffer)
+            self.buffer = ""
+        _original_stdout.flush()
+    def __getattr__(self, name):
+        return getattr(_original_stdout, name)
+sys.stdout = _SuppressTorchvisionWarning()
 warnings.filterwarnings("ignore", category=UserWarning, message=".*TypedStorage is deprecated.*")
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*TypedStorage is deprecated.*")
 warnings.filterwarnings("ignore", message="You are using the default legacy behaviour of the <class 'transformers.models.t5.tokenization_t5.T5Tokenizer'>")
 warnings.filterwarnings("ignore", message="The sentencepiece tokenizer that you are converting to a fast tokenizer uses the byte fallback option.*")
 warnings.filterwarnings("ignore", category=UserWarning, message=".*pkg_resources is deprecated as an API.*")
 warnings.filterwarnings("ignore", category=UserWarning, message=".*torchaudio._backend.set_audio_backend has been deprecated.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*torchaudio.backend.common.AudioMetaData.*")
 warnings.filterwarnings("ignore", message=".*deprecated.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*symlinks on Windows.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*legacy behaviour of the <class 'transformers.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*torchvision is not available.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*cannot save figures.*", category=UserWarning)
 if sys.platform.startswith("win"):
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -507,6 +542,7 @@ async def transcribe(
     async_mode: bool = Form(False),   # <--- جديد
     model_name: Optional[str] = Form(None),
     enhance: bool = Form(True),
+    enhance_level: str = Form("medium"),
     whisper_mode: str = Form("normal"),
     diarize: bool = Form(True),
     punctuate: bool = Form(False),
@@ -556,6 +592,7 @@ async def transcribe(
                 str(dst),
                 model_name = model_name or settings.WHISPER_MODEL,
                 enhance = enhance,
+                enhance_level = enhance_level,
                 whisper_mode = whisper_mode,
                 diarize = diarize,
                 auto_k = auto_k,
@@ -579,6 +616,7 @@ async def transcribe(
     kwargs = dict(
         model_name = model_name or settings.WHISPER_MODEL,
         enhance = enhance,
+        enhance_level = enhance_level,
         whisper_mode = whisper_mode,
         diarize = diarize,
         auto_k = auto_k,
@@ -603,6 +641,7 @@ async def transcribe_batch(
     files: List[UploadFile] = File(...),
     model_name: Optional[str] = Form(None),
     enhance: bool = Form(True),
+    enhance_level: str = Form("medium"),
     whisper_mode: str = Form("normal"),
     diarize: bool = Form(True),
     punctuate: bool = Form(False),
@@ -643,6 +682,7 @@ async def transcribe_batch(
                 saved,
                 model_name = model_name or settings.WHISPER_MODEL,
                 enhance = enhance,
+                enhance_level = enhance_level,
                 whisper_mode = whisper_mode,
                 diarize = diarize,
                 auto_k = auto_k,
