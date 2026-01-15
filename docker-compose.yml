@@ -1,25 +1,32 @@
 version: "3.9"
-
 services:
-  meet-asr:
-    build: .
-    container_name: meet-asr
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: meetasr-api
+    env_file:
+      - .env
     ports:
       - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./voices:/app/voices
+    gpus: all
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: meetasr-web
     environment:
-      # تفعيل التحميل المسبق اختياري
-      - ASR_WARMUP=1
-      - ASR_ALLOWED_ORIGINS=*
-      - HF_HOME=/app/data/.hf
-      - ASR_DATA_DIR=/app/data
-      # ضع التوكن إن لزم نماذج خاصة
-      # - HF_TOKEN=hf_xxx
+      - ASR_API_URL=http://api:8000/transcribe
+      - ASR_BATCH_URL=http://api:8000/transcribe-batch
+      - ASR_SUMMARY_URL=http://api:8000/summarize
+      - ASR_HTTP_TIMEOUT=300
+    ports:
+      - "7860:7860"
+    depends_on:
+      - api
     volumes:
       - ./data:/app/data
-      - ./static:/app/static
-      - ./requirements.txt:/app/requirements.txt:ro
-      - ./api.py:/app/api.py:ro
-      - ./asr_core.py:/app/asr_core.py:ro
-      - ./nlp_core.py:/app/nlp_core.py:ro
-      - ./config.py:/app/config.py:ro
-    restart: unless-stopped
