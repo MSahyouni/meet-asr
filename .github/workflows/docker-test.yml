@@ -23,23 +23,25 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
           sudo docker system prune -af || true
 
-      - name: Build API image (cache)
+      - name: Build API image (cache + load)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile.api
           tags: meetasr-api-test:latest
           push: false
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build Web image (cache)
+      - name: Build Web image (cache + load)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile.web
           tags: meetasr-web-test:latest
           push: false
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
