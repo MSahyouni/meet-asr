@@ -1,31 +1,26 @@
-FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+FROM python:3.10-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    tzdata \
-    ffmpeg \
-    git \
-    tini \
-    curl && \
+    apt-get install -y --no-install-recommends tini curl tzdata && \
     ln -fs /usr/share/zoneinfo/UTC /etc/localtime && \
     dpkg-reconfigure --frontend noninteractive tzdata && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+COPY ../requirements.web.txt /app/requirements.web.txt
+RUN pip install --no-cache-dir -r requirements.web.txt
 
-COPY ../requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY ../app_api_proxy.py /app/
 
-COPY ../asr_core.py ../api.py ../nlp_core.py ../config.py /app/
-
-RUN mkdir -p /app/models /app/data /app/voices
+ENV ASR_API_URL=http://api:8000/transcribe \
+    ASR_BATCH_URL=http://api:8000/transcribe-batch \
+    ASR_SUMMARY_URL=http://api:8000/summarize \
+    ASR_HTTP_TIMEOUT=300
 
 ENTRYPOINT ["/usr/bin/tini","--"]
-
-CMD ["uvicorn","api:app","--host","0.0.0.0","--port","8000","--workers","1"]
+CMD ["python","-u","app_api_proxy.py"]
