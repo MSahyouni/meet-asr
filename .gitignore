@@ -1,75 +1,24 @@
-# Flutter & Dart
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.packages
-.pub-cache/
-.pub/
-build/
-coverage/
-generated_plugin_registrant.dart
-
-# Android
-**/android/**/gradle-wrapper.jar
-**/android/.gradle/
-**/android/captures/
-**/android/local.properties
-**/android/.idea/
-**/android/*.iml
-**/android/.settings/
-**/android/.project
-**/android/.classpath
-**/android/.cxx/
-**/android/gradlew
-**/android/gradlew.bat
-**/android/gradle/
-**/android/app/debug
-**/android/app/profile
-**/android/app/release
-
-# iOS
-**/ios/Flutter/Flutter.framework
-**/ios/Flutter/Flutter.podspec
-**/ios/Flutter/Generated.xcconfig
-**/ios/Flutter/ephemeral/
-**/ios/.symlinks/
-**/ios/Pods/
-**/ios/Podfile.lock
-**/ios/Runner/GeneratedPluginRegistrant.*
-
-# macOS
-**/macos/Flutter/GeneratedPluginRegistrant.swift
-**/macos/Pods/
-**/macos/Podfile.lock
-
-# Windows
-**/windows/flutter/generated_plugin_registrant.cc
-
-# Web
-lib/generated_plugin_registrant.dart
-
-# VS Code
-.vscode/
-
-# IntelliJ
-*.iml
-*.ipr
-*.iws
-.idea/
-
-# Misc
-*.log
-*.lock
-*.tmp
-*.swp
-*.swo
-*.DS_Store
-
-# Secrets
+# ======================
+# Secrets & Environment
+# ======================
+.env
 *.env
+docker/.env
 *.keystore
 *.jks
+
+# ======================
+# Docker runtime data
+# ======================
+data/
+models/
+voices/
+outputs/
+pretrained_models/
+
+# ======================
 # Python
+# ======================
 __pycache__/
 *.py[cod]
 *.pyo
@@ -85,28 +34,76 @@ build/
 .venv/
 venv/
 
-# Project artifacts
-data/
-outputs/
-pretrained_models/
-voices/
-*.gradio*
+# ======================
+# Logs & temp
+# ======================
 *.log
+*.tmp
+*.swp
+*.swo
+*.lock
 
+# ======================
+# Gradio
+# ======================
+*.gradio*
+
+# ======================
 # OS junk
+# ======================
 .DS_Store
 Thumbs.db
 
-/flutter_app/android
-/flutter_app/.metadata
-/flutter_app/.idea
-/flutter_app/.vscode
-/flutter_app/.gitignore
-/flutter_app/analysis_options.yaml
-/flutter_app/README.md
-/flutter_app/Web
-/flutter_app/test/widget_test.dart
-/flutter_app/assets/images
+# ======================
+# IDEs
+# ======================
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
 
+# ======================
+# Flutter (client)
+# ======================
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+coverage/
+build/
+generated_plugin_registrant.dart
 
+flutter_app/android
+flutter_app/.metadata
+flutter_app/.idea
+flutter_app/.vscode
+flutter_app/.gitignore
+flutter_app/analysis_options.yaml
+flutter_app/README.md
+flutter_app/Web
+flutter_app/test/widget_test.dart
+flutter_app/assets/images
 
+# ======================
+# Android / iOS
+# ======================
+**/android/.gradle/
+**/android/.idea/
+**/android/*.iml
+**/android/app/debug
+**/android/app/profile
+**/android/app/release
+
+**/ios/Pods/
+**/ios/Podfile.lock
+**/ios/Flutter/ephemeral/
+
+# ======================
+# macOS / Windows Flutter
+# ======================
+**/macos/Pods/
+**/macos/Podfile.lock
+**/windows/flutter/generated_plugin_registrant.cc
