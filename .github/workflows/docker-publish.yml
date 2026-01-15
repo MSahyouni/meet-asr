@@ -33,8 +33,8 @@ jobs:
           file: docker/Dockerfile.api
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/meetasr-api:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/meetasr-api:latest
+            ghcr.io/msahyouni/meetasr-api:${{ github.ref_name }}
+            ghcr.io/msahyouni/meetasr-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -45,7 +45,7 @@ jobs:
           file: docker/Dockerfile.web
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/meetasr-web:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/meetasr-web:latest
+            ghcr.io/msahyouni/meetasr-web:${{ github.ref_name }}
+            ghcr.io/msahyouni/meetasr-web:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
