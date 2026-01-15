@@ -1,0 +1,51 @@
+name: 📦 Publish Docker Images
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.api
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/meetasr-api:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/meetasr-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & Push Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.web
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/meetasr-web:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/meetasr-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
