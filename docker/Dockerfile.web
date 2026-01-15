@@ -1,10 +1,26 @@
 FROM python:3.10-slim
-RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends tini curl tzdata && \
+    ln -fs /usr/share/zoneinfo/UTC /etc/localtime && \
+    dpkg-reconfigure --frontend noninteractive tzdata && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+
+COPY requirements.web.txt /app/requirements.web.txt
+RUN pip install --no-cache-dir -r requirements.web.txt
+
 COPY app_api_proxy.py /app/
-ENV ASR_API_URL=http://api:8000/transcribe ASR_BATCH_URL=http://api:8000/transcribe-batch ASR_SUMMARY_URL=http://api:8000/summarize ASR_HTTP_TIMEOUT=300
+
+ENV ASR_API_URL=http://api:8000/transcribe \
+    ASR_BATCH_URL=http://api:8000/transcribe-batch \
+    ASR_SUMMARY_URL=http://api:8000/summarize \
+    ASR_HTTP_TIMEOUT=300
+
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["python","-u","app_api_proxy.py"]
