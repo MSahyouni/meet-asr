@@ -45,6 +45,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Inspect API image command
+        run: |
+          docker image inspect meetasr-api-test:latest --format 'Entrypoint={{json .Config.Entrypoint}} Cmd={{json .Config.Cmd}}'
+          docker image inspect meetasr-web-test:latest --format 'WEB Entrypoint={{json .Config.Entrypoint}} Cmd={{json .Config.Cmd}}'
+
       - name: Start API container
         run: |
           docker run -d --name meetasr-api-test -p 8000:8000 \
