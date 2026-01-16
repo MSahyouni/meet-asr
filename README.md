@@ -1,233 +1,231 @@
-# Meet-ASR 🎤
+Meet-ASR
 
-![Python CI](https://github.com/MSahyouni/meet-asr/actions/workflows/python-ci.yml/badge.svg)
-![License](https://img.shields.io/github/license/MSahyouni/meet-asr)
+Meet-ASR هو نظام تفريغ صوتي (Speech-to-Text) احترافي يدعم تمييز المتحدثين (Speaker Diarization) وتلخيص النص، مع تحسين جودة الصوت (Enhance) قبل المعالجة، ومصمم ليعمل كخدمة مستقلة قابلة للدمج في أي تطبيق.
 
-تطبيق للتعرف على الكلام (Speech Recognition) يعمل أوفلاين باستخدام **Python + Whisper + Gradio**،
-مع دعم **تمييز المتكلمين (Diarization)** + **تلخيص النصوص**.
-يتم تطوير نسخة أندرويد باستخدام **Flutter**.
-يدعم التكامل عبر **REST API (FastAPI)**، مع ضمان الجودة عبر **GitHub Actions CI/CD**.
+المشروع مهيأ للاستخدام البحثي والمؤسسي، ويعمل محليًا أو عبر Docker، مع دعم CPU و GPU.
+
 
 ---
 
-## 📂 مكونات المشروع
+✨ الميزات
 
-* `app.py` : الواجهة التفاعلية (Gradio UI).
-* `asr_core.py` : المنطق الأساسي (ASR + تحسين الصوت + تمييز المتكلمين + تلخيص).
-* `api.py` : واجهة REST API (FastAPI).
-* `requirements.txt` : المكتبات المطلوبة.
-* `models/` : النماذج الصوتية (Whisper + Speaker Recognition).
-* `tests/` : اختبارات دخانية (Smoke tests).
-* `.github/workflows/python-ci.yml` : فحص البناء وتشغيل الاختبارات.
+🎙️ تفريغ صوتي عالي الدقة باستخدام Whisper
 
----
+🧑‍🤝‍🧑 تمييز المتحدثين (Speaker Diarization)
 
-## 🚀 تشغيل Gradio (واجهة المستخدم)
+🔊 تحسين جودة الصوت (Enhance)
 
-1. ثبّت المكتبات:
+تقليل الضجيج
 
-   ```bash
-   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
-   ```
-2. شغّل التطبيق:
+تحسين وضوح الصوت البشري
 
-   ```bash
-   python app.py
-   ```
-3. افتح المتصفح على:
+إعادة أخذ العينات تلقائيًا
 
-   ```
-   http://127.0.0.1:7860
-   ```
 
-   * رفع ملف صوتي أو تسجيل مباشر 🎙️.
-   * النتيجة: نص مفرّغ + أسماء المتكلمين (إن فُعّل) + ملخص وكلمات مفتاحية.
+📝 تلخيص النص الناتج
+
+🌐 واجهة برمجية REST (API)
+
+🖥️ واجهة ويب (Gradio)
+
+⚡ دعم التشغيل على CPU أو GPU
+
+🐳 دعم Docker و Docker Compose
+
+📦 نشر تلقائي على GitHub Container Registry
+
+
 
 ---
 
-## 🌐 تشغيل REST API (FastAPI)
+🧠 كيف يعمل
 
-1. ثبّت المكتبات (إذا لم تفعل سابقًا):
+يعتمد Meet-ASR على فصل واضح بين الواجهة والمعالجة:
 
-   ```bash
-   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
-   ```
-2. شغّل السيرفر:
+API
 
-   ```bash
-   uvicorn api:app --host 0.0.0.0 --port 8000
-   ```
-3. جرّب بالمتصفح:
+Enhance → ASR → Diarization → Summarize
 
-   * `/health` → فحص جاهزية.
-   * `/docs` → واجهة Swagger للتجربة المباشرة.
-   * `/transcribe` → رفع ملف صوتي والحصول على النص + الملخص.
-   * `/transcribe-batch` → رفع عدة ملفات دفعة واحدة.
 
-### مثال Curl
+Web UI
 
-```bash
-curl -X POST "http://127.0.0.1:8000/transcribe" \
-  -F "file=@example.wav" \
-  -F "diarize=true"
-```
+واجهة استخدام تتواصل مع الـ API فقط
+
+
+يمكن لأي تطبيق خارجي استخدام الـ API مباشرة
+
+
+> تم حذف ملف app.py والاعتماد على API + Web Proxy فقط.
+
+
+
 
 ---
 
-## 🎚️ أداة تحسين الصوت (Audio Enhancement)
+🗂️ بنية المشروع
 
-تطبيق Meet-ASR يتضمن أداة متقدمة لتحسين جودة الصوت، خاصة للملفات القديمة أو ذات الجودة المنخفضة. هذه الأداة تطبق سلسلة من تقنيات معالجة الإشارات لتحسين وضوح الصوت وتقليل الضوضاء.
+api.py
+asr_core.py
+nlp_core.py
+app_api_proxy.py
+requirements.txt
+requirements.web.txt
 
-### 📊 مستويات التحسين
+docker/
+├─ Dockerfile.api
+├─ Dockerfile.web
+├─ docker-compose.yml
+└─ docker-compose.prod.yml
 
-الأداة تدعم **4 مستويات** من التحسين، كل مستوى يطبق إعدادات مختلفة حسب شدة التحسين المطلوبة:
+.github/workflows/
+├─ docker-test.yml
+└─ docker-publish.yml
 
-| المستوى | الوصف | الاستخدام الموصى به |
-|---------|-------|---------------------|
-| **Light** (خفيف) | تحسين بسيط مع الحفاظ على الصوت الأصلي | ملفات بجودة جيدة مع ضوضاء قليلة |
-| **Medium** (متوسط) | تحسين متوازن ⭐ **افتراضي** | معظم الملفات العادية |
-| **Strong** (قوي) | تحسين مكثف للضوضاء والتداخل | ملفات قديمة أو بجودة متوسطة |
-| **Aggressive** (عدواني) | أقصى مستوى تحسين | ملفات قديمة جداً أو بجودة سيئة جداً |
-
-### 🔧 التقنيات المستخدمة
-
-كل مستوى يطبق مجموعة من التقنيات التالية:
-
-#### 1. **Pre-emphasis** (تحسين الترددات العالية)
-- يعزز الترددات العالية لتحسين وضوح الكلام
-- معاملات: `0.75` (light) → `0.95` (aggressive)
-
-#### 2. **High-pass Filter** (فلتر تمرير عالي)
-- يزيل الضوضاء منخفضة التردد (مثل الهمهمة الكهربائية)
-- ترددات القطع: `40 Hz` (light) → `100 Hz` (aggressive)
-
-#### 3. **Noise Reduction** (تقليل الضوضاء)
-- يستخدم خوارزمية `noisereduce` لتقليل الضوضاء الخلفية
-- نسبة التقليل: `50%` (light) → `95%` (aggressive)
-
-#### 4. **Low-pass Filter** (فلتر تمرير منخفض)
-- يزيل الضوضاء عالية التردد
-- ترددات القطع: `7000 Hz` (light) → `8000 Hz` (aggressive)
-
-#### 5. **Dynamic Range Compression** (ضغط المدى الديناميكي)
-- يوحد مستوى الصوت ويقلل التباين
-- نسبة الضغط: `30%` (light) → `90%` (aggressive)
-
-#### 6. **Normalization** (التطبيع)
-- يوحد مستوى الصوت إلى قيمة قياسية
-- `target_rms`: `0.08` (light/medium) → `0.10` (strong/aggressive)
-
-#### 7. **Gain Application** (تطبيق الكسب)
-- يرفع مستوى الصوت الإجمالي
-- افتراضي: `6 dB`
-
-#### 8. **De-essing** (تقليل الأصوات الحادة) - للمستويات العالية فقط
-- يقلل الأصوات الحادة في نطاق `4-8 kHz`
-- متاح فقط في مستويات `strong` و `aggressive`
-
-### 💻 كيفية الاستخدام
-
-#### في واجهة Gradio (`app_api_proxy.py`):
-
-1. اختر مستوى التحسين من القائمة المنسدلة:
-   ```
-   مستوى تحسين الصوت: [Light | Medium | Strong | Aggressive]
-   ```
-
-2. رفع ملف صوتي أو تسجيل مباشر
-
-3. النتيجة ستكون محسّنة تلقائياً قبل عملية التعرف على الكلام
-
-#### في REST API (`api.py`):
-
-```bash
-curl -X POST "http://127.0.0.1:8000/transcribe" \
-  -F "file=@old_audio.wav" \
-  -F "enhance_level=strong" \
-  -F "diarize=true"
-```
-
-**المعاملات المتاحة:**
-- `enhance_level`: `"light"` | `"medium"` | `"strong"` | `"aggressive"` (افتراضي: `"medium"`)
-- `enhance`: `true` | `false` (تفعيل/تعطيل التحسين)
-
-### 📈 متى تستخدم كل مستوى؟
-
-#### ✅ استخدم **Light** عندما:
-- الملف بجودة جيدة
-- الضوضاء قليلة
-- تريد الحفاظ على الصوت الأصلي قدر الإمكان
-
-#### ✅ استخدم **Medium** (الافتراضي) عندما:
-- الملف بجودة عادية
-- تريد توازن بين التحسين والحفاظ على الصوت الأصلي
-- **يُنصح به لمعظم الحالات**
-
-#### ✅ استخدم **Strong** عندما:
-- الملف قديم أو بجودة متوسطة
-- هناك ضوضاء واضحة في الخلفية
-- تريد تحسيناً مكثفاً دون تشويه كبير
-
-#### ✅ استخدم **Aggressive** عندما:
-- الملف قديم جداً أو بجودة سيئة جداً
-- الضوضاء عالية جداً
-- **تحذير**: قد يسبب تشويهاً طفيفاً في بعض الحالات
-
-### ⚙️ التفاصيل التقنية
-
-- **المكتبات المستخدمة**: `librosa`, `noisereduce`, `scipy`, `numpy`
-- **معدل العينة**: يعمل على `16 kHz` (معدل Whisper القياسي)
-- **التوافق**: يعمل مع جميع صيغ الصوت المدعومة (WAV, MP3, M4A, MP4, etc.)
-- **الأداء**: التحسين يضيف وقت معالجة إضافي (~10-30% حسب المستوى)
-
-### 🔍 مثال عملي
-
-```python
-# في asr_core.py
-from asr_core import enhance_audio, to_wav16k_enhanced
-
-# تحسين ملف بجودة سيئة
-enhanced_wav = to_wav16k_enhanced(
-    path="old_recording.mp3",
-    enhance=True,
-    enhance_level="strong"  # للملفات القديمة
-)
-
-# النتيجة: ملف محسّن جاهز للتعرف على الكلام
-```
 
 ---
 
-## 📱 نسخة Flutter (قيد التطوير)
+⚙️ المتطلبات
 
-* موجودة في الفرع: `feat/flutter-app`.
-* المهام: رفع ملفات من الموبايل → إرسال للـ API → عرض النص والملخص → تنزيل النتائج.
+بدون Docker
 
----
+Python 3.10 أو أحدث
 
-## 🔄 CI/CD
+FFmpeg
 
-* إعداد GitHub Actions في `.github/workflows/python-ci.yml`.
-* يقوم بـ:
+(اختياري) NVIDIA GPU
 
-  * تثبيت المتطلبات.
-  * استيراد `api.py` للتأكد من صحته.
-  * تشغيل اختبارات دخانية (Smoke tests).
-* أي PR لا يندمج قبل نجاح الـ CI ✅.
 
----
+مع Docker
 
-## 👥 الفريق
+Docker 24 أو أحدث
 
-* أحمد المصطفى → Flutter UI.
-* محمد تركي السيد علي → Backend API + Diarization.
-* محمد المصطفى → DevOps CI/CD.
-* محمد أبو نديم → مشرف المشروع.
+Docker Compose
+
+(اختياري) NVIDIA Container Toolkit
+
+
 
 ---
 
-## 📎 ملاحظات
+🚀 التشغيل بدون Docker (محليًا)
 
-* هذا المشروع يعمل أوفلاين (مع نماذج Whisper و SpeechBrain).
-* يمكن استخدام **CUDA** إن وُجدت بطاقة GPU.
-* يدعم اللغة العربية بشكل كامل (RTL في الواجهة).
+1) تثبيت FFmpeg
+
+على Ubuntu / Debian: sudo apt-get update
+sudo apt-get install -y ffmpeg
+
+على Windows:
+
+تثبيت FFmpeg وإضافة مساره إلى PATH
+
+
+
+---
+
+2) إنشاء بيئة Python
+
+python -m venv .venv
+source .venv/bin/activate   (Linux / Mac)
+..venv\Scripts\activate    (Windows)
+
+pip install -U pip
+pip install -r requirements.txt
+
+لتشغيل الواجهة: pip install -r requirements.web.txt
+
+
+---
+
+3) إعداد متغيرات البيئة (اختياري)
+
+أنشئ ملف .env:
+
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxx
+WHISPER_MODEL=large-v3
+
+MODELS_DIR=./models
+OUTPUTS_DIR=./data/outputs
+SPK_DIR=./voices
+
+
+---
+
+▶️ تشغيل API
+
+uvicorn api:app --host 0.0.0.0 --port 8000
+
+تحقق من الصحة: http://127.0.0.1:8000/health
+
+
+---
+
+🖥️ تشغيل الواجهة (Web UI)
+
+في Terminal آخر (بعد تشغيل API):
+
+python app_api_proxy.py
+
+ثم افتح: http://127.0.0.1:7860
+
+
+---
+
+⚡ التشغيل على GPU (بدون Docker)
+
+تأكد من تثبيت CUDA وتعريفات NVIDIA.
+
+تحقق: python -c "import torch; print(torch.cuda.is_available())"
+
+
+---
+
+🐳 التشغيل عبر Docker
+
+Development
+
+docker compose -f docker/docker-compose.yml up -d --build
+
+Production + GPU
+
+docker compose -f docker/docker-compose.prod.yml up -d --build
+
+
+---
+
+🔌 نقاط النهاية (API)
+
+POST /transcribe
+POST /transcribe-batch
+POST /summarize
+GET /health
+
+
+---
+
+🎯 حالات الاستخدام
+
+تفريغ الاجتماعات
+
+المقابلات الصحفية
+
+المحاضرات والدروس
+
+الأرشفة الصوتية
+
+أدوات البحث والتحليل
+
+
+
+---
+
+📦 Docker Images (GitHub Packages)
+
+ghcr.io/<username>/meetasr-api:latest
+ghcr.io/<username>/meetasr-web:latest
+
+
+---
+
+📄 الترخيص
+
+MIT License
