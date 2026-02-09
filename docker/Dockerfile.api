@@ -3,8 +3,9 @@ FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 
+# ffmpeg for ASR; espeak-ng for Kokoro TTS (G2P/phonemizer)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tzdata ffmpeg git tini curl && \
+    apt-get install -y --no-install-recommends tzdata ffmpeg espeak-ng git tini curl && \
     ln -fs /usr/share/zoneinfo/UTC /etc/localtime && \
     dpkg-reconfigure --frontend noninteractive tzdata && \
     rm -rf /var/lib/apt/lists/*
@@ -15,9 +16,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api.py asr_core.py nlp_core.py config.py /app/
+COPY api.py asr_core.py nlp_core.py config.py tts_core.py /app/
+COPY server/ /app/server/
+COPY routers/ /app/routers/
+COPY asr/ /app/asr/
+COPY nlp/ /app/nlp/
 
-RUN mkdir -p /app/models /app/data /app/voices
+RUN mkdir -p /app/models /app/data /app/voices /app/data/outputs/tts
 
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["uvicorn","api:app","--host","0.0.0.0","--port","8000","--workers","1"]

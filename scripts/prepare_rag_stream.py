@@ -1,4 +1,4 @@
-# prepare_rag_stream.py  —  FAST (pyarrow) + robust column detection
+# scripts/prepare_rag_stream.py  —  FAST (pyarrow) + robust column detection
 import os, json, argparse, pathlib, re
 from typing import List, Optional
 import numpy as np
@@ -7,15 +7,16 @@ import pyarrow.parquet as pq
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 
-RAG_DIR   = pathlib.Path("data/rag/arabictext_large")
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+RAG_DIR   = ROOT / "data" / "rag" / "arabictext_large"
 DOCS_PATH = RAG_DIR / "docs.jsonl"
 INDEX_PATH= RAG_DIR / "index.faiss"
 
 # أين ملفات parquet محليًا
-PARQUET_DIR = pathlib.Path("data/datasets/ArabicText-Large/data")
+PARQUET_DIR = ROOT / "data" / "datasets" / "ArabicText-Large" / "data"
 
 # نموذج التضمين (محلي إن وجد)
-EMB_LOCAL = pathlib.Path("data/models/multilingual-e5-base")
+EMB_LOCAL = ROOT / "data" / "models" / "multilingual-e5-base"
 EMB_NAME  = "intfloat/multilingual-e5-base"
 EMB = SentenceTransformer(EMB_LOCAL.as_posix() if EMB_LOCAL.exists() else EMB_NAME)
 

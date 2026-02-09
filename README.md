@@ -64,22 +64,19 @@ Web UI
 
 🗂️ بنية المشروع
 
-api.py
-asr_core.py
-nlp_core.py
-app_api_proxy.py
-requirements.txt
-requirements.web.txt
+**نقاط الدخول:** `api.py` (خادم API) · `app_api_proxy.py` (واجهة Gradio) · `config.py`
 
-docker/
-├─ Dockerfile.api
-├─ Dockerfile.web
-├─ docker-compose.yml
-└─ docker-compose.prod.yml
+**الحزم:** `asr/` (تفريغ صوت) · `nlp/` (تلخيص، NER، RAG) · `routers/` (مسارات API) · `web/` (عميل API + واجهة Gradio)
 
-.github/workflows/
-├─ docker-test.yml
-└─ docker-publish.yml
+تفاصيل الهيكل والتبعيات: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
+
+```
+docker/          — Dockerfile.api, Dockerfile.web, docker-compose
+.github/workflows/ — docker-test.yml, docker-publish.yml, python-ci.yml
+scripts/         — prepare_rag_stream.py, prepare_rag_arabictextlarge.py (إعداد RAG)
+tests/           — smoke_test.py
+tools/           — تحميل وفهرسة ArabicText
+```
 
 
 ---
@@ -194,10 +191,48 @@ docker compose -f docker/docker-compose.prod.yml up -d --build
 
 🔌 نقاط النهاية (API)
 
-POST /transcribe
-POST /transcribe-batch
-POST /summarize
-GET /health
+- **GET /health** — حالة الخادم (asr، diarization، tts، ffmpeg)
+- **POST /transcribe** — تفريغ ملف صوتي واحد
+- **POST /transcribe-batch** — تفريغ عدة ملفات
+- **GET /tts/voices** — قائمة أصوات TTS المتاحة (بدون تحميل النموذج)
+- **POST /tts** — تحويل نص إلى كلام (Kokoro؛ حد 5000 حرف، 12 طلب/دقيقة)
+- **POST /summarize** — تلخيص نص
+- **GET /download?path=...** — تحميل ملف من مجلد المخرجات
+
+---
+
+### أمثلة cURL
+
+**التفريغ (رفع ملف):**
+```bash
+curl -X POST http://localhost:8000/transcribe \
+  -F "file=@/path/to/audio.wav" \
+  -F "enhance_mode=off" \
+  -F "diarize=true" \
+  -F "async_mode=false"
+```
+
+**تحويل النص إلى كلام (TTS):**
+```bash
+curl -X POST http://localhost:8000/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text":"مرحبا هذا اختبار","voice":"af_heart","speed":1.0,"format":"wav"}'
+```
+الاستجابة تتضمن `download_url` لتحميل ملف WAV.
+
+---
+
+### تحسين الصوت (enhance_mode)
+
+معامل **enhance_mode** يتحكم بمرحلة تحسين الصوت قبل التفريغ:
+
+| القيمة | الوصف |
+|--------|--------|
+| **off** | بدون تحسين (افتراضي، الأسرع) |
+| **light** | تطبيع + فلتر highpass فقط (سريع، بدون تقليل ضجيج) |
+| **full** | تحسين كامل: تقليل ضجيج + فلاتر (أنسب للملفات ذات الضجيج) |
+
+يمكن أيضاً إرسال **enhance=true** (توافق قديم) ويُعادل **enhance_mode=full**.
 
 
 ---

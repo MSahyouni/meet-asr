@@ -19,7 +19,9 @@ pytorch-lightning==2.1.0 # Dependency for Pyannote
 # ==== Summarization & NLP (Transformers) ====
 sentencepiece==0.2.1
 transformers==4.43.0
-huggingface-hub==0.35.1
+# إصدارات متوافقة مع split_torch_state_dict_into_shards (مطلوب لـ accelerate)
+huggingface-hub>=0.35.1,<0.37
+accelerate>=0.33.0,<0.35
 protobuf==3.20.3
 safetensors==0.6.2
 sentence-transformers==2.7.0
@@ -40,6 +42,9 @@ scipy==1.11.4
 # ==== واجهات Gradio ====
 gradio==5.47.2
 gradio_client==1.13.3
+
+# ==== TTS (Kokoro-82M) ====
+kokoro>=0.9.4
 
 # ==== Utilities ====
 PyYAML==6.0.3
