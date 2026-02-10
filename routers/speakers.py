@@ -4,8 +4,8 @@ import secrets
 import tempfile
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, Header, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, File, Form, Header, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 
 import aiofiles
 from config import settings
@@ -42,7 +42,43 @@ def speaker_files_route(
     if err:
         return err
     core = get_core()
-    return {"files": core.get_speaker_files(name)}
+    full_paths = core.get_speaker_files(name)
+    # Return file names only so frontend can request via /speaker-file?name=&file=
+    names = [pathlib.Path(p).name for p in full_paths]
+    return {"files": names}
+
+
+@router.get("/speaker-file")
+def speaker_file_route(
+    name: str = Query(...),
+    file: str = Query(..., description="File name (basename only)"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Stream a speaker enrollment file for playback (e.g. audio in browser)."""
+    err = _check_api_key(x_api_key)
+    if err:
+        return err
+    name = (name or "").strip()
+    file = (file or "").strip()
+    if not name or not file:
+        return response_error(400, "missing_params", "name and file required")
+    # No path traversal: file must be a single path component
+    if "/" in file or "\\" in file or pathlib.Path(file).name != file:
+        return response_error(403, "forbidden", "invalid file name")
+    base = (settings.SPK_DIR / name).resolve()
+    try:
+        target = (base / file).resolve()
+        if not base.exists() or not target.exists() or not target.is_file():
+            return response_error(404, "not_found", "file not found")
+        if base not in target.parents and target.parent != base:
+            return response_error(403, "forbidden", "outside speaker dir")
+        if target.suffix.lower() not in settings.ALLOWED_EXT:
+            return response_error(403, "forbidden_extension", target.suffix.lower())
+        media_types = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg"}
+        media_type = media_types.get(target.suffix.lower(), "application/octet-stream")
+        return FileResponse(str(target), media_type=media_type, filename=target.name)
+    except Exception as e:
+        return response_error(500, "download_failed", str(e))
 
 
 @router.post("/enroll-speaker")

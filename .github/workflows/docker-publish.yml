@@ -37,15 +37,3 @@ jobs:
             ghcr.io/msahyouni/meetasr-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Build & Push Web image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile.web
-          push: true
-          tags: |
-            ghcr.io/msahyouni/meetasr-web:${{ github.ref_name }}
-            ghcr.io/msahyouni/meetasr-web:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max

@@ -52,8 +52,8 @@ async def tts(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """
-    Synthesize speech from text (Kokoro-82M). Returns WAV path and download URL.
-    Body (JSON): { "text", "voice" (optional), "speed" (optional), "format" (optional, ignored; always wav) }
+    Synthesize speech from text. Returns WAV path and download URL.
+    Body (JSON): { "text", "voice" (optional), "speed" (optional), "seed" (optional, Arabic ar_mms rhythm), "format" (ignored; always wav) }
     Max text length: 5000 chars. Rate: 12/minute per IP.
     """
     err = _check_api_key(x_api_key)
@@ -76,13 +76,19 @@ async def tts(
         speed = float(body.get("speed", 1.0))
     except (TypeError, ValueError):
         speed = 1.0
+    seed = body.get("seed")
+    if seed is not None:
+        try:
+            seed = int(seed)
+        except (TypeError, ValueError):
+            seed = None
     # format is accepted but we only output wav
 
     # Generate unique path under outputs/tts/ (no user-controlled path → no path traversal)
     tts_dir = pathlib.Path(settings.OUTPUTS_DIR) / "tts"
     tts_dir.mkdir(parents=True, exist_ok=True)
-    unique_name = f"tts_{uuid.uuid4().hex[:16]}.wav"
-    out_path = str((tts_dir / unique_name).resolve())
+    job_id = str(uuid.uuid4())
+    out_path = str((tts_dir / f"{job_id}.wav").resolve())
     if not _safe_under_outputs_tts(pathlib.Path(out_path)):
         return response_error(403, "forbidden_path", "path outside outputs/tts/")
 
@@ -90,7 +96,7 @@ async def tts(
         from tts_core import get_tts_core
         core = get_tts_core()
         result = await asyncio.to_thread(
-            core.synthesize, text=text or "", voice=voice, speed=speed, out_path=out_path
+            core.synthesize, text=text or "", voice=voice, speed=speed, out_path=out_path, seed=seed
         )
     except ValueError as e:
         return response_error(400, "validation_error", str(e))
@@ -115,6 +121,7 @@ async def tts(
 
     return JSONResponse({
         "ok": True,
+        "job_id": job_id,
         "audio_path": audio_path,
         "download_url": download_url,
         "duration_sec": result["duration_sec"],

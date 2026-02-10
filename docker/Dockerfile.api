@@ -16,7 +16,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api.py asr_core.py nlp_core.py config.py tts_core.py /app/
+COPY api.py asr_core.py nlp_core.py config.py tts_core.py tts_mms.py tts_arabic_multi.py /app/
+COPY tts/ /app/tts/
+COPY static/ /app/static/
 COPY server/ /app/server/
 COPY routers/ /app/routers/
 COPY asr/ /app/asr/

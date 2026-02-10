@@ -14,6 +14,17 @@ logger = logging.getLogger("tts_core")
 # TODO: when TTS_DIACRITIZE=1, plug in CAMeL Tools or Farasa for Arabic diacritization
 #       to improve pronunciation. Set TTS_DIACRITIZE=1 in env when backend is ready.
 # ---------------------------------------------------------------------------
+def _preprocess_text(text: str) -> str:
+    """Apply Arabic preprocessing (normalize, numbers, punctuation) before TTS."""
+    if not getattr(settings, "TTS_PREPROCESS_ENABLED", True):
+        return text
+    try:
+        from tts.text_utils import preprocess_for_tts
+        return preprocess_for_tts(text, normalize=True, numbers=True, punctuation=True)
+    except ImportError:
+        return text
+
+
 def maybe_diacritize(text: str) -> str:
     """
     Optional preprocessing: add Arabic diacritics (تشكيل) before TTS for better pronunciation.
@@ -34,8 +45,9 @@ TTS_DEFAULT_VOICE = "af_heart"
 TTS_DEFAULT_LANG = "a"  # American English; Kokoro supports a,b,e,f,h,i,j,p,z
 
 # Static list of known Kokoro-82M voices (from hexgrad/Kokoro-82M VOICES.md).
-# Used when the library does not expose list_voices(). Document: https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+# ar_mms: Arabic MMS-TTS (single voice, optional seed). ar_1..ar_4: tts_arabic (4 voices, optional pkg).
 TTS_KNOWN_VOICES = [
+    "ar_mms", "ar_1", "ar_2", "ar_3", "ar_4",  # Arabic
     "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
     "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
     "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
@@ -79,9 +91,21 @@ def _get_pipeline():
         raise RuntimeError(f"Failed to load TTS model: {e}") from e
 
 
+def _use_mms_for_arabic(text: str) -> bool:
+    """True if we should route to MMS-TTS (Arabic text + MMS enabled)."""
+    if not getattr(settings, "TTS_MMS_ENABLED", True):
+        return False
+    try:
+        from tts.lang_detect import is_arabic
+        return is_arabic(text)
+    except ImportError:
+        return False
+
+
 class TTSCore:
     """
-    TTS باستخدام Kokoro-82M. النموذج يُحمّل مرة واحدة (singleton) ولا يُعاد تحميله بين الطلبات.
+    TTS: Kokoro-82M (English/other) + MMS-TTS (Arabic).
+    Arabic text is auto-detected and routed to facebook/mms-tts-ara (offline).
     """
 
     def __init__(self, lang_code: Optional[str] = None):
@@ -96,9 +120,11 @@ class TTSCore:
         voice: str = "",
         speed: float = 1.0,
         out_path: str = "",
+        seed: Optional[int] = None,
     ) -> dict:
         """
         Convert text to speech and save as WAV.
+        Arabic: ar_mms (MMS-TTS + optional seed), ar_1..ar_4 (tts_arabic 4 voices). Other -> Kokoro.
 
         Returns:
             dict with keys: audio_path, sample_rate, duration_sec, voice
@@ -107,7 +133,6 @@ class TTSCore:
         text = (text or "").strip()
         if not text:
             raise ValueError("Text cannot be empty.")
-        text = maybe_diacritize(text)
         if len(text) > TTS_TEXT_MAX_LEN:
             raise ValueError(
                 f"Text length ({len(text)}) exceeds maximum ({TTS_TEXT_MAX_LEN} characters)."
@@ -124,9 +149,37 @@ class TTSCore:
             )
         speed = speed_f
 
-        # Default voice
+        # Route Arabic: ar_1..ar_4 -> tts_arabic (4 voices), else ar_mms -> MMS-TTS (with optional seed)
+        if _use_mms_for_arabic(text):
+            text = _preprocess_text(text)
+            text = maybe_diacritize(text)
+            voice_ar = (voice or "").strip().lower()
+            if voice_ar in ("ar_1", "ar_2", "ar_3", "ar_4"):
+                try:
+                    from tts_arabic_multi import synthesize_arabic_multi
+                    return synthesize_arabic_multi(text=text, voice=voice_ar, speed=speed, out_path=out_path)
+                except (ImportError, RuntimeError) as e:
+                    logger.warning("tts_arabic multi-voice failed: %s", e)
+                    raise ValueError(
+                        "أصوات ar_1–ar_4 تتطلب تثبيت tts_arabic: pip install git+https://github.com/nipponjo/tts_arabic.git"
+                    ) from e
+            try:
+                from tts_mms import synthesize_mms
+                return synthesize_mms(text=text, voice="ar_mms", speed=speed, out_path=out_path, seed=seed)
+            except (ImportError, RuntimeError) as e:
+                logger.warning("MMS-TTS failed: %s", e)
+                raise ValueError(
+                    f"Arabic TTS failed: {e}. Ensure transformers>=4.33 and torch are installed."
+                ) from e
+
+        # Kokoro path (English / non-Arabic)
+        text = _preprocess_text(text)
+        text = maybe_diacritize(text)
         voice = (voice or "").strip() or TTS_DEFAULT_VOICE
         if voice.lower() == "default":
+            voice = TTS_DEFAULT_VOICE
+        # If user passed Arabic voice for non-Arabic text, use default Kokoro voice
+        if voice in ("ar_mms", "ar_1", "ar_2", "ar_3", "ar_4"):
             voice = TTS_DEFAULT_VOICE
 
         # Output path: ensure under outputs/tts/

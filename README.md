@@ -26,13 +26,15 @@ Meet-ASR هو نظام تفريغ صوتي (Speech-to-Text) احترافي يد�
 
 🌐 واجهة برمجية REST (API)
 
-🖥️ واجهة ويب (Gradio)
+🖥️ واجهة ويب (HTML/JS)
 
 ⚡ دعم التشغيل على CPU أو GPU
 
 🐳 دعم Docker و Docker Compose
 
 📦 نشر تلقائي على GitHub Container Registry
+
+🔊 TTS (تحويل النص إلى صوت): Kokoro للإنجليزية + MMS-TTS للعربية (أوفلاين)
 
 
 
@@ -55,7 +57,7 @@ Web UI
 يمكن لأي تطبيق خارجي استخدام الـ API مباشرة
 
 
-> تم حذف ملف app.py والاعتماد على API + Web Proxy فقط.
+> الواجهة تعمل مباشرة من API على المسار / — لا حاجة لخادم منفصل.
 
 
 
@@ -64,18 +66,20 @@ Web UI
 
 🗂️ بنية المشروع
 
-**نقاط الدخول:** `api.py` (خادم API) · `app_api_proxy.py` (واجهة Gradio) · `config.py`
+**نقاط الدخول:** `api.py` (خادم API + واجهة ويب) · `config.py`
 
-**الحزم:** `asr/` (تفريغ صوت) · `nlp/` (تلخيص، NER، RAG) · `routers/` (مسارات API) · `web/` (عميل API + واجهة Gradio)
+**الحزم:** `asr/` (تفريغ صوت) · `nlp/` (تلخيص، NER، RAG) · `routers/` (مسارات API) · `static/frontend/` (واجهة HTML/JS)
 
 تفاصيل الهيكل والتبعيات: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
 
 ```
-docker/          — Dockerfile.api, Dockerfile.web, docker-compose
+docker/            — Dockerfile.api, docker-compose, docker-compose.prod
 .github/workflows/ — docker-test.yml, docker-publish.yml, python-ci.yml
-scripts/         — prepare_rag_stream.py, prepare_rag_arabictextlarge.py (إعداد RAG)
-tests/           — smoke_test.py
-tools/           — تحميل وفهرسة ArabicText
+scripts/           — إعداد RAG، اختبارات TTS
+tools/             — تحميل وفهرسة ArabicText
+tests/             — smoke_test، test_api_units، test_tts_integration
+static/frontend/   — واجهة HTML/JS
+flutter_app/       — تطبيق Flutter (عميل اختياري)
 ```
 
 
@@ -123,26 +127,28 @@ sudo apt-get install -y ffmpeg
 
 python -m venv .venv
 source .venv/bin/activate   (Linux / Mac)
-..venv\Scripts\activate    (Windows)
+.venv\Scripts\activate     (Windows)
 
 pip install -U pip
 pip install -r requirements.txt
 
-لتشغيل الواجهة: pip install -r requirements.web.txt
+TTS عربي: ar_mms (أوفلاين مع transformers، مع خيار seed لتغيير الإيقاع). لأربعة أصوات إضافية: pip install git+https://github.com/nipponjo/tts_arabic.git ثم استخدم ar_1, ar_2, ar_3, ar_4.
 
 
 ---
 
 3) إعداد متغيرات البيئة (اختياري)
 
-أنشئ ملف .env:
+انسخ القالب وعدّل القيم:
 
-HF_TOKEN=hf_xxxxxxxxxxxxxxxxx
-WHISPER_MODEL=large-v3
+```bash
+cp .env.example .env
+```
 
-MODELS_DIR=./models
-OUTPUTS_DIR=./data/outputs
-SPK_DIR=./voices
+المتغيرات الأساسية في `.env`:
+- `HF_TOKEN` — مفتاح Hugging Face (للنماذج الخاصة)
+- `WHISPER_MODEL` — light | medium | large-v3
+- `ASR_DATA_DIR` — مجلد البيانات (افتراضي: `data`)
 
 
 ---
@@ -153,16 +159,7 @@ uvicorn api:app --host 0.0.0.0 --port 8000
 
 تحقق من الصحة: http://127.0.0.1:8000/health
 
-
----
-
-🖥️ تشغيل الواجهة (Web UI)
-
-في Terminal آخر (بعد تشغيل API):
-
-python app_api_proxy.py
-
-ثم افتح: http://127.0.0.1:7860
+الواجهة متوفرة على: http://127.0.0.1:8000/
 
 
 ---
@@ -194,9 +191,11 @@ docker compose -f docker/docker-compose.prod.yml up -d --build
 - **GET /health** — حالة الخادم (asr، diarization، tts، ffmpeg)
 - **POST /transcribe** — تفريغ ملف صوتي واحد
 - **POST /transcribe-batch** — تفريغ عدة ملفات
-- **GET /tts/voices** — قائمة أصوات TTS المتاحة (بدون تحميل النموذج)
-- **POST /tts** — تحويل نص إلى كلام (Kokoro؛ حد 5000 حرف، 12 طلب/دقيقة)
+- **GET /tts/voices** — قائمة أصوات TTS المتاحة
+- **POST /tts** — تحويل نص إلى كلام (حد 5000 حرف، 12 طلب/دقيقة)
 - **POST /summarize** — تلخيص نص
+- **POST /enroll-speaker** — تسجيل بصمة متحدث
+- **GET /enrolled-speakers** — قائمة المتحدثين المسجلين
 - **GET /download?path=...** — تحميل ملف من مجلد المخرجات
 
 ---
@@ -256,7 +255,6 @@ curl -X POST http://localhost:8000/tts \
 📦 Docker Images (GitHub Packages)
 
 ghcr.io/<username>/meetasr-api:latest
-ghcr.io/<username>/meetasr-web:latest
 
 
 ---

@@ -117,6 +117,7 @@ async def transcribe(
     if not async_mode:
         try:
             em = _resolve_enhance_mode(enhance_mode, enhance)
+            sync_job_id = str(uuid.uuid4())
             result = await asyncio.to_thread(
                 core.process,
                 str(dst),
@@ -133,6 +134,7 @@ async def transcribe(
                 compute_sel=compute_sel,
                 summary_mode="off",
                 punctuate=punctuate,
+                job_id=sync_job_id,
             )
             seg_path = result.get("segments_path") or write_segments_json(
                 result.get("segments") or [], result.get("txt_path")
@@ -147,6 +149,8 @@ async def transcribe(
                 result.get("srt_path"),
                 result.get("vtt_path"),
                 seg_path,
+                job_id=result.get("job_id", sync_job_id),
+                timings_ms=result.get("timings_ms"),
             )
         finally:
             try:
@@ -169,6 +173,7 @@ async def transcribe(
         compute_sel=compute_sel,
         summary_mode="off",
         punctuate=punctuate,
+        job_id=job_id,
     )
     max_queued = getattr(settings, "TRANSCRIBE_MAX_QUEUED", 20)
     active = sum(1 for j in JOBS.values() if isinstance(j, dict) and j.get("status") in ("queued", "running"))
@@ -242,6 +247,7 @@ async def transcribe_batch(
             saved.append(str(dst))
 
         try:
+            batch_job_id = str(uuid.uuid4())
             result = await asyncio.to_thread(
                 core.process_many,
                 saved,
@@ -258,6 +264,7 @@ async def transcribe_batch(
                 compute_sel=compute_sel,
                 summary_mode="off",
                 punctuate=punctuate,
+                job_id=batch_job_id,
             )
 
             if not isinstance(result, dict):
@@ -304,6 +311,8 @@ async def transcribe_batch(
                 srt_path,
                 vtt_path,
                 seg_path,
+                job_id=result.get("job_id", batch_job_id),
+                timings_ms=result.get("timings_ms"),
             )
 
         except HTTPException:

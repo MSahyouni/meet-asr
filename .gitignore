@@ -3,12 +3,13 @@
 # ======================
 .env
 *.env
+!.env.example
 docker/.env
 *.keystore
 *.jks
 
 # ======================
-# Docker runtime data
+# Runtime & Data
 # ======================
 data/
 models/
@@ -33,23 +34,18 @@ build/
 .pytest_cache/
 .venv/
 venv/
+.python-venv/
 
 # ======================
-# Logs & temp
+# Logs & Temp
 # ======================
 *.log
 *.tmp
 *.swp
 *.swo
-*.lock
 
 # ======================
-# Gradio
-# ======================
-*.gradio*
-
-# ======================
-# OS junk
+# OS
 # ======================
 .DS_Store
 Thumbs.db
@@ -64,7 +60,7 @@ Thumbs.db
 *.iws
 
 # ======================
-# Flutter (client)
+# Flutter (optional client)
 # ======================
 .dart_tool/
 .flutter-plugins
@@ -73,37 +69,14 @@ Thumbs.db
 .pub-cache/
 .pub/
 coverage/
-build/
-generated_plugin_registrant.dart
-
-flutter_app/android
-flutter_app/.metadata
-flutter_app/.idea
-flutter_app/.vscode
-flutter_app/.gitignore
-flutter_app/analysis_options.yaml
-flutter_app/README.md
-flutter_app/Web
-flutter_app/test/widget_test.dart
-flutter_app/assets/images
-
-# ======================
-# Android / iOS
-# ======================
 **/android/.gradle/
+**/android/build/
 **/android/.idea/
 **/android/*.iml
-**/android/app/debug
-**/android/app/profile
-**/android/app/release
-
+**/android/local.properties
 **/ios/Pods/
 **/ios/Podfile.lock
 **/ios/Flutter/ephemeral/
-
-# ======================
-# macOS / Windows Flutter
-# ======================
 **/macos/Pods/
 **/macos/Podfile.lock
 **/windows/flutter/generated_plugin_registrant.cc

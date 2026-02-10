@@ -1,7 +1,11 @@
 # asr/process.py — المسار الرئيسي: process و process_many
+import json
+import logging
 import os
 import re
 import time
+import uuid
+from datetime import datetime, timezone
 import atexit
 import pathlib
 import tempfile
@@ -64,6 +68,7 @@ def process(
     compute_sel: str = "auto",
     punctuate: bool = False,
     summary_mode: str = "best",
+    job_id: Optional[str] = None,
 ):
     """
     Pipeline: AudioAdapter (decode/resample + optional enhance) → ASR → Diarization (optional)
@@ -77,7 +82,12 @@ def process(
     # Backward compat: enhance=True -> treat as full
     effective_mode = "full" if enhance else enhance_mode
     do_enhance = effective_mode != "off"
+    _log = logging.getLogger("asr")
+    stage_ms: Dict[str, float] = {}
+    t0_total = time.perf_counter()
+
     try:
+        t0 = time.perf_counter()
         wav = to_wav16k_enhanced(
             file_path,
             enhance=do_enhance,
@@ -85,9 +95,14 @@ def process(
             whisper_mode=whisper_mode,
             enhance_level=enhance_level,
         )
+        stage_ms["decode_resample"] = (time.perf_counter() - t0) * 1000
+
+        t0 = time.perf_counter()
         model = get_model(model_name or DEFAULT_MODEL, device_sel, compute_sel)
         header_txt, whisper_segments = run_asr(wav, model, whisper_mode=whisper_mode)
+        stage_ms["whisper"] = (time.perf_counter() - t0) * 1000
 
+        t0 = time.perf_counter()
         if diarize and getattr(diarization_mod, "_PYANNOTE_AVAILABLE", False):
             num_spk = max_speakers if not auto_k else 0
             speaker_turns = diarize_with_pyannote(wav, num_speakers=num_spk)
@@ -95,15 +110,18 @@ def process(
             seg_rows = map_generic_to_enrolled_speakers(wav, seg_rows, enroll_threshold)
         else:
             seg_rows = map_speakers_to_segments(whisper_segments, [])
+        stage_ms["diarization"] = (time.perf_counter() - t0) * 1000
 
+        t0 = time.perf_counter()
         if punctuate:
             try:
                 for s in seg_rows:
                     s["text"] = nlp_core.restore_punct(s.get("text", ""))
             except Exception as _e:
-                import logging
-                logging.getLogger("asr").warning("punctuation failed: %s", _e)
+                _log.warning("punctuation failed: %s", _e)
+        stage_ms["punctuation"] = (time.perf_counter() - t0) * 1000
 
+        t0 = time.perf_counter()
         RLM = "\u200F"
         LRM = "\u200E"
         lines = []
@@ -122,14 +140,37 @@ def process(
         raw_text_for_keywords = "\n".join([s.get("text", "") for s in seg_rows])
         keywords = nlp_core.extract_keywords(raw_text_for_keywords)
 
-        base = safe_filename(file_path)
-        out_path = str(OUTPUTS_DIR / f"{base}_transcript.txt")
+        jid = job_id or str(uuid.uuid4())
+        job_dir = pathlib.Path(OUTPUTS_DIR) / "asr" / jid
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        out_path = str(job_dir / "transcript.txt")
         pathlib.Path(out_path).write_text(full_txt, encoding="utf-8")
 
         for s in seg_rows:
             s["speaker"] = to_ar_speaker(s.get("speaker", ""))
         srt_path = segments_to_srt(seg_rows, out_path)
         vtt_path = segments_to_vtt(seg_rows, out_path)
+        seg_path = str(job_dir / "segments.json")
+        segments_payload = {
+            "job_id": jid,
+            "language": "ar",
+            "options": {
+                "enhance_mode": effective_mode,
+                "diarization": diarize,
+                "punctuation": punctuate,
+                "model": model_name or DEFAULT_MODEL,
+            },
+            "segments": seg_rows,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(seg_path, "w", encoding="utf-8") as f:
+            json.dump(segments_payload, f, ensure_ascii=False)
+        stage_ms["export"] = (time.perf_counter() - t0) * 1000
+
+        total_ms = (time.perf_counter() - t0_total) * 1000
+        _log.info("job_id=%s stage_ms=%s total_ms=%.0f", jid, stage_ms, total_ms)
+
         numbered_text = _renumber_speakers(full_txt)
 
         return {
@@ -141,10 +182,12 @@ def process(
             "segments": seg_rows,
             "srt_path": srt_path,
             "vtt_path": vtt_path,
+            "segments_path": seg_path,
+            "job_id": jid,
+            "timings_ms": {**stage_ms, "total": total_ms},
         }
     except Exception as e:
         msg = f"Error during processing: {e}"
-        import logging
         logging.getLogger("asr").exception("process failed: %s", msg)
         return err(msg)
 
@@ -154,6 +197,7 @@ def process_many(file_paths: List[str], **kwargs):
         return err("الرجاء رفع ملفات.")
     merge_outputs = kwargs.pop("merge_outputs", True)
     tag_sources = kwargs.pop("tag_sources", True)
+    job_id = kwargs.pop("job_id", None) or str(uuid.uuid4())
     per_file_results: List[Dict] = []
     all_text_blocks: List[str] = []
     all_raw_text: List[str] = []
@@ -161,7 +205,7 @@ def process_many(file_paths: List[str], **kwargs):
     cumulative_offset = 0.0
 
     for fp in file_paths:
-        res = process(fp, **kwargs)
+        res = process(fp, job_id=None, **kwargs)
         per_file_results.append(res)
         name = pathlib.Path(fp).stem
         all_text_blocks.append(f"### ملف: {name}\n{res.get('text','')}\n")
@@ -180,18 +224,37 @@ def process_many(file_paths: List[str], **kwargs):
                 cumulative_offset += max(float(s["end"]) for s in segs)
 
     merged_text = "\n\n".join(all_text_blocks).strip()
-    merged_txt_path = str(OUTPUTS_DIR / "batch_transcripts.txt")
+    job_dir = pathlib.Path(OUTPUTS_DIR) / "asr" / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    merged_txt_path = str(job_dir / "transcript.txt")
     pathlib.Path(merged_txt_path).write_text(merged_text, encoding="utf-8")
     merged_keywords = nlp_core.extract_keywords("\n".join(all_raw_text))
     merged_text = _renumber_speakers(merged_text)
     merged_srt_path = None
     merged_vtt_path = None
+    merged_seg_path = str(job_dir / "segments.json")
     if merge_outputs and all_segments:
         all_segments.sort(key=lambda s: (float(s["start"]), float(s["end"])))
-        srt_out = OUTPUTS_DIR / "batch_merged.srt"
-        vtt_out = OUTPUTS_DIR / "batch_merged.vtt"
-        merged_srt_path = segments_to_srt(all_segments, base_path="", out_path=str(srt_out))
-        merged_vtt_path = segments_to_vtt(all_segments, base_path="", out_path=str(vtt_out))
+        merged_srt_path = segments_to_srt(all_segments, base_path="", out_path=str(job_dir / "transcript.srt"))
+        merged_vtt_path = segments_to_vtt(all_segments, base_path="", out_path=str(job_dir / "transcript.vtt"))
+        em = kwargs.get("enhance_mode", "off")
+        segments_payload = {
+            "job_id": job_id,
+            "language": "ar",
+            "options": {
+                "enhance_mode": em,
+                "diarization": kwargs.get("diarize", False),
+                "punctuation": kwargs.get("punctuate", False),
+                "model": kwargs.get("model_name") or DEFAULT_MODEL,
+            },
+            "segments": all_segments,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(merged_seg_path, "w", encoding="utf-8") as f:
+            json.dump(segments_payload, f, ensure_ascii=False)
+    else:
+        merged_seg_path = None
 
     return {
         "text": merged_text,
@@ -202,6 +265,8 @@ def process_many(file_paths: List[str], **kwargs):
         "segments": all_segments if merge_outputs else [],
         "srt_path": merged_srt_path,
         "vtt_path": merged_vtt_path,
+        "segments_path": merged_seg_path,
+        "job_id": job_id,
         "items": per_file_results,
     }
 

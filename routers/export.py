@@ -28,9 +28,13 @@ def download_txt(
     if err:
         return err
     try:
-        base = settings.OUTPUTS_DIR
-        p = pathlib.Path(path).expanduser().resolve()
-        if base not in p.parents and base != p.parent:
+        base = settings.OUTPUTS_DIR.resolve()
+        p = pathlib.Path(path).expanduser()
+        if not p.is_absolute():
+            p = (base / p).resolve()
+        else:
+            p = p.resolve()
+        if base not in p.parents and p.parent != base:
             return response_error(403, "forbidden_path", "outside outputs/")
         if not p.exists() or not p.is_file():
             return response_error(404, "file_not_found", p.as_posix())

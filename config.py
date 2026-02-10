@@ -89,11 +89,17 @@ class Settings:
 
         # --- TTS (Kokoro) — optional diacritization before TTS (P2: CAMeL / Farasa) ---
         self.TTS_DIACRITIZE = os.getenv("TTS_DIACRITIZE", "0").lower() in ("1", "true", "yes")
+        # --- TTS Arabic preprocessing (normalize, numbers-to-words, punctuation) ---
+        self.TTS_PREPROCESS_ENABLED = os.getenv("TTS_PREPROCESS_ENABLED", "1").lower() in ("1", "true", "yes")
+        # --- TTS MMS for Arabic — use facebook/mms-tts-ara when text is Arabic (offline, transformers) ---
+        self.TTS_MMS_ENABLED = os.getenv("TTS_MMS_ENABLED", "1").lower() in ("1", "true", "yes")
 
         # --- Output cleanup (P2-3) — delete files under outputs/ older than N hours ---
         self.CLEANUP_MAX_AGE_HOURS = max(1, int(os.getenv("CLEANUP_MAX_AGE_HOURS", "24")))
         self.CLEANUP_INTERVAL_HOURS = max(1, float(os.getenv("CLEANUP_INTERVAL_HOURS", "24")))
         self.CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "1").lower() in ("1", "true", "yes")
+        # --- Max disk usage for outputs (GB); when exceeded, delete oldest first ---
+        self.OUTPUTS_MAX_GB = max(0, float(os.getenv("OUTPUTS_MAX_GB", "5")))
 
         # --- TF-IDF Settings ---
         self.TFIDF_MAX_ROWS = int(os.getenv("TFIDF_MAX_ROWS", "140000"))

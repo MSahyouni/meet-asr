@@ -61,13 +61,13 @@ logger = logging.getLogger("asr_api")
 _noisy_loggers = [
     "speechbrain", "speechbrain.utils.checkpoints", "pyannote",
     "huggingface_hub", "transformers", "httpx", "urllib3",
-    "torch", "torchaudio",
+    "torch", "torchaudio", "phonemizer",
 ]
 for name in _noisy_loggers:
     log = logging.getLogger(name)
     log.handlers.clear()
     log.propagate = False
-    log.setLevel(logging.WARNING)
+    log.setLevel(logging.ERROR if name == "phonemizer" else logging.WARNING)
 app = FastAPI(title="Arabic ASR API", version="0.1.2")
 
 # Lifespan replaces deprecated on_event("startup")
@@ -154,6 +154,15 @@ class _LimitUploadSize(BaseHTTPMiddleware):
     
 app.add_middleware(_LimitUploadSize)
 
+@app.get("/")
+def index():
+    """Serve HTML frontend at root."""
+    index_path = _Path(__file__).resolve().parent / "static" / "frontend" / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path), media_type="text/html")
+    return PlainTextResponse("Frontend not found", status_code=404)
+
+
 @app.get("/robots.txt")
 def robots():
     body = "User-agent: *\nDisallow:\n"
@@ -161,9 +170,13 @@ def robots():
 
 @app.get("/favicon.ico")
 def favicon():
-    icon = _Path("static") / "favicon.ico"
-    if icon.exists():
-        return FileResponse(icon.as_posix(), media_type="image/x-icon", filename="favicon.ico")
+    # Try PNG first, then ICO
+    icon_png = _Path("static") / "favicon.png"
+    if icon_png.exists():
+        return FileResponse(str(icon_png), media_type="image/png", filename="favicon.png")
+    icon_ico = _Path("static") / "favicon.ico"
+    if icon_ico.exists():
+        return FileResponse(str(icon_ico), media_type="image/x-icon", filename="favicon.ico")
     return PlainTextResponse("", status_code=204)
 
 limiter = Limiter(key_func=get_remote_address)
@@ -171,12 +184,6 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda r, e: _response_error_for_middleware(429, "rate_limited", "too many requests"))
 app.add_middleware(SlowAPIMiddleware)
 set_limiter(limiter)
-
-@app.middleware("http")
-async def add_process_time_header(request, call_next):
-    response = await call_next(request)
-    response.headers["X-RateLimit-Limit"] = "10/minute"
-    return response
 
 from routers import health, transcribe, summarize, nlp, speakers, export, models, jobs, tts
 app.include_router(health.router)

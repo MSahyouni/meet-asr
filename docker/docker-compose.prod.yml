@@ -20,24 +20,7 @@ services:
       interval: 20s
       timeout: 5s
       retries: 5
-  web:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.web
-    container_name: meetasr-web
-    environment:
-      - ASR_API_URL=http://api:8000/transcribe
-      - ASR_BATCH_URL=http://api:8000/transcribe-batch
-      - ASR_SUMMARY_URL=http://api:8000/summarize
-      - ASR_HTTP_TIMEOUT=300
-    ports:
-      - "${WEB_PORT:-7860}:7860"
-    depends_on:
-      api:
-        condition: service_healthy
-    volumes:
-      - data:/app/data
-    restart: always
+
 volumes:
   models:
   data:

@@ -20,6 +20,8 @@ def response_ok(
     srt_path: Optional[str] = None,
     vtt_path: Optional[str] = None,
     segments_path: Optional[str] = None,
+    job_id: Optional[str] = None,
+    timings_ms: Optional[dict] = None,
 ) -> JSONResponse:
     base_url = settings.BASE_URL.rstrip("/")
     data = {
@@ -27,6 +29,7 @@ def response_ok(
         "summary": summary or "",
         "keywords": keywords or "",
         "request_id": request_id_var.get(),
+        "job_id": job_id,
         "txt_path": txt_path,
         "summary_path": summary_path,
         "summary_source": nlp_core.get_summary_source(),
@@ -35,7 +38,9 @@ def response_ok(
         "vtt_path": vtt_path,
         "segments_path": segments_path,
     }
-    if base_url and (txt_path or srt_path or vtt_path or summary_path):
+    if timings_ms is not None:
+        data["timings_ms"] = timings_ms
+    if base_url and (txt_path or srt_path or vtt_path or summary_path or segments_path):
         def _u(p):
             return f"{base_url}/download?path={quote(p)}" if p else None
         data["download_urls"] = {
@@ -43,6 +48,7 @@ def response_ok(
             "srt": _u(srt_path),
             "vtt": _u(vtt_path),
             "summary": _u(summary_path),
+            "segments": _u(segments_path),
         }
     return JSONResponse(data)
 
