@@ -42,6 +42,10 @@ class Settings:
         # --- ASR Core (Whisper) Settings ---
         self._HAS_CUDA = torch.cuda.is_available()
         self.WHISPER_MODEL = os.getenv("WHISPER_MODEL", "heavy" if self._HAS_CUDA else "light")
+        # تحسين الصوت: off (افتراضي) | light (normalize + highpass) | full (noise reduce + filters)
+        self.ENHANCE_MODE = os.getenv("ENHANCE_MODE", "off").lower().strip()
+        if self.ENHANCE_MODE not in ("off", "light", "full"):
+            self.ENHANCE_MODE = "off"
         self.WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda" if self._HAS_CUDA else "cpu")
         self.WHISPER_COMPUTE = os.getenv("WHISPER_COMPUTE", "float16" if self.WHISPER_DEVICE == "cuda" else "int8_float32")
         self.GPU_ID = int(os.getenv("GPU_ID", "0"))
@@ -50,7 +54,7 @@ class Settings:
 
         # --- File Types ---
         self.ALLOWED_EXT = {".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".flac", ".webm", ".aac", ".3gp", ".opus"}
-        self.DOWNLOAD_ALLOW = {".txt", ".srt", ".vtt", ".json"}
+        self.DOWNLOAD_ALLOW = {".txt", ".srt", ".vtt", ".json", ".wav"}
 
         # --- NLP & Summarization Models ---
         self.HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
@@ -83,8 +87,26 @@ class Settings:
         self.RAG_EMB_MODEL = os.getenv("RAG_EMB_MODEL", _prefer_local(_e5_base_dir, "intfloat/multilingual-e5-base"))
         os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", self.MODELS_DIR.as_posix())
 
+        # --- TTS (Kokoro) — optional diacritization before TTS (P2: CAMeL / Farasa) ---
+        self.TTS_DIACRITIZE = os.getenv("TTS_DIACRITIZE", "0").lower() in ("1", "true", "yes")
+        # --- TTS Arabic preprocessing (normalize, numbers-to-words, punctuation) ---
+        self.TTS_PREPROCESS_ENABLED = os.getenv("TTS_PREPROCESS_ENABLED", "1").lower() in ("1", "true", "yes")
+        # --- TTS MMS for Arabic — use facebook/mms-tts-ara when text is Arabic (offline, transformers) ---
+        self.TTS_MMS_ENABLED = os.getenv("TTS_MMS_ENABLED", "1").lower() in ("1", "true", "yes")
+
+        # --- Output cleanup (P2-3) — delete files under outputs/ older than N hours ---
+        self.CLEANUP_MAX_AGE_HOURS = max(1, int(os.getenv("CLEANUP_MAX_AGE_HOURS", "24")))
+        self.CLEANUP_INTERVAL_HOURS = max(1, float(os.getenv("CLEANUP_INTERVAL_HOURS", "24")))
+        self.CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "1").lower() in ("1", "true", "yes")
+        # --- Max disk usage for outputs (GB); when exceeded, delete oldest first ---
+        self.OUTPUTS_MAX_GB = max(0, float(os.getenv("OUTPUTS_MAX_GB", "5")))
+
         # --- TF-IDF Settings ---
         self.TFIDF_MAX_ROWS = int(os.getenv("TFIDF_MAX_ROWS", "140000"))
+
+        # --- Transcribe queue / concurrency (P2-4) ---
+        self.TRANSCRIBE_MAX_QUEUED = max(1, int(os.getenv("TRANSCRIBE_MAX_QUEUED", "20")))
+        self.TRANSCRIBE_MAX_CONCURRENT = max(1, int(os.getenv("TRANSCRIBE_MAX_CONCURRENT", "2")))
 
         # --- Environment Setup ---
         os.environ["HF_HOME"] = str(self.HF_DIR)

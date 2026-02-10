@@ -6,7 +6,7 @@ if ROOT not in sys.path:
 import importlib
 
 def test_imports():
-    for mod in ["faster_whisper", "gradio", "torch", "librosa", "soundfile", "resampy", "noisereduce", "sklearn", "huggingface_hub", "speechbrain"]:
+    for mod in ["faster_whisper", "torch", "librosa", "soundfile", "resampy", "noisereduce", "sklearn", "huggingface_hub", "speechbrain"]:
         importlib.import_module(mod)
 
 def test_api_health_route_import():

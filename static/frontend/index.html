@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>نَبْرَة — استماع وتحويل وتوليد صوت</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/frontend/styles.css">
+  <!-- خط قمرة (الهوية البصرية السورية): شراء من iWantype ثم إضافة @font-face هنا -->
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="header">
+    <img src="/static/assets/syria-emblem.png" alt="شعار الجمهورية العربية السورية" class="emblem">
+    <div class="logo-line-1">الجمهورية العربية السورية</div>
+    <div class="logo-line-2">وزارة الدفاع</div>
+    <div class="logo-line-3">نَبْرَة</div>
+    <p class="tagline">نظام تحويل الكلام إلى نص — استماع · تحويل · توليد صوت</p>
+  </header>
+
+  <main class="main">
+    <section class="settings-bar">
+      <input type="password" id="apiKey" placeholder="مفتاح API (اختياري)" class="input">
+      <label>مهلة الاتصال (ثانية) <input type="number" id="timeout" value="900" min="60" max="1800" class="input input-sm" title="للتحويل الصوتي: 600–900 ثانية أو أكثر"></label>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="asr">استماع وتحويل</button>
+      <button class="tab" data-tab="tts">تحويل النص إلى صوت</button>
+      <button class="tab" data-tab="speakers">بصمات الصوت والمتحدثون</button>
+    </nav>
+
+    <div id="asr-panel" class="panel active">
+      <div class="grid">
+        <div class="col-input">
+          <h3>المدخلات</h3>
+          <div class="source-tabs">
+            <button class="src-btn active" data-src="file">رفع ملف</button>
+            <button class="src-btn" data-src="mic">تسجيل من الميكروفون</button>
+          </div>
+          <div id="file-zone" class="zone">
+            <input type="file" id="fileIn" accept="audio/*,.m4a,.mp4,.webm,.3gp,.wav,.mp3,.ogg,.flac" class="hidden">
+            <label for="fileIn" class="file-label">اختر ملف صوتي واحد</label>
+          </div>
+          <div id="mic-zone" class="zone hidden">
+            <button id="micBtn" class="btn btn-secondary">بدء التسجيل</button>
+            <span id="micStatus"></span>
+          </div>
+          <div class="zone">
+            <label>رفع عدة ملفات</label>
+            <input type="file" id="filesIn" multiple accept="audio/*,.m4a,.mp4,.webm,.3gp,.wav,.mp3,.ogg,.flac" class="input">
+          </div>
+          <details class="accordion">
+            <summary>خيارات النموذج</summary>
+            <label>نموذج Whisper <select id="model"><option value="light">light</option><option value="heavy">heavy</option></select></label>
+            <label>وضع الحساسية <select id="whisperMode"><option value="normal">normal</option><option value="whisper">whisper</option></select></label>
+            <label>تحسين الصوت <select id="enhance"><option value="off">بدون</option><option value="light">خفيف</option><option value="full">كامل</option></select></label>
+            <label>مستوى التحسين <select id="enhanceLevel"><option value="medium">medium</option><option value="light">light</option><option value="strong">strong</option><option value="aggressive">aggressive</option></select></label>
+            <label>تمييز المتكلمين <input type="checkbox" id="diarize" checked></label>
+            <label>تقدير عدد المتكلمين تلقائياً <input type="checkbox" id="autoK" checked></label>
+            <label>عدد المتكلمين <select id="maxSpeakers"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+            <label>عتبة ربط البصمة <input type="number" id="enrollThreshold" min="0.5" max="0.9" step="0.01" value="0.65" class="input input-sm"></label>
+            <label>الجهاز <select id="deviceSel"><option value="auto">auto</option><option value="cpu">cpu</option><option value="cuda">cuda</option></select></label>
+            <label>الدقة <select id="computeSel"><option value="auto">auto</option><option value="int8">int8</option><option value="float16">float16</option><option value="float32">float32</option></select></label>
+          </details>
+          <div class="btn-row">
+            <button id="btnSend" class="btn btn-primary">إرسال ملف واحد</button>
+            <button id="btnBatch" class="btn btn-secondary">إرسال عدة ملفات</button>
+          </div>
+        </div>
+        <div class="col-output">
+          <h3>المخرجات</h3>
+          <textarea id="outText" rows="10" readonly placeholder="النص الكامل..."></textarea>
+          <details class="accordion segments-panel">
+            <summary>المقاطع مع المتكلمين</summary>
+            <pre id="outSegments" class="segments-text"></pre>
+          </details>
+          <textarea id="outSummary" rows="4" readonly placeholder="الملخص..."></textarea>
+          <input type="text" id="outKeywords" readonly placeholder="الكلمات المفتاحية...">
+          <label>وضع التلخيص <select id="summaryMode"><option value="lite">lite</option><option value="ultra">ultra</option></select></label>
+          <button id="btnSummary" class="btn btn-secondary">تلخيص النص (من النص أعلاه)</button>
+          <div id="dlLinks" class="links"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="speakers-panel" class="panel">
+      <div class="grid">
+        <div class="col-input">
+          <h3>تسجيل بصمة صوت جديدة</h3>
+          <div class="zone">
+            <label>اسم المتكلم</label>
+            <input type="text" id="spkName" placeholder="مثال: خالد" class="input">
+          </div>
+          <div class="zone">
+            <label>ملفات صوتية (3–5 مقاطع قصيرة WAV/MP3...)</label>
+            <input type="file" id="spkFiles" multiple accept="audio/*,.wav,.mp3,.m4a,.mp4,.ogg" class="input">
+          </div>
+          <div class="zone">
+            <button id="spkMicBtn" class="btn btn-secondary">🎙️ تسجيل مقطع من الميكروفون</button>
+            <span id="spkMicStatus" class="hint"></span>
+          </div>
+          <button id="btnEnroll" class="btn btn-primary">✓ تسجيل/تحديث البصمة</button>
+          <div id="enrollOut" class="zone hint"></div>
+        </div>
+
+        <div class="col-output">
+          <h3>إدارة المتحدثين</h3>
+          <div class="btn-row">
+            <button id="btnRefreshSpeakers" class="btn btn-secondary">🔄 تحديث القائمة</button>
+            <button id="btnDeleteSpeaker" class="btn btn-secondary">🗑️ حذف المحدد</button>
+          </div>
+          <div class="zone">
+            <label>الأسماء المسجّلة</label>
+            <select id="spkList" class="input"><option value="">— اختر متحدثاً —</option></select>
+          </div>
+          <div class="zone">
+            <label>ملفات المتكلم</label>
+            <select id="spkFilesList" class="input"><option value="">— اختر ملفاً —</option></select>
+          </div>
+          <div class="zone">
+            <label>تشغيل عينة</label>
+            <audio id="spkAudio" controls class="audio-player"></audio>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tts-panel" class="panel">
+      <p class="hint">💬 عربي: ar_mms, ar_1–ar_4 | إنجليزي: af_heart وغيره | يدعم أكثر من 50 صوتاً</p>
+      <div class="grid">
+        <div class="col-input">
+          <h3>المدخلات</h3>
+          <div class="zone">
+            <label>النص</label>
+            <textarea id="ttsText" rows="10" placeholder="أدخل النص هنا..."></textarea>
+          </div>
+          <div class="zone">
+            <label>الصوت</label>
+            <select id="ttsVoice" class="input">
+              <option value="ar_mms">ar_mms (عربي)</option>
+              <option value="ar_1">ar_1 (عربي)</option>
+              <option value="ar_2">ar_2 (عربي)</option>
+              <option value="ar_3">ar_3 (عربي)</option>
+              <option value="ar_4">ar_4 (عربي)</option>
+              <option value="af_heart">af_heart (إنجليزي)</option>
+            </select>
+          </div>
+          <div class="zone">
+            <label>السرعة: <span id="speedValue">1.0</span>x</label>
+            <input type="range" id="ttsSpeed" min="0.5" max="2" step="0.1" value="1" class="input">
+          </div>
+          <div class="zone">
+            <label>Seed للإيقاع (ar_mms فقط)</label>
+            <input type="number" id="ttsSeed" placeholder="رقم عشوائي لتنويع الإيقاع" class="input">
+          </div>
+          <button id="btnTts" class="btn btn-primary">🔊 توليد الصوت</button>
+        </div>
+        <div class="col-output">
+          <h3>المخرجات</h3>
+          <div id="ttsError" class="error hidden"></div>
+          <div class="zone">
+            <label>تشغيل الصوت</label>
+            <audio id="ttsAudio" controls class="audio-player"></audio>
+          </div>
+          <div id="ttsDl" class="links"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">الجمهورية العربية السورية · وزارة الدفاع · نَبْرَة</footer>
+
+  <script src="/static/frontend/app.js"></script>
+</body>
+</html>

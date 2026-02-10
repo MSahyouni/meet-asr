@@ -26,13 +26,15 @@ Meet-ASR هو نظام تفريغ صوتي (Speech-to-Text) احترافي يد�
 
 🌐 واجهة برمجية REST (API)
 
-🖥️ واجهة ويب (Gradio)
+🖥️ واجهة ويب (HTML/JS)
 
 ⚡ دعم التشغيل على CPU أو GPU
 
 🐳 دعم Docker و Docker Compose
 
 📦 نشر تلقائي على GitHub Container Registry
+
+🔊 TTS (تحويل النص إلى صوت): Kokoro للإنجليزية + MMS-TTS للعربية (أوفلاين)
 
 
 
@@ -55,7 +57,7 @@ Web UI
 يمكن لأي تطبيق خارجي استخدام الـ API مباشرة
 
 
-> تم حذف ملف app.py والاعتماد على API + Web Proxy فقط.
+> الواجهة تعمل مباشرة من API على المسار / — لا حاجة لخادم منفصل.
 
 
 
@@ -64,22 +66,21 @@ Web UI
 
 🗂️ بنية المشروع
 
-api.py
-asr_core.py
-nlp_core.py
-app_api_proxy.py
-requirements.txt
-requirements.web.txt
+**نقاط الدخول:** `api.py` (خادم API + واجهة ويب) · `config.py`
 
-docker/
-├─ Dockerfile.api
-├─ Dockerfile.web
-├─ docker-compose.yml
-└─ docker-compose.prod.yml
+**الحزم:** `asr/` (تفريغ صوت) · `nlp/` (تلخيص، NER، RAG) · `routers/` (مسارات API) · `static/frontend/` (واجهة HTML/JS)
 
-.github/workflows/
-├─ docker-test.yml
-└─ docker-publish.yml
+تفاصيل الهيكل والتبعيات: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
+
+```
+docker/            — Dockerfile.api, docker-compose, docker-compose.prod
+.github/workflows/ — docker-test.yml, docker-publish.yml, python-ci.yml
+scripts/           — إعداد RAG، اختبارات TTS
+tools/             — تحميل وفهرسة ArabicText
+tests/             — smoke_test، test_api_units، test_tts_integration
+static/frontend/   — واجهة HTML/JS
+flutter_app/       — تطبيق Flutter (عميل اختياري)
+```
 
 
 ---
@@ -126,26 +127,28 @@ sudo apt-get install -y ffmpeg
 
 python -m venv .venv
 source .venv/bin/activate   (Linux / Mac)
-..venv\Scripts\activate    (Windows)
+.venv\Scripts\activate     (Windows)
 
 pip install -U pip
 pip install -r requirements.txt
 
-لتشغيل الواجهة: pip install -r requirements.web.txt
+TTS عربي: ar_mms (أوفلاين مع transformers، مع خيار seed لتغيير الإيقاع). لأربعة أصوات إضافية: pip install git+https://github.com/nipponjo/tts_arabic.git ثم استخدم ar_1, ar_2, ar_3, ar_4.
 
 
 ---
 
 3) إعداد متغيرات البيئة (اختياري)
 
-أنشئ ملف .env:
+انسخ القالب وعدّل القيم:
 
-HF_TOKEN=hf_xxxxxxxxxxxxxxxxx
-WHISPER_MODEL=large-v3
+```bash
+cp .env.example .env
+```
 
-MODELS_DIR=./models
-OUTPUTS_DIR=./data/outputs
-SPK_DIR=./voices
+المتغيرات الأساسية في `.env`:
+- `HF_TOKEN` — مفتاح Hugging Face (للنماذج الخاصة)
+- `WHISPER_MODEL` — light | medium | large-v3
+- `ASR_DATA_DIR` — مجلد البيانات (افتراضي: `data`)
 
 
 ---
@@ -156,16 +159,7 @@ uvicorn api:app --host 0.0.0.0 --port 8000
 
 تحقق من الصحة: http://127.0.0.1:8000/health
 
-
----
-
-🖥️ تشغيل الواجهة (Web UI)
-
-في Terminal آخر (بعد تشغيل API):
-
-python app_api_proxy.py
-
-ثم افتح: http://127.0.0.1:7860
+الواجهة متوفرة على: http://127.0.0.1:8000/
 
 
 ---
@@ -194,10 +188,50 @@ docker compose -f docker/docker-compose.prod.yml up -d --build
 
 🔌 نقاط النهاية (API)
 
-POST /transcribe
-POST /transcribe-batch
-POST /summarize
-GET /health
+- **GET /health** — حالة الخادم (asr، diarization، tts، ffmpeg)
+- **POST /transcribe** — تفريغ ملف صوتي واحد
+- **POST /transcribe-batch** — تفريغ عدة ملفات
+- **GET /tts/voices** — قائمة أصوات TTS المتاحة
+- **POST /tts** — تحويل نص إلى كلام (حد 5000 حرف، 12 طلب/دقيقة)
+- **POST /summarize** — تلخيص نص
+- **POST /enroll-speaker** — تسجيل بصمة متحدث
+- **GET /enrolled-speakers** — قائمة المتحدثين المسجلين
+- **GET /download?path=...** — تحميل ملف من مجلد المخرجات
+
+---
+
+### أمثلة cURL
+
+**التفريغ (رفع ملف):**
+```bash
+curl -X POST http://localhost:8000/transcribe \
+  -F "file=@/path/to/audio.wav" \
+  -F "enhance_mode=off" \
+  -F "diarize=true" \
+  -F "async_mode=false"
+```
+
+**تحويل النص إلى كلام (TTS):**
+```bash
+curl -X POST http://localhost:8000/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text":"مرحبا هذا اختبار","voice":"af_heart","speed":1.0,"format":"wav"}'
+```
+الاستجابة تتضمن `download_url` لتحميل ملف WAV.
+
+---
+
+### تحسين الصوت (enhance_mode)
+
+معامل **enhance_mode** يتحكم بمرحلة تحسين الصوت قبل التفريغ:
+
+| القيمة | الوصف |
+|--------|--------|
+| **off** | بدون تحسين (افتراضي، الأسرع) |
+| **light** | تطبيع + فلتر highpass فقط (سريع، بدون تقليل ضجيج) |
+| **full** | تحسين كامل: تقليل ضجيج + فلاتر (أنسب للملفات ذات الضجيج) |
+
+يمكن أيضاً إرسال **enhance=true** (توافق قديم) ويُعادل **enhance_mode=full**.
 
 
 ---
@@ -221,7 +255,6 @@ GET /health
 📦 Docker Images (GitHub Packages)
 
 ghcr.io/<username>/meetasr-api:latest
-ghcr.io/<username>/meetasr-web:latest
 
 
 ---

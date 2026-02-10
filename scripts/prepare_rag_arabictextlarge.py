@@ -1,10 +1,13 @@
-# prepare_rag_arabictextlarge.py
+# scripts/prepare_rag_arabictextlarge.py
 import os, glob, json, pathlib
 import numpy as np, faiss
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
+import pyarrow.parquet as pq
 
-OUT_DIR = pathlib.Path("data/rag/arabictext_large"); OUT_DIR.mkdir(parents=True, exist_ok=True)
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+OUT_DIR = ROOT / "data" / "rag" / "arabictext_large"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ابحث عن مسار الـ snapshots تلقائيًا (ويندوز)
 home = pathlib.Path.home()
@@ -27,9 +30,6 @@ if not parquet_glob:
 
 files = sorted(glob.glob(parquet_glob))
 print(f"[+] Parquet files: {len(files)}")
-
-# قراءة صفوف Parquet بدون datasets (لتفادي الإصدار القديم)
-import pyarrow.parquet as pq
 
 def rows_from_parquet(paths):
     for p in paths:
