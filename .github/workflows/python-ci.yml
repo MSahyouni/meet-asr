@@ -35,5 +35,5 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Run smoke tests
-        run: pytest -q
+      - name: Run tests
+        run: pytest -q --ignore=scripts/test_tts_asr_live.py
