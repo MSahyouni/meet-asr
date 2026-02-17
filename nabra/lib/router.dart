@@ -1,0 +1,25 @@
+import 'package:flutter_app/screens/analysis_audio.dart';
+import 'package:flutter_app/screens/home_screen.dart';
+import 'package:flutter_app/screens/splash_screen.dart';
+import 'package:flutter_app/screens/summary_page.dart';
+import 'package:go_router/go_router.dart';
+
+final GoRouter router = GoRouter(
+  initialLocation: "/splash",
+
+  routes: [
+    GoRoute(path: "/splash", builder: (context, state) => SplashScreen()),
+    GoRoute(path: "/", builder: (context, state) => HomeScreen()),
+    GoRoute(
+      path: "/analysis_audio",
+      builder: (context, state) => AnalysisAudioScreen(),
+    ),
+    GoRoute(
+      path: '/summary',
+      builder: (context, state) {
+        final text = state.extra as String? ?? '';
+        return SummaryScreen(text: text);
+      },
+    ),
+  ],
+);
