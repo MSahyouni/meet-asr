@@ -31,7 +31,7 @@ class SplashScreen extends StatelessWidget {
           ),
         ],
       ),
-      splashTransition: SplashTransition.sizeTransition,
+      splashTransition: SplashTransition.scaleTransition,
       animationDuration: Duration(seconds: 4),
       screenRouteFunction: () async {
         await Future.delayed(Duration(seconds: 2)).then((value) {

@@ -2,10 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class VoiceRecorderSection extends StatefulWidget {
-  final Function(File)? onRecordedFile;
+  final Function(File)? onRecordedFile; // callback لإرسال الملف
 
   const VoiceRecorderSection({super.key, this.onRecordedFile});
 
@@ -24,53 +23,20 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
     super.dispose();
   }
 
-  /// طلب الصلاحيات المناسبة
-  Future<bool> _requestPermissions() async {
-    // صلاحية الميكروفون
-    var micStatus = await Permission.microphone.request();
-    if (!micStatus.isGranted) return false;
+  Future<File> saveRecordingToMyRecording(File file) async {
+    final myRecordingDir = Directory(
+      '/storage/emulated/0/Download/MyRecording',
+    );
 
-    // صلاحية التخزين (حسب نسخة الأندرويد)
-    if (Platform.isAndroid) {
-      if (await Permission.manageExternalStorage.isGranted ||
-          await Permission.storage.isGranted ||
-          await Permission.audio.isGranted) {
-        return true;
-      }
-
-      // جرّب تطلب كل الصلاحيات المرتبطة
-      var statuses =
-          await [
-            Permission.storage,
-            Permission.manageExternalStorage,
-            Permission.audio,
-            Permission.photos,
-          ].request();
-
-      return statuses.values.any((s) => s.isGranted);
-    }
-
-    return true;
-  }
-
-  /// حفظ الملف في مجلد عام يظهر في مدير الملفات
-  Future<File?> saveRecordingToPublicFolder(File file) async {
-    // تحقق من الصلاحيات
-    final granted = await _requestPermissions();
-    if (!granted) {
-      throw Exception("Storage permission not granted");
-    }
-
-    final directory = Directory('/storage/emulated/0/MyRecordings');
-
-    if (!await directory.exists()) {
-      await directory.create(recursive: true);
+    if (!await myRecordingDir.exists()) {
+      await myRecordingDir.create(recursive: true);
     }
 
     final newPath =
-        '${directory.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        '${myRecordingDir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-    return await file.copy(newPath);
+    final savedFile = await file.copy(newPath);
+    return savedFile;
   }
 
   Future<void> _toggleRecording() async {
@@ -89,6 +55,7 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
         final tempPath =
             '${tempDir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
+        // ابدأ التسجيل (يمكن تمرير RecordConfig مخصص إذا أردت)
         await _audioRecorder.start(const RecordConfig(), path: tempPath);
 
         setState(() => isRecording = true);
@@ -97,23 +64,23 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
         ).showSnackBar(const SnackBar(content: Text('بدأ التسجيل...')));
       } else {
         // إيقاف التسجيل
-        final path = await _audioRecorder.stop();
+        final path = await _audioRecorder.stop(); // يعيد المسار أو null
         setState(() => isRecording = false);
 
         if (path != null) {
           final file = File(path);
-          final savedFile = await saveRecordingToPublicFolder(file);
+          final savedFile = await saveRecordingToMyRecording(file);
 
           setState(() {
             recordedFile = savedFile;
           });
 
-          if (widget.onRecordedFile != null && savedFile != null) {
+          if (widget.onRecordedFile != null) {
             widget.onRecordedFile!(savedFile);
           }
 
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('تم حفظ التسجيل في ${savedFile?.path}')),
+            SnackBar(content: Text('تم حفظ التسجيل في ${savedFile.path}')),
           );
         } else {
           ScaffoldMessenger.of(
@@ -122,7 +89,6 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
         }
       }
     } catch (e) {
-      print('خطأ أثناء التسجيل: $e');
       setState(() => isRecording = false);
       ScaffoldMessenger.of(
         context,
@@ -136,22 +102,21 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
       children: [
         DecoratedBox(
           decoration: BoxDecoration(
-            gradient:
-                isRecording
-                    ? const LinearGradient(
-                      colors: [Colors.redAccent, Colors.red],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )
-                    : const LinearGradient(
-                      colors: [
-                        Color.fromARGB(255, 12, 58, 52), // اللون الأساسي الغامق
-                        Color.fromARGB(255, 18, 75, 68), // أفتح قليلاً
-                        Color.fromARGB(255, 25, 90, 82), // لمعة خفيفة
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
+            gradient: isRecording
+                ? const LinearGradient(
+                    colors: [Colors.redAccent, Colors.red],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  )
+                : const LinearGradient(
+                    colors: [
+                      Color.fromARGB(255, 12, 58, 52), // اللون الأساسي الغامق
+                      Color.fromARGB(255, 18, 75, 68), // أفتح قليلاً
+                      Color.fromARGB(255, 25, 90, 82), // لمعة خفيفة
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
             borderRadius: BorderRadius.all(Radius.circular(30)),
           ),
           child: ElevatedButton.icon(
@@ -177,6 +142,8 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
           ),
         ),
         const SizedBox(height: 12),
+
+        const SizedBox(height: 20),
       ],
     );
   }

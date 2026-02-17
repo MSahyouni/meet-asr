@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/widgets/standerd.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -15,6 +16,7 @@ class AnalysisAudioScreen extends StatefulWidget {
 }
 
 class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
+  String? selectedModel;
   bool isLoading = false;
 
   // قائمة لتخزين نتائج التحليل لكل الملفات
@@ -66,6 +68,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
     final List<File> files =
         (extra?["files"] as List<dynamic>?)?.map((e) => e as File).toList() ??
         [];
+
     final apiUrl = extra?["apiUrl"] as String? ?? '';
 
     if (files.isEmpty) {
@@ -73,132 +76,264 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        actions: [
-          PopupMenuButton<String>(
-            icon: Icon(Icons.more_vert, size: 30, color: Colors.white),
-            onSelected: (value) {
-              if (value == 'summary') {
-                if (transcriptionSegments.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        ' لم يتم إدخال أي نص بعد، الرجاء التحليل أولاً',
-                      ),
-                    ),
-                  );
-                  return;
-                }
+      extendBodyBehindAppBar: true,
+      backgroundColor: Colors.transparent,
 
-                final allText = transcriptionSegments
-                    .map((e) => e['text'])
-                    .join(' ');
-                context.push('/summary', extra: allText);
-              }
-            },
-            itemBuilder:
-                (context) => [
-                  const PopupMenuItem(value: 'summary', child: Text('summary')),
-                ],
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: true,
+        title: const Text(
+          "تحليل الصوت",
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 26,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: Icon(Icons.more_vert, color: Colors.white),
           ),
         ],
-        title: Row(
-          children: [
-            const Text(
-              'تحليل الصوت',
-              style: TextStyle(color: Colors.white, fontSize: 25),
-            ),
-            Gap(130),
-          ],
-        ),
-        backgroundColor: Colors.blueAccent,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size.fromHeight(50),
-                backgroundColor: const Color.fromARGB(200, 68, 138, 255),
-              ),
-              onPressed: () async {
-                setState(() {
-                  isLoading = true;
-                  transcriptionSegments.clear();
-                });
 
-                try {
-                  for (final file in files) {
-                    final result = await sendAudio(file, apiUrl);
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset("assets/images/image_5.png", fit: BoxFit.cover),
+          ),
 
-                    transcriptionSegments.add({
-                      'speaker': ' الملف: ${file.path.split('/').last}',
-                      'text': '',
+          Container(color: Colors.black.withOpacity(0.25)),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 140, 20, 20),
+            child: Column(
+              children: [
+                buildMainButton(
+                  icon: Icons.play_arrow,
+                  text: "إرسال وتحويل الصوت إلى نص",
+                  onTap: () async {
+                    setState(() {
+                      isLoading = true;
+                      transcriptionSegments.clear();
                     });
 
-                    transcriptionSegments.addAll(result);
-                  }
-                } catch (e) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
-                } finally {
-                  setState(() {
-                    isLoading = false;
-                  });
-                }
-              },
-              icon: const Icon(Icons.play_arrow, color: Colors.white, size: 35),
-              label: const Text(
-                'إرسال وتحويل الصوت إلى نص',
-                style: TextStyle(color: Colors.white, fontSize: 20),
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (isLoading)
-              const Center(child: CircularProgressIndicator())
-            else
-              Expanded(
-                child: ListView.builder(
-                  itemCount: transcriptionSegments.length,
-                  itemBuilder: (context, index) {
-                    final segment = transcriptionSegments[index];
-                    final speaker = segment['speaker'] ?? '';
-                    final text = segment['text'] ?? '';
+                    try {
+                      for (final file in files) {
+                        final result = await sendAudio(file, apiUrl);
 
-                    return Container(
-                      margin: const EdgeInsets.symmetric(vertical: 5),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.withOpacity(0.2),
-                        borderRadius: BorderRadius.only(
-                          topLeft: const Radius.circular(12),
-                          topRight: const Radius.circular(12),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment:
-                            speaker.contains('متكلم')
-                                ? CrossAxisAlignment.start
-                                : CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            speaker,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(text, style: const TextStyle(fontSize: 16)),
-                        ],
-                      ),
+                        transcriptionSegments.add({
+                          'speaker': ' الملف: ${file.path.split('/').last}',
+                          'text': '',
+                        });
+
+                        transcriptionSegments.addAll(result);
+                      }
+                    } catch (e) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
+                    } finally {
+                      setState(() {
+                        isLoading = false;
+                      });
+                    }
+                  },
+                ),
+
+                const SizedBox(height: 20),
+                buildSmallButton(
+                  text: "تلخيص النص",
+                  onTap: () {
+                    // أخذ آخر نتيجة من التحليل (أو حسب هيكل البيانات)
+                    final lastResult = transcriptionSegments.lastWhere(
+                      (seg) =>
+                          seg.containsKey('summary') &&
+                          seg.containsKey('keywords'),
+                      orElse: () => {
+                        'summary': 'لا يوجد تلخيص',
+                        'keywords': 'لا توجد كلمات مفتاحية',
+                      },
+                    );
+
+                    context.push(
+                      '/summary',
+                      extra: {
+                        'summary': lastResult['summary'],
+                        'keywords': lastResult['keywords'],
+                      },
                     );
                   },
                 ),
-              ),
+
+                const SizedBox(height: 30),
+
+                // Dropdown
+                buildDropdown(),
+
+                if (isLoading)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: transcriptionSegments.length,
+                      itemBuilder: (context, index) {
+                        final segment = transcriptionSegments[index];
+                        final speaker = segment['speaker'] ?? '';
+                        final text = segment['text'] ?? '';
+
+                        return Container(
+                          margin: const EdgeInsets.symmetric(vertical: 5),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.2),
+                            borderRadius: BorderRadius.only(
+                              topLeft: const Radius.circular(12),
+                              topRight: const Radius.circular(12),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: speaker.contains('متكلم')
+                                ? CrossAxisAlignment.start
+                                : CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                speaker,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(text, style: const TextStyle(fontSize: 16)),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🔹 زر رئيسي كبير
+  Widget buildMainButton({
+    required IconData icon,
+    required String text,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(40),
+      child: Container(
+        height: 65,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(40),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0C3A34), Color(0xFF125B4A), Color(0xFF1A7B6A)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF2AA876).withOpacity(0.25),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
           ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white, size: 30),
+            const SizedBox(width: 12),
+            Text(
+              text,
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 🔹 زر متوسط
+  Widget buildSmallButton({required String text, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(30),
+      child: Container(
+        height: 55,
+        width: 220,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(30),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0C3A34), Color(0xFF125B4A), Color(0xFF1A7B6A)],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF2AA876).withOpacity(0.25),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Text(
+          text,
+          style: const TextStyle(color: Colors.white, fontSize: 17),
+        ),
+      ),
+    );
+  }
+
+  // 🔹 Dropdown
+  Widget buildDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(30),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0C3A34), Color(0xFF125B4A)],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2AA876).withOpacity(0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: selectedModel,
+          dropdownColor: const Color(0xFF125B4A),
+          iconEnabledColor: Colors.white,
+          hint: const Text(
+            "اختر نموذجاً لتلخيص النص",
+            style: TextStyle(color: Colors.white),
+          ),
+          items: const [
+            DropdownMenuItem(
+              value: "model1",
+              child: Text("model1", style: TextStyle(color: Colors.white)),
+            ),
+            DropdownMenuItem(
+              value: "model2",
+              child: Text("model2", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+          onChanged: (value) {
+            setState(() {
+              selectedModel = value;
+            });
+          },
         ),
       ),
     );
