@@ -18,15 +18,18 @@ class AnalysisAudioScreen extends StatefulWidget {
 class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
   String? selectedModel;
   bool isLoading = false;
+  String? selectedSummaryModel = "Light";
 
   // قائمة لتخزين نتائج التحليل لكل الملفات
   List<Map<String, String>> transcriptionSegments = [];
 
-  Future<List<Map<String, String>>> sendAudio(File file, String apiUrl) async {
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse(apiUrl), // رابط الباك-إند
-    );
+  Future<List<Map<String, String>>> sendAudio(
+    File file,
+    String apiUrl,
+    String selectedModel,
+  ) async {
+    final request = http.MultipartRequest('POST', Uri.parse(apiUrl));
+
     request.files.add(
       await http.MultipartFile.fromPath(
         'file',
@@ -35,14 +38,14 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
       ),
     );
 
+    request.fields['model'] = selectedModel;
+
     final response = await request.send();
 
     if (response.statusCode == 200) {
       final respStr = await response.stream.bytesToString();
-
       final decoded = json.decode(respStr);
 
-      // نتأكد أنو response هو Map
       if (decoded is Map<String, dynamic>) {
         return [
           {
@@ -122,7 +125,11 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
 
                     try {
                       for (final file in files) {
-                        final result = await sendAudio(file, apiUrl);
+                        final result = await sendAudio(
+                          file,
+                          apiUrl,
+                          selectedModel ?? "medium",
+                        );
 
                         transcriptionSegments.add({
                           'speaker': ' الملف: ${file.path.split('/').last}',
@@ -163,6 +170,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                       extra: {
                         'summary': lastResult['summary'],
                         'keywords': lastResult['keywords'],
+                        'model': selectedSummaryModel,
                       },
                     );
                   },
@@ -171,7 +179,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                 const SizedBox(height: 30),
 
                 // Dropdown
-                buildDropdown(),
+                buildSummaryModelDropdown(),
 
                 if (isLoading)
                   const Center(child: CircularProgressIndicator())
@@ -294,48 +302,62 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
   }
 
   // 🔹 Dropdown
-  Widget buildDropdown() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0C3A34), Color(0xFF125B4A)],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF2AA876).withOpacity(0.25),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: selectedModel,
-          dropdownColor: const Color(0xFF125B4A),
-          iconEnabledColor: Colors.white,
-          hint: const Text(
-            "اختر نموذجاً لتلخيص النص",
-            style: TextStyle(color: Colors.white),
-          ),
-          items: const [
-            DropdownMenuItem(
-              value: "model1",
-              child: Text("model1", style: TextStyle(color: Colors.white)),
+  Widget buildSummaryModelDropdown() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Center(
+          child: const Text(
+            "اختر نموذج التلخيص",
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
             ),
-            DropdownMenuItem(
-              value: "model2",
-              child: Text("model2", style: TextStyle(color: Colors.white)),
-            ),
-          ],
-          onChanged: (value) {
-            setState(() {
-              selectedModel = value;
-            });
-          },
+          ),
         ),
-      ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(30),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF0C3A34), Color(0xFF125B4A)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2AA876).withOpacity(0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: selectedSummaryModel,
+              dropdownColor: const Color(0xFF125B4A),
+              iconEnabledColor: Colors.white,
+              isExpanded: true,
+              style: const TextStyle(color: Colors.white),
+              items: const [
+                DropdownMenuItem(
+                  value: "Light",
+                  child: Text("Light Model (سريع وأخف)"),
+                ),
+                DropdownMenuItem(
+                  value: "Large",
+                  child: Text("Large Model (أدق وأقوى)"),
+                ),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  selectedSummaryModel = value!;
+                });
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

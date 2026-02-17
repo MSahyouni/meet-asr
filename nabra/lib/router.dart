@@ -22,6 +22,7 @@ final GoRouter router = GoRouter(
         return SummaryScreen(
           summary: data?['summary'] ?? 'لا يوجد تلخيص.',
           keywords: data?['keywords'] ?? 'لا توجد كلمات مفتاحية.',
+          model: data?['model'] ?? 'نموذج غير معروف',
         );
       },
     ),

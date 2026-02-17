@@ -19,15 +19,11 @@ class _HomeScreen extends State<HomeScreen> {
   File? recordedFile;
   File? selectedAudioFile;
   String recordedAudioBlobUrl = "";
+  String selectedModel = "medium";
+
   final TextEditingController _controller = TextEditingController();
 
-  // final List<String> modelLevels = [
-  //   'small',
-  //   'tiny',
-  //   'large-v3',
-  //   'medium',
-  //   'base',
-  // ];
+  final List<String> modelLevels = ['large-v3', 'medium'];
 
   late final VoiceNotePlayerController playerController;
 
@@ -218,6 +214,7 @@ class _HomeScreen extends State<HomeScreen> {
                               extra: {
                                 "files": <File>[selectedAudioFile!],
                                 "apiUrl": apiUrl,
+                                "selectedModel": selectedModel,
                               },
                             );
                           },
@@ -233,22 +230,6 @@ class _HomeScreen extends State<HomeScreen> {
                       ),
                     ),
                     Gap(25),
-                    // DropdownButton<String>(
-                    //   hint: Text('اختر نموذجًا'),
-                    //   value: selectedModel,
-                    //   items:
-                    //       modelLevels.map((String model) {
-                    //         return DropdownMenuItem<String>(
-                    //           value: model,
-                    //           child: Text(model),
-                    //         );
-                    //       }).toList(),
-                    //   onChanged: (String? newValue) {
-                    //     setState(() {
-                    //       selectedModel = newValue;
-                    //     });
-                    //   },
-                    // ),
                   ],
                 ),
 
@@ -354,7 +335,44 @@ class _HomeScreen extends State<HomeScreen> {
                     ),
                   ),
                 ),
-                Gap(100),
+                Gap(20),
+                Container(
+                  width: 200,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        const Color(0xFF0C3A34),
+                        const Color(0xFF125B4A),
+                        const Color(0xFF1A7B6A),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+
+                  child: DropdownButton<String>(
+                    value: selectedModel,
+                    dropdownColor: const Color(0xff124B44),
+                    isExpanded: true,
+                    underline: const SizedBox(),
+                    icon: const Icon(
+                      Icons.arrow_drop_down,
+                      color: Colors.white,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                    items: modelLevels.map((model) {
+                      return DropdownMenuItem(value: model, child: Text(model));
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        selectedModel = value!;
+                      });
+                    },
+                  ),
+                ),
+
+                Gap(20),
                 TextField(
                   controller: _controller,
                   decoration: InputDecoration(
