@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/services/text_saver.dart';
 import 'package:flutter_app/widgets/standerd.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
@@ -94,10 +95,45 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
             fontWeight: FontWeight.w500,
           ),
         ),
-        actions: const [
-          Padding(
-            padding: EdgeInsets.only(right: 12),
-            child: Icon(Icons.more_vert, color: Colors.white),
+        actions: [
+          PopupMenuButton<String>(
+            color: const Color.fromARGB(255, 17, 80, 65),
+            icon: const Icon(Icons.more_vert, size: 28, color: Colors.white),
+            onSelected: (value) async {
+              if (value == 'save_txt') {
+                if (transcriptionSegments.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('لا يوجد نص محلل للحفظ')),
+                  );
+                  return;
+                }
+
+                final analyzedText = transcriptionSegments
+                    .map((e) => e['text'] ?? '')
+                    .where((e) => e.trim().isNotEmpty)
+                    .join('\n\n');
+
+                await FileSaver.saveAnalyzedText(
+                  context: context,
+                  analyzedText: analyzedText,
+                );
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'save_txt',
+                child: Row(
+                  children: [
+                    Icon(Icons.save_alt, size: 20, color: Colors.white),
+                    SizedBox(width: 10),
+                    Text(
+                      'Save analyzed text as txt',
+                      style: TextStyle(fontSize: 16, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
