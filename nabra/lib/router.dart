@@ -17,12 +17,13 @@ final GoRouter router = GoRouter(
     GoRoute(
       path: '/summary',
       builder: (context, state) {
-        final data = state.extra as Map<String, dynamic>?;
+        // هنا نستقبل الـ extra كخريطة
+        final extra = state.extra as Map<String, dynamic>?;
 
         return SummaryScreen(
-          summary: data?['summary'] ?? 'لا يوجد تلخيص.',
-          keywords: data?['keywords'] ?? 'لا توجد كلمات مفتاحية.',
-          model: data?['model'] ?? 'نموذج غير معروف',
+          text: extra?['text'] ?? '',
+          model: extra?['model'] ?? 'Light',
+          apiUrl: extra?['apiUrl'] ?? '',
         );
       },
     ),

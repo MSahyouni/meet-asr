@@ -191,22 +191,17 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                   text: "تلخيص النص",
                   onTap: () {
                     // أخذ آخر نتيجة من التحليل (أو حسب هيكل البيانات)
-                    final lastResult = transcriptionSegments.lastWhere(
-                      (seg) =>
-                          seg.containsKey('summary') &&
-                          seg.containsKey('keywords'),
-                      orElse: () => {
-                        'summary': 'لا يوجد تلخيص',
-                        'keywords': 'لا توجد كلمات مفتاحية',
-                      },
-                    );
+                    final fullText = transcriptionSegments
+                        .map((seg) => seg['text'] ?? '')
+                        .where((t) => t.trim().isNotEmpty)
+                        .join("\n\n"); // يجمع كل النصوص مع فصل الأسطر
 
                     context.push(
                       '/summary',
                       extra: {
-                        'summary': lastResult['summary'],
-                        'keywords': lastResult['keywords'],
-                        'model': selectedSummaryModel,
+                        'text': fullText,
+                        'model': selectedModel,
+                        'apiUrl': apiUrl,
                       },
                     );
                   },
