@@ -207,7 +207,6 @@ class _SummaryScreenState extends State<SummaryScreen> {
     currentKeywords = ""; // يمكن ترك الكلمات المفتاحية فارغة مبدئياً
   }
 
-  // دالة إعادة التلخيص باستخدام رابط API مع استبدال transcribe بـ summary
   Future<void> summarizeAgain() async {
     setState(() {
       isLoading = true;
