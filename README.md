@@ -2,6 +2,7 @@ Meet-ASR
 
 [![Security Tests](https://github.com/MSahyouni/meet-asr/actions/workflows/security-tests.yml/badge.svg?branch=nabra)](https://github.com/MSahyouni/meet-asr/actions/workflows/security-tests.yml)
 [![Python CI](https://github.com/MSahyouni/meet-asr/actions/workflows/python-ci.yml/badge.svg?branch=main)](https://github.com/MSahyouni/meet-asr/actions/workflows/python-ci.yml)
+[![Docker Build](https://github.com/MSahyouni/meet-asr/actions/workflows/docker-test.yml/badge.svg?branch=main)](https://github.com/MSahyouni/meet-asr/actions/workflows/docker-test.yml)
 
 Meet-ASR هو نظام تفريغ صوتي (Speech-to-Text) احترافي يدعم تمييز المتحدثين (Speaker Diarization) وتلخيص النص، مع تحسين جودة الصوت (Enhance) قبل المعالجة، ومصمم ليعمل كخدمة مستقلة قابلة للدمج في أي تطبيق.
 
