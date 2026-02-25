@@ -11,7 +11,8 @@ from .schema import (
     UserTokenResponse, ChangePasswordRequest
 )
 from .service import AuthService
-from .security import decode_access_token, extract_bearer_token
+from .security import resolve_payload_from_authorization
+from app.infrastructure.database import local_db
 from app.features.dashboard.service import DashboardService
 from app.features.dashboard.schema import ActivityType
 
@@ -21,13 +22,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 def _resolve_email(email: Optional[str], authorization: Optional[str]) -> str:
     if email:
         return email
-    token = extract_bearer_token(authorization)
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing email or bearer token",
-        )
-    payload = decode_access_token(token)
+    payload = resolve_payload_from_authorization(authorization)
     if not payload or not payload.get("sub"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -140,6 +135,10 @@ async def logout(email: Optional[str] = None, authorization: Optional[str] = Hea
     - **email**: User email
     """
     resolved_email = _resolve_email(email, authorization)
+    try:
+        local_db.rotate_token_version(resolved_email)
+    except Exception:
+        pass
     try:
         DashboardService.record_activity(
             resolved_email,

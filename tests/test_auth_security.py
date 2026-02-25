@@ -60,6 +60,7 @@ def test_extract_and_resolve_email_from_authorization(monkeypatch):
     monkeypatch.setenv("JWT_AUDIENCE", "meet-asr-api")
     token = security.create_access_token("user@example.com", "u1", "User One")
     auth_header = f"Bearer {token}"
+    monkeypatch.setattr(security, "_is_payload_session_valid", lambda payload: True)
 
     assert security.extract_bearer_token(auth_header) == token
     assert security.resolve_email_from_authorization(auth_header) == "user@example.com"

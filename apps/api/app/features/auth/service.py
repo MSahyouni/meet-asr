@@ -65,6 +65,7 @@ class AuthService:
             email=user["email"],
             user_id=user["id"],
             full_name=user["full_name"],
+            token_version=int(user.get("token_version", 0) or 0),
         )
 
         return {
@@ -91,4 +92,7 @@ class AuthService:
         if not cls.verify_password(old_password, user["password_hash"]):
             raise ValueError("Invalid current password")
 
-        return local_db.update_password(email, cls.hash_password(new_password))
+        ok = local_db.update_password(email, cls.hash_password(new_password))
+        if ok:
+            local_db.rotate_token_version(email)
+        return ok

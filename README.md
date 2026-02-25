@@ -274,6 +274,9 @@ docker compose -f docker-compose.prod.yml up -d --build
 - **GET /dashboard/summary/{user_email}** — ملخص لوحة التحكم
 - **GET /dashboard/overview** — نظرة عامة للإحصائيات
 
+**أمان الجلسات (JWT Session Invalidation):**
+- عند `POST /auth/logout` أو `POST /auth/change-password` يتم إبطال جميع التوكنات القديمة فورًا (server-side) عبر تدوير نسخة التوكن للمستخدم.
+
 **ملاحظة توافق مهمة:**
 - `POST /summarize` يقبل الآن **FormData** و **JSON** (مفيد لتطبيق Flutter والواجهة الافتراضية معًا)
 - endpoints القديمة التي تعتمد `{email}` أو `{user_email}` أصبحت محمية: الوصول مسموح فقط لصاحب الحساب أو Admin عبر Bearer token.

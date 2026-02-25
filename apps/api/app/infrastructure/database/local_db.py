@@ -31,10 +31,14 @@ def init_db() -> None:
                 bio TEXT,
                 avatar_url TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                token_version INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )
             """
         )
+        cols = {row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()}
+        if "token_version" not in cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS activities (
@@ -57,8 +61,8 @@ def create_user(email: str, user_payload: Dict[str, Any]) -> None:
     with _conn() as connection:
         connection.execute(
             """
-            INSERT INTO users (id, email, full_name, password_hash, bio, avatar_url, is_active, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (id, email, full_name, password_hash, bio, avatar_url, is_active, token_version, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_payload["id"],
@@ -68,6 +72,7 @@ def create_user(email: str, user_payload: Dict[str, Any]) -> None:
                 user_payload.get("bio") or "",
                 user_payload.get("avatar_url") or "",
                 1 if user_payload.get("is_active", True) else 0,
+                int(user_payload.get("token_version", 0)),
                 user_payload["created_at"],
             ),
         )
@@ -78,7 +83,7 @@ def get_user(email: str, include_password: bool = False) -> Optional[Dict[str, A
     with _conn() as connection:
         row = connection.execute(
             """
-            SELECT id, email, full_name, password_hash, bio, avatar_url, is_active, created_at
+            SELECT id, email, full_name, password_hash, bio, avatar_url, is_active, token_version, created_at
             FROM users
             WHERE email = ?
             """,
@@ -88,6 +93,7 @@ def get_user(email: str, include_password: bool = False) -> Optional[Dict[str, A
             return None
         payload = dict(row)
         payload["is_active"] = bool(payload.get("is_active", 1))
+        payload["token_version"] = int(payload.get("token_version", 0) or 0)
         if not include_password:
             payload.pop("password_hash", None)
         return payload
@@ -150,6 +156,24 @@ def list_users(skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
         for user in users:
             user["is_active"] = bool(user.get("is_active", 1))
         return users
+
+
+def rotate_token_version(email: str) -> int:
+    with _conn() as connection:
+        connection.execute(
+            """
+            UPDATE users
+            SET token_version = COALESCE(token_version, 0) + 1
+            WHERE email = ?
+            """,
+            (email,),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT token_version FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+        return int(row["token_version"] if row else 0)
 
 
 def count_users(active_only: bool = False) -> int:

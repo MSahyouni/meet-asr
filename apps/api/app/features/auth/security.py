@@ -53,13 +53,14 @@ def token_ttl_seconds() -> int:
         return 86400
 
 
-def create_access_token(email: str, user_id: str, full_name: str) -> str:
+def create_access_token(email: str, user_id: str, full_name: str, token_version: int = 0) -> str:
     _validate_jwt_config()
     now = int(time.time())
     payload = {
         "sub": email,
         "uid": user_id,
         "name": full_name,
+        "tv": int(token_version),
         "iss": _jwt_issuer(),
         "aud": _jwt_audience(),
         "jti": str(uuid.uuid4()),
@@ -100,6 +101,25 @@ def decode_access_token(token: str) -> Optional[Dict[str, str]]:
         return None
 
 
+def _is_payload_session_valid(payload: Optional[Dict[str, str]]) -> bool:
+    if not payload:
+        return False
+    email = str(payload.get("sub", "") or "")
+    if not email:
+        return False
+    try:
+        from app.infrastructure.database import local_db
+
+        user = local_db.get_user(email, include_password=True)
+        if not user:
+            return False
+        token_version = int(payload.get("tv", 0) or 0)
+        current_version = int(user.get("token_version", 0) or 0)
+        return token_version == current_version
+    except Exception:
+        return False
+
+
 def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
     if not authorization:
         return None
@@ -111,10 +131,7 @@ def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
 
 
 def resolve_email_from_authorization(authorization: Optional[str]) -> Optional[str]:
-    token = extract_bearer_token(authorization)
-    if not token:
-        return None
-    payload = decode_access_token(token)
+    payload = resolve_payload_from_authorization(authorization)
     if not payload:
         return None
     email = payload.get("sub")
@@ -125,7 +142,10 @@ def resolve_payload_from_authorization(authorization: Optional[str]) -> Optional
     token = extract_bearer_token(authorization)
     if not token:
         return None
-    return decode_access_token(token)
+    payload = decode_access_token(token)
+    if not _is_payload_session_valid(payload):
+        return None
+    return payload
 
 
 def is_admin_email(email: Optional[str]) -> bool:
