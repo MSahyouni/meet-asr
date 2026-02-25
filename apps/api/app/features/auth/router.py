@@ -223,3 +223,23 @@ async def session_status(authorization: Optional[str] = Header(None)):
         "token_id": str(payload.get("jti") or ""),
         "token_version": int(payload.get("tv", 0) or 0),
     }
+
+
+@router.get("/me/permissions")
+async def my_permissions(authorization: Optional[str] = Header(None)):
+    """Get permission snapshot for current authenticated user."""
+    payload = resolve_payload_from_authorization(authorization)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    email = str(payload.get("sub") or "")
+    admin = is_admin_email(email)
+    return {
+        "email": email,
+        "is_admin": admin,
+        "self_scope": True,
+        "allowed_targets": "all" if admin else "self",
+    }

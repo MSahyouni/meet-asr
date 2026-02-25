@@ -265,6 +265,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 - **POST /auth/login** — تسجيل دخول
 - **POST /auth/logout-all** — إبطال جميع الجلسات (self/admin)
 - **GET /auth/sessions/status** — حالة الجلسة الحالية (JWT) ووقت الانتهاء
+- **GET /auth/me/permissions** — صلاحيات المستخدم الحالي (`is_admin`, نطاق الوصول)
 - **GET /users/me** — جلب الملف الشخصي الحالي عبر Bearer token
 - **PUT /users/me** — تحديث الملف الشخصي الحالي عبر Bearer token
 - **GET /users/profile/{email}** — الملف الشخصي
