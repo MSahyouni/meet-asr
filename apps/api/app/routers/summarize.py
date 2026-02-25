@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 
 from app import nlp_core
 from app.config import settings
+from app.features.dashboard.schema import ActivityType
+from app.features.dashboard.service import DashboardService
 from app.server.deps import response_error, JOBS, run_summary_job_impl, limiter, check_api_key
 
 router = APIRouter()
@@ -19,6 +21,7 @@ async def summarize_after(
     request: Request,
     text: Optional[str] = Form(None),
     path: Optional[str] = Form(None),
+    user_email: Optional[str] = Form(None),
     summary_mode: str = Form("lite"),
     async_mode: bool = Form(False),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
@@ -31,6 +34,7 @@ async def summarize_after(
             json_body = await request.json()
             text = json_body.get("text") or json_body.get("model_text")
             path = path or json_body.get("path")
+            user_email = user_email or json_body.get("user_email")
             summary_mode = json_body.get("summary_mode", "lite")
             async_mode = json_body.get("async_mode", False)
             if "x_api_key" in json_body:
@@ -77,6 +81,16 @@ async def summarize_after(
         from urllib.parse import quote
         base = settings.BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
         summary_url = f"{base}/download?path={quote(sum_path)}" if (base and sum_path) else None
+        if user_email:
+            try:
+                DashboardService.record_activity(
+                    user_email=user_email,
+                    activity_type=ActivityType.NLP,
+                    description="summarize completed",
+                    metadata={"mode": "sync", "summary_mode": summary_mode},
+                )
+            except Exception:
+                pass
         return JSONResponse({
             "summary": s_text,
             "keywords": kw_csv or "",
@@ -89,6 +103,16 @@ async def summarize_after(
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
     asyncio.create_task(run_summary_job_impl(job_id, body, out_base_path, summary_mode))
+    if user_email:
+        try:
+            DashboardService.record_activity(
+                user_email=user_email,
+                activity_type=ActivityType.NLP,
+                description="summarize queued",
+                metadata={"mode": "async", "summary_mode": summary_mode, "job_id": job_id},
+            )
+        except Exception:
+            pass
     base = settings.BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
     return JSONResponse(
         {

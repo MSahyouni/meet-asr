@@ -177,6 +177,13 @@ Copy-Item apps/api/.env.example apps/api/.env
 - `WHISPER_MODEL` — heavy (large-v3) - افتراضي وثابت
 - `ASR_DATA_DIR` — مجلد البيانات (افتراضي: `data`)
 - `WHISPER_DEVICE` — cuda أو cpu
+- `JWT_SECRET` — مفتاح توقيع JWT محلي (أوفلاين)
+- `JWT_EXPIRES_SECONDS` — مدة صلاحية التوكن بالثواني (افتراضي 86400)
+- `ADMIN_EMAILS` — قائمة إيميلات الأدمن مفصولة بفواصل (مثال: `admin@local,owner@local`)
+
+**التخزين المحلي الدائم (Offline Persistence):**
+- يتم حفظ بيانات المستخدمين والأنشطة في SQLite محلي: `data/meetasr.sqlite3`
+- لا حاجة لأي قاعدة بيانات سحابية، ويستمر العمل بالكامل أوفلاين
 
 
 ---
@@ -248,10 +255,20 @@ docker compose -f docker-compose.prod.yml up -d --build
 **ميزات المنصة الجديدة:**
 - **POST /auth/register** — تسجيل مستخدم
 - **POST /auth/login** — تسجيل دخول
+- **GET /users/me** — جلب الملف الشخصي الحالي عبر Bearer token
+- **PUT /users/me** — تحديث الملف الشخصي الحالي عبر Bearer token
 - **GET /users/profile/{email}** — الملف الشخصي
 - **PUT /users/profile/{email}** — تحديث الملف الشخصي
+- **GET /dashboard/my-summary** — ملخص لوحة المستخدم الحالي عبر Bearer token
+- **GET /dashboard/my-activities** — نشاطات المستخدم الحالي عبر Bearer token
+- **GET /dashboard/my-usage** — استخدام API للمستخدم الحالي عبر Bearer token
+- **GET /dashboard/my-usage-chart** — بيانات الرسم البياني للمستخدم الحالي عبر Bearer token
 - **GET /dashboard/summary/{user_email}** — ملخص لوحة التحكم
 - **GET /dashboard/overview** — نظرة عامة للإحصائيات
+
+**ملاحظة توافق مهمة:**
+- `POST /summarize` يقبل الآن **FormData** و **JSON** (مفيد لتطبيق Flutter والواجهة الافتراضية معًا)
+- endpoints القديمة التي تعتمد `{email}` أو `{user_email}` أصبحت محمية: الوصول مسموح فقط لصاحب الحساب أو Admin عبر Bearer token.
 
 ---
 
@@ -261,6 +278,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```bash
 curl -X POST http://localhost:8000/transcribe \
   -F "file=@/path/to/audio.wav" \
+  -F "user_email=user@example.com" \
   -F "enhance_mode=off" \
   -F "diarize=true" \
   -F "async_mode=false"
@@ -270,9 +288,11 @@ curl -X POST http://localhost:8000/transcribe \
 ```bash
 curl -X POST http://localhost:8000/tts \
   -H "Content-Type: application/json" \
-  -d '{"text":"مرحبا هذا اختبار","voice":"af_heart","speed":1.0,"format":"wav"}'
+  -d '{"text":"مرحبا هذا اختبار","voice":"af_heart","speed":1.0,"format":"wav","user_email":"user@example.com"}'
 ```
 الاستجابة تتضمن `download_url` لتحميل ملف WAV.
+
+ملاحظة: `user_email` اختياري، لكنه يفعّل تسجيل النشاطات في لوحة التحكم (ASR/TTS/NLP).
 
 ---
 

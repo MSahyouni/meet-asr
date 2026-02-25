@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse
 import aiofiles
 from app import nlp_core
 from app.config import settings
+from app.features.dashboard.schema import ActivityType
+from app.features.dashboard.service import DashboardService
 from app.server.deps import (
     get_core,
     response_ok,
@@ -113,6 +115,7 @@ async def transcribe(
     device_sel: str = Form("auto"),
     compute_sel: str = Form("auto"),
     summary_mode: str = Form("off"),
+    user_email: Optional[str] = Form(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     auth_error = check_api_key(x_api_key)
@@ -158,6 +161,16 @@ async def transcribe(
                 punctuate=punctuate,
                 job_id=sync_job_id,
             )
+            if user_email:
+                try:
+                    DashboardService.record_activity(
+                        user_email=user_email,
+                        activity_type=ActivityType.ASR,
+                        description="transcribe completed",
+                        metadata={"mode": "sync", "job_id": sync_job_id},
+                    )
+                except Exception:
+                    pass
             segments_path = result.get("segments_path") or write_segments_json(
                 result.get("segments") or [], result.get("txt_path")
             )
@@ -204,6 +217,16 @@ async def transcribe(
         return response_error(429, "rate_limited", f"too many queued or running transcribe jobs (max {max_queued})")
     JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
     asyncio.create_task(run_transcribe_job_impl(job_id, temp_file_path, job_kwargs, get_core))
+    if user_email:
+        try:
+            DashboardService.record_activity(
+                user_email=user_email,
+                activity_type=ActivityType.ASR,
+                description="transcribe queued",
+                metadata={"mode": "async", "job_id": job_id},
+            )
+        except Exception:
+            pass
     base = settings.BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
     return JSONResponse(
         {
@@ -233,6 +256,7 @@ async def transcribe_batch(
     device_sel: str = Form("auto"),
     compute_sel: str = Form("auto"),
     summary_mode: str = Form("off"),
+    user_email: Optional[str] = Form(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     from fastapi import HTTPException
@@ -296,6 +320,17 @@ async def transcribe_batch(
 
             if not isinstance(result, dict):
                 return response_error(500, "unexpected_result_type")
+
+            if user_email:
+                try:
+                    DashboardService.record_activity(
+                        user_email=user_email,
+                        activity_type=ActivityType.ASR,
+                        description="batch transcribe completed",
+                        metadata={"files_count": len(saved)},
+                    )
+                except Exception:
+                    pass
 
             merged_text = result.get("text", "")
             merged_path = result.get("txt_path")

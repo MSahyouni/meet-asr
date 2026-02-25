@@ -9,6 +9,8 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.features.dashboard.schema import ActivityType
+from app.features.dashboard.service import DashboardService
 from app.server.deps import response_error, limiter, check_api_key
 
 router = APIRouter()
@@ -59,6 +61,7 @@ async def tts(
     if not isinstance(body, dict):
         return response_error(400, "invalid_body", "JSON object required")
     text = (body.get("text") or "").strip()
+    user_email = (body.get("user_email") or "").strip() or None
     if not text:
         return response_error(400, "validation_error", "text is required and cannot be empty")
     from app.tts_core import TTS_TEXT_MAX_LEN
@@ -111,6 +114,17 @@ async def tts(
     download_url = f"/download?path={quote(resolved.as_posix())}"
     if base_url:
         download_url = f"{base_url}{download_url}"
+
+    if user_email:
+        try:
+            DashboardService.record_activity(
+                user_email=user_email,
+                activity_type=ActivityType.TTS,
+                description="tts completed",
+                metadata={"voice": voice, "job_id": job_id},
+            )
+        except Exception:
+            pass
 
     return JSONResponse({
         "ok": True,

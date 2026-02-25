@@ -4,16 +4,16 @@ Authentication business logic
 """
 
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 import hashlib
 import secrets
+
+from app.infrastructure.database import local_db
+from .security import create_access_token, token_ttl_seconds
 
 
 class AuthService:
     """Authentication service"""
-    
-    # In-memory store (replace with database in production)
-    users_db: Dict[str, Any] = {}
     
     @staticmethod
     def hash_password(password: str) -> str:
@@ -33,9 +33,10 @@ class AuthService:
     @classmethod
     def register_user(cls, email: str, password: str, full_name: str) -> Dict[str, Any]:
         """Register new user"""
-        if email in cls.users_db:
+        existing = local_db.get_user(email, include_password=True)
+        if existing:
             raise ValueError(f"User {email} already exists")
-        
+
         user = {
             "id": cls.generate_token(16),
             "email": email,
@@ -43,51 +44,51 @@ class AuthService:
             "password_hash": cls.hash_password(password),
             "created_at": datetime.utcnow().isoformat(),
             "is_active": True,
+            "bio": "",
+            "avatar_url": "",
         }
-        
-        cls.users_db[email] = user
+
+        local_db.create_user(email, user)
         return {k: v for k, v in user.items() if k != "password_hash"}
     
     @classmethod
     def login(cls, email: str, password: str) -> Dict[str, Any]:
         """Login user and return token"""
-        if email not in cls.users_db:
+        user = local_db.get_user(email, include_password=True)
+        if not user:
             raise ValueError(f"Invalid credentials")
-        
-        user = cls.users_db[email]
-        
+
         if not cls.verify_password(password, user["password_hash"]):
             raise ValueError(f"Invalid credentials")
-        
-        token = cls.generate_token()
-        
+
+        token = create_access_token(
+            email=user["email"],
+            user_id=user["id"],
+            full_name=user["full_name"],
+        )
+
         return {
             "id": user["id"],
             "email": user["email"],
             "full_name": user["full_name"],
             "access_token": token,
             "token_type": "bearer",
+            "expires_in": token_ttl_seconds(),
         }
     
     @classmethod
     def get_user(cls, email: str) -> Optional[Dict[str, Any]]:
         """Get user by email"""
-        if email not in cls.users_db:
-            return None
-        
-        user = cls.users_db[email]
-        return {k: v for k, v in user.items() if k != "password_hash"}
+        return local_db.get_user(email, include_password=False)
     
     @classmethod
     def change_password(cls, email: str, old_password: str, new_password: str) -> bool:
         """Change user password"""
-        if email not in cls.users_db:
+        user = local_db.get_user(email, include_password=True)
+        if not user:
             raise ValueError("User not found")
-        
-        user = cls.users_db[email]
-        
+
         if not cls.verify_password(old_password, user["password_hash"]):
             raise ValueError("Invalid current password")
-        
-        user["password_hash"] = cls.hash_password(new_password)
-        return True
+
+        return local_db.update_password(email, cls.hash_password(new_password))

@@ -35,6 +35,7 @@ class UserTokenResponse(BaseModel):
     full_name: str
     access_token: str
     token_type: str = "bearer"
+    expires_in: int
 
 
 class ChangePasswordRequest(BaseModel):

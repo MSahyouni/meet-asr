@@ -5,66 +5,44 @@ User management business logic
 
 from typing import Optional, Dict, List, Any
 
+from app.infrastructure.database import local_db
+
 
 class UserService:
     """User management service"""
     
-    # Reference to auth service users db
-    users_db: Dict[str, Any] = {}
-    
     @classmethod
     def update_profile(cls, email: str, profile_data: Dict[str, Any]) -> Dict[str, Any]:
         """Update user profile"""
-        if email not in cls.users_db:
+        updated = local_db.update_user_profile(email, profile_data)
+        if not updated:
             raise ValueError("User not found")
-        
-        user = cls.users_db[email]
-        
-        # Update allowed fields
-        if "full_name" in profile_data and profile_data["full_name"]:
-            user["full_name"] = profile_data["full_name"]
-        
-        if "bio" in profile_data:
-            user["bio"] = profile_data.get("bio", "")
-        
-        if "avatar_url" in profile_data:
-            user["avatar_url"] = profile_data.get("avatar_url", "")
-        
-        return {k: v for k, v in user.items() if k != "password_hash"}
+        return updated
     
     @classmethod
     def get_user_profile(cls, email: str) -> Optional[Dict[str, Any]]:
         """Get user profile"""
-        if email not in cls.users_db:
-            return None
-        
-        user = cls.users_db[email]
-        return {k: v for k, v in user.items() if k != "password_hash"}
+        return local_db.get_user(email, include_password=False)
     
     @classmethod
     def list_users(cls, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
         """List all users with pagination"""
-        users = list(cls.users_db.values())
-        return [
-            {k: v for k, v in user.items() if k != "password_hash"}
-            for user in users[skip:skip + limit]
-        ]
+        return local_db.list_users(skip, limit)
     
     @classmethod
     def get_user_count(cls) -> int:
         """Get total user count"""
-        return len(cls.users_db)
+        return local_db.count_users(active_only=False)
     
     @classmethod
     def get_active_count(cls) -> int:
         """Get active user count"""
-        return sum(1 for user in cls.users_db.values() if user.get("is_active", True))
+        return local_db.count_users(active_only=True)
     
     @classmethod
     def delete_user(cls, email: str) -> bool:
         """Delete user (soft delete - set inactive)"""
-        if email not in cls.users_db:
+        if not local_db.get_user(email, include_password=False):
             raise ValueError("User not found")
-        
-        cls.users_db[email]["is_active"] = False
-        return True
+
+        return local_db.set_user_active(email, False)
