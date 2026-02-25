@@ -8,12 +8,25 @@ ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT.parent / ".env")
 
 import multiprocessing
-import torch
 
 
 def _prefer_local(path: pathlib.Path, fallback: str) -> str:
     """إذا وُجد المسار المحلي خذه، وإلا استخدم الاسم الافتراضي."""
     return path.as_posix() if path.exists() else fallback
+
+
+def _has_cuda_available() -> bool:
+    explicit_device = (os.getenv("WHISPER_DEVICE", "") or "").strip().lower()
+    if explicit_device == "cuda":
+        return True
+    if explicit_device == "cpu":
+        return False
+    try:
+        import torch
+
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
 
 class Settings:
     def __init__(self):
@@ -43,7 +56,7 @@ class Settings:
         self.ASR_WARMUP = os.getenv("ASR_WARMUP", "0").lower() in ("1", "true")
 
         # --- ASR Core (Whisper) Settings ---
-        self._HAS_CUDA = torch.cuda.is_available()
+        self._HAS_CUDA = _has_cuda_available()
         self.WHISPER_MODEL = os.getenv("WHISPER_MODEL", "heavy")
         # تحسين الصوت: off (بدون) | light (تطبيع + highpass) | full (تقليل ضجيج + فلاتر)
         self.ENHANCE_MODE = os.getenv("ENHANCE_MODE", "full").lower().strip()
