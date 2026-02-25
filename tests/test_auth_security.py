@@ -12,6 +12,8 @@ def test_token_ttl_seconds_has_minimum(monkeypatch):
 def test_create_and_decode_access_token(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-secret")
     monkeypatch.setenv("JWT_EXPIRES_SECONDS", "3600")
+    monkeypatch.setenv("JWT_ISSUER", "meet-asr")
+    monkeypatch.setenv("JWT_AUDIENCE", "meet-asr-api")
 
     token = security.create_access_token("user@example.com", "u1", "User One")
     payload = security.decode_access_token(token)
@@ -20,11 +22,16 @@ def test_create_and_decode_access_token(monkeypatch):
     assert payload["sub"] == "user@example.com"
     assert payload["uid"] == "u1"
     assert payload["name"] == "User One"
+    assert payload["iss"] == "meet-asr"
+    assert payload["aud"] == "meet-asr-api"
+    assert "jti" in payload
     assert payload["exp"] > payload["iat"]
 
 
 def test_decode_rejects_tampered_token(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-secret")
+    monkeypatch.setenv("JWT_ISSUER", "meet-asr")
+    monkeypatch.setenv("JWT_AUDIENCE", "meet-asr-api")
     token = security.create_access_token("user@example.com", "u1", "User One")
     head, body, sig = token.split(".")
     tampered = f"{head}.{body}.{'A' + sig[1:]}"
@@ -35,6 +42,8 @@ def test_decode_rejects_tampered_token(monkeypatch):
 def test_decode_rejects_expired_token(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-secret")
     monkeypatch.setenv("JWT_EXPIRES_SECONDS", "300")
+    monkeypatch.setenv("JWT_ISSUER", "meet-asr")
+    monkeypatch.setenv("JWT_AUDIENCE", "meet-asr-api")
     token = security.create_access_token("user@example.com", "u1", "User One")
 
     original_time = security.time.time
@@ -47,6 +56,8 @@ def test_decode_rejects_expired_token(monkeypatch):
 
 def test_extract_and_resolve_email_from_authorization(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-secret")
+    monkeypatch.setenv("JWT_ISSUER", "meet-asr")
+    monkeypatch.setenv("JWT_AUDIENCE", "meet-asr-api")
     token = security.create_access_token("user@example.com", "u1", "User One")
     auth_header = f"Bearer {token}"
 
@@ -77,3 +88,28 @@ def test_auth_package_router_import_is_lazy():
 
     importlib.reload(auth_pkg)
     assert "app.features.auth.router" not in sys.modules
+
+
+def test_decode_rejects_wrong_issuer_or_audience(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "test-secret")
+    monkeypatch.setenv("JWT_ISSUER", "issuer-a")
+    monkeypatch.setenv("JWT_AUDIENCE", "aud-a")
+    token = security.create_access_token("user@example.com", "u1", "User One")
+
+    monkeypatch.setenv("JWT_ISSUER", "issuer-b")
+    assert security.decode_access_token(token) is None
+
+    monkeypatch.setenv("JWT_ISSUER", "issuer-a")
+    monkeypatch.setenv("JWT_AUDIENCE", "aud-b")
+    assert security.decode_access_token(token) is None
+
+
+def test_create_token_requires_strong_secret_in_production(monkeypatch):
+    monkeypatch.setenv("ASR_ENV", "production")
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+
+    try:
+        security.create_access_token("user@example.com", "u1", "User One")
+        assert False, "Expected RuntimeError for weak/default JWT secret in production"
+    except RuntimeError as exc:
+        assert "JWT_SECRET" in str(exc)

@@ -127,6 +127,8 @@ async def get_stats(user_email: str, authorization: Optional[str] = Header(None)
         _require_self_or_admin(user_email, authorization)
         stats = DashboardService.get_dashboard_stats(user_email)
         return stats
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -147,6 +149,8 @@ async def record_activity(
         _require_self_or_admin(user_email, authorization)
         activity = DashboardService.record_activity(user_email, activity_type, description, metadata)
         return activity
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -249,6 +253,8 @@ async def export_report(req: ReportRequest, authorization: Optional[str] = Heade
             req.date_to
         )
         return report
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -22,11 +22,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
-from app.server.responses import request_id_var, response_error as _response_error_for_middleware
+from app.server.responses import request_id_var
 from app.server.deps import get_core, set_limiter
 
 # ——— Third-party warnings filter (without changing sys.stdout; suitable for FastAPI & multi-workers) ———
@@ -63,18 +62,29 @@ logging.basicConfig(
 )
 
 # ——— Request ID Context Variable ———
-_request_id_middleware_app = None
 
 
-class RequestIDMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        rid = str(uuid.uuid4())
-        token = request_id_var.set(rid)
-        try:
-            response = await call_next(request)
-        finally:
-            request_id_var.reset(token)
-        return response
+def _is_production_env() -> bool:
+    env = (
+        os.getenv("ASR_ENV")
+        or os.getenv("APP_ENV")
+        or os.getenv("ENV")
+        or ""
+    ).strip().lower()
+    return env in {"prod", "production"}
+
+
+def _resolve_cors_origins() -> list[str]:
+    raw = (settings.ASR_ALLOWED_ORIGINS or "").strip()
+    if raw:
+        origins = [item.strip() for item in raw.split(",") if item.strip()]
+        if origins:
+            if _is_production_env() and "*" in origins:
+                raise RuntimeError("ASR_ALLOWED_ORIGINS must be explicit in production (wildcard is not allowed)")
+            return origins
+    if _is_production_env():
+        raise RuntimeError("ASR_ALLOWED_ORIGINS must be configured in production")
+    return ["*"]
 
 
 class MergedRequestIdMiddleware(BaseHTTPMiddleware):
@@ -89,7 +99,7 @@ class MergedRequestIdMiddleware(BaseHTTPMiddleware):
             logging.error(f"[{rid}] Unhandled exception | path={request.url.path} | elapsed={elapsed:.0f}ms", exc_info=True)
             raise
         elapsed = (time.time() - start_time) * 1000
-        logging.info(f"[{rid}] Request complete | method={request.method} | path={request.url.path} | status={response.status_code} | elapsed={elapsed:.0f}ms")
+        logging.debug(f"[{rid}] Request complete | method={request.method} | path={request.url.path} | status={response.status_code} | elapsed={elapsed:.0f}ms")
         return response
 
 
@@ -129,7 +139,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ASR_ALLOWED_ORIGINS.split(",") if settings.ASR_ALLOWED_ORIGINS else ["*"],
+    allow_origins=_resolve_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

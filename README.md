@@ -178,10 +178,16 @@ Copy-Item apps/api/.env.example apps/api/.env
 - `HF_TOKEN` — مفتاح Hugging Face (للنماذج الخاصة فقط)
 - `WHISPER_MODEL` — heavy (large-v3) - افتراضي وثابت
 - `ASR_DATA_DIR` — مجلد البيانات (افتراضي: `data`)
+- `ASR_ENV` — بيئة التشغيل (`development` أو `production`)
 - `WHISPER_DEVICE` — cuda أو cpu
 - `JWT_SECRET` — مفتاح توقيع JWT محلي (أوفلاين)
 - `JWT_EXPIRES_SECONDS` — مدة صلاحية التوكن بالثواني (افتراضي 86400)
+- `JWT_ISSUER` — قيمة `iss` داخل JWT (افتراضي: `meet-asr`)
+- `JWT_AUDIENCE` — قيمة `aud` داخل JWT (افتراضي: `meet-asr-api`)
 - `ADMIN_EMAILS` — قائمة إيميلات الأدمن مفصولة بفواصل (مثال: `admin@local,owner@local`)
+
+**ملاحظة إنتاجية مهمة (CORS/JWT):**
+- في بيئة `production` يجب تعيين `JWT_SECRET` بقيمة قوية، واستخدام `ASR_ALLOWED_ORIGINS` بقيم صريحة (بدون `*`).
 
 **التخزين المحلي الدائم (Offline Persistence):**
 - يتم حفظ بيانات المستخدمين والأنشطة في SQLite محلي: `data/meetasr.sqlite3`
