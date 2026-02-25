@@ -177,3 +177,36 @@ def test_dashboard_my_usage_returns_list(monkeypatch):
     assert len(data) == 1
     assert data[0]["user_email"] == "user@example.com"
     assert data[0]["total_calls"] == 6
+
+
+def test_dashboard_my_usage_chart_requires_bearer_token():
+    client = _build_test_client()
+    resp = client.get("/dashboard/my-usage-chart")
+
+    assert resp.status_code == 401
+    assert "bearer token" in resp.json()["detail"].lower()
+
+
+def test_dashboard_my_usage_chart_returns_data(monkeypatch):
+    client = _build_test_client()
+
+    monkeypatch.setattr(dashboard_router_module, "resolve_email_from_authorization", lambda _: "user@example.com")
+    monkeypatch.setattr(
+        dashboard_router_module.DashboardService,
+        "get_usage_chart_data",
+        lambda email, days=30: {
+            "labels": ["2026-01-01", "2026-01-02"],
+            "asr_data": [1, 2],
+            "tts_data": [0, 1],
+            "nlp_data": [1, 1],
+        },
+    )
+
+    resp = client.get("/dashboard/my-usage-chart?days=7", headers={"Authorization": "Bearer token"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["labels"] == ["2026-01-01", "2026-01-02"]
+    assert data["asr_data"] == [1, 2]
+    assert data["tts_data"] == [0, 1]
+    assert data["nlp_data"] == [1, 1]

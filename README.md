@@ -270,6 +270,9 @@ docker compose -f docker-compose.prod.yml up -d --build
 - `POST /summarize` يقبل الآن **FormData** و **JSON** (مفيد لتطبيق Flutter والواجهة الافتراضية معًا)
 - endpoints القديمة التي تعتمد `{email}` أو `{user_email}` أصبحت محمية: الوصول مسموح فقط لصاحب الحساب أو Admin عبر Bearer token.
 
+**ملاحظة اختبار (Security Coverage):**
+- يوجد تغطية اختبارية للمسارات الآمنة `/users/me` و`/dashboard/my-summary` و`/dashboard/my-activities` و`/dashboard/my-usage` و`/dashboard/my-usage-chart` داخل `tests/test_secure_endpoints.py`.
+
 ---
 
 ### أمثلة cURL
