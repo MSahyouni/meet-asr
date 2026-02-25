@@ -19,11 +19,9 @@ class _HomeScreen extends State<HomeScreen> {
   File? recordedFile;
   File? selectedAudioFile;
   String recordedAudioBlobUrl = "";
-  String selectedModel = "medium";
+  String selectedModel = "large-v3";
 
   final TextEditingController _controller = TextEditingController();
-
-  final List<String> modelLevels = ['large-v3', 'medium'];
 
   late final VoiceNotePlayerController playerController;
 
@@ -234,7 +232,6 @@ class _HomeScreen extends State<HomeScreen> {
                 ),
 
                 Gap(50),
-
                 VoiceRecorderSection(
                   onRecordedFile: (file) {
                     setState(() {
@@ -336,43 +333,41 @@ class _HomeScreen extends State<HomeScreen> {
                   ),
                 ),
                 Gap(20),
-                Container(
-                  width: 200,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        const Color(0xFF0C3A34),
-                        const Color(0xFF125B4A),
-                        const Color(0xFF1A7B6A),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(15),
-                  ),
 
-                  child: DropdownButton<String>(
-                    value: selectedModel,
-                    dropdownColor: const Color(0xff124B44),
-                    isExpanded: true,
-                    underline: const SizedBox(),
-                    icon: const Icon(
-                      Icons.arrow_drop_down,
-                      color: Colors.white,
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                    items: modelLevels.map((model) {
-                      return DropdownMenuItem(value: model, child: Text(model));
-                    }).toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        selectedModel = value!;
-                      });
-                    },
-                  ),
-                ),
-
-                Gap(20),
+                // Container(
+                //   width: 200,
+                //   decoration: BoxDecoration(
+                //     gradient: LinearGradient(
+                //       colors: [
+                //         const Color(0xFF0C3A34),
+                //         const Color(0xFF125B4A),
+                //         const Color(0xFF1A7B6A),
+                //       ],
+                //       begin: Alignment.topLeft,
+                //       end: Alignment.bottomRight,
+                //     ),
+                //     borderRadius: BorderRadius.circular(15),
+                //   ),
+                //   child: DropdownButton<String>(
+                //     value: selectedModel,
+                //     dropdownColor: const Color(0xff124B44),
+                //     isExpanded: true,
+                //     underline: const SizedBox(),
+                //     icon: const Icon(
+                //       Icons.arrow_drop_down,
+                //       color: Colors.white,
+                //     ),
+                //     style: const TextStyle(color: Colors.white),
+                //     items: modelLevels.map((model) {
+                //       return DropdownMenuItem(value: model, child: Text(model));
+                //     }).toList(),
+                //     onChanged: (value) {
+                //       setState(() {
+                //         selectedModel = value!;
+                //       });
+                //     },
+                //   ),
+                // ),
                 TextField(
                   controller: _controller,
                   decoration: InputDecoration(
