@@ -37,7 +37,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
     });
 
     try {
-      final summaryApiUrl = widget.apiUrl.replaceAll("transcribe", "summary");
+      final summaryApiUrl = widget.apiUrl.replaceAll("transcribe", "summarize");
 
       final response = await http.post(
         Uri.parse(summaryApiUrl),

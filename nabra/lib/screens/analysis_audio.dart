@@ -190,11 +190,10 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                 buildSmallButton(
                   text: "تلخيص النص",
                   onTap: () {
-                    // أخذ آخر نتيجة من التحليل (أو حسب هيكل البيانات)
                     final fullText = transcriptionSegments
                         .map((seg) => seg['text'] ?? '')
                         .where((t) => t.trim().isNotEmpty)
-                        .join("\n\n"); // يجمع كل النصوص مع فصل الأسطر
+                        .join("\n\n");
 
                     context.push(
                       '/summary',
@@ -227,7 +226,13 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                           margin: const EdgeInsets.symmetric(vertical: 5),
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: Colors.blue.withOpacity(0.2),
+                            gradient: LinearGradient(
+                              colors: [
+                                const Color(0xFF0C3A34),
+                                const Color(0xFF125B4A), // أخضر أغمق
+                                const Color(0xFF1A7B6A),
+                              ],
+                            ),
                             borderRadius: BorderRadius.only(
                               topLeft: const Radius.circular(12),
                               topRight: const Radius.circular(12),
@@ -242,11 +247,17 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                                 speaker,
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
+                                  color: Colors.white,
                                 ),
                               ),
                               const SizedBox(height: 5),
-                              Text(text, style: const TextStyle(fontSize: 16)),
+                              Text(
+                                text,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.white,
+                                ),
+                              ),
                             ],
                           ),
                         );
