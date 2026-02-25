@@ -103,3 +103,77 @@ def test_dashboard_my_summary_returns_expected_payload(monkeypatch):
     assert data["jobs"] == {"asr": 4, "tts": 2, "nlp": 1}
     assert data["api_calls_this_month"] == 7
     assert data["system_health"] == "healthy"
+
+
+def test_dashboard_my_activities_requires_bearer_token():
+    client = _build_test_client()
+    resp = client.get("/dashboard/my-activities")
+
+    assert resp.status_code == 401
+    assert "bearer token" in resp.json()["detail"].lower()
+
+
+def test_dashboard_my_activities_returns_list(monkeypatch):
+    client = _build_test_client()
+
+    monkeypatch.setattr(dashboard_router_module, "resolve_email_from_authorization", lambda _: "user@example.com")
+    monkeypatch.setattr(
+        dashboard_router_module.DashboardService,
+        "get_user_activities",
+        lambda email, limit=20: [
+            {
+                "activity_id": "a1",
+                "user_email": email,
+                "activity_type": "asr",
+                "description": "transcribe file",
+                "timestamp": datetime(2026, 1, 3, 10, 0, 0),
+                "metadata": {"job_id": "j1"},
+            }
+        ],
+    )
+
+    resp = client.get("/dashboard/my-activities?limit=5", headers={"Authorization": "Bearer token"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["user_email"] == "user@example.com"
+    assert data[0]["activity_type"] == "asr"
+
+
+def test_dashboard_my_usage_requires_bearer_token():
+    client = _build_test_client()
+    resp = client.get("/dashboard/my-usage")
+
+    assert resp.status_code == 401
+    assert "bearer token" in resp.json()["detail"].lower()
+
+
+def test_dashboard_my_usage_returns_list(monkeypatch):
+    client = _build_test_client()
+
+    monkeypatch.setattr(dashboard_router_module, "resolve_email_from_authorization", lambda _: "user@example.com")
+    monkeypatch.setattr(
+        dashboard_router_module.DashboardService,
+        "get_api_usage",
+        lambda email, days=30: [
+            {
+                "user_email": email,
+                "date": datetime(2026, 1, 3, 0, 0, 0),
+                "asr_calls": 3,
+                "tts_calls": 1,
+                "nlp_calls": 2,
+                "total_calls": 6,
+            }
+        ],
+    )
+
+    resp = client.get("/dashboard/my-usage?days=7", headers={"Authorization": "Bearer token"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["user_email"] == "user@example.com"
+    assert data[0]["total_calls"] == 6
