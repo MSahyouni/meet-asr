@@ -264,6 +264,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 - **POST /auth/register** — تسجيل مستخدم
 - **POST /auth/login** — تسجيل دخول
 - **POST /auth/logout-all** — إبطال جميع الجلسات (self/admin)
+- **GET /auth/sessions/status** — حالة الجلسة الحالية (JWT) ووقت الانتهاء
 - **GET /users/me** — جلب الملف الشخصي الحالي عبر Bearer token
 - **PUT /users/me** — تحديث الملف الشخصي الحالي عبر Bearer token
 - **GET /users/profile/{email}** — الملف الشخصي
@@ -277,6 +278,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 **أمان الجلسات (JWT Session Invalidation):**
 - عند `POST /auth/logout` أو `POST /auth/logout-all` أو `POST /auth/change-password` يتم إبطال جميع التوكنات القديمة فورًا (server-side) عبر تدوير نسخة التوكن للمستخدم.
+- يمكن فحص الجلسة الحالية عبر `GET /auth/sessions/status` لإرجاع حالة التوكن ووقت انتهاء الصلاحية.
 
 **ملاحظة توافق مهمة:**
 - `POST /summarize` يقبل الآن **FormData** و **JSON** (مفيد لتطبيق Flutter والواجهة الافتراضية معًا)

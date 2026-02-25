@@ -4,6 +4,7 @@ Authentication endpoints
 """
 
 from typing import Optional
+import time
 
 from fastapi import APIRouter, HTTPException, status, Header
 from .schema import (
@@ -194,4 +195,31 @@ async def logout_all(email: Optional[str] = None, authorization: Optional[str] =
         "status": "success",
         "message": "All sessions invalidated",
         "email": target_email,
+    }
+
+
+@router.get("/sessions/status")
+async def session_status(authorization: Optional[str] = Header(None)):
+    """Get current session/token status for the caller."""
+    payload = resolve_payload_from_authorization(authorization)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    now = int(time.time())
+    exp = int(payload.get("exp", 0) or 0)
+    iat = int(payload.get("iat", 0) or 0)
+
+    return {
+        "status": "active",
+        "email": str(payload.get("sub") or ""),
+        "issued_at": iat,
+        "expires_at": exp,
+        "expires_in": max(0, exp - now),
+        "issuer": str(payload.get("iss") or ""),
+        "audience": str(payload.get("aud") or ""),
+        "token_id": str(payload.get("jti") or ""),
+        "token_version": int(payload.get("tv", 0) or 0),
     }
