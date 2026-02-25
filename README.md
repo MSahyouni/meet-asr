@@ -1,4 +1,4 @@
-Meet-ASR
+# Meet-ASR
 
 [![Python CI](https://github.com/MSahyouni/meet-asr/actions/workflows/python-ci.yml/badge.svg?branch=main)](https://github.com/MSahyouni/meet-asr/actions/workflows/python-ci.yml) [![Security Tests](https://github.com/MSahyouni/meet-asr/actions/workflows/security-tests.yml/badge.svg?branch=nabra)](https://github.com/MSahyouni/meet-asr/actions/workflows/security-tests.yml) [![Docker Build](https://github.com/MSahyouni/meet-asr/actions/workflows/docker-test.yml/badge.svg?branch=main)](https://github.com/MSahyouni/meet-asr/actions/workflows/docker-test.yml) [![Docker Publish](https://github.com/MSahyouni/meet-asr/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/MSahyouni/meet-asr/actions/workflows/docker-publish.yml)
 
