@@ -335,8 +335,7 @@ curl -X POST http://localhost:8000/tts \
 
 ```
 data/models/
-├── whisper-large-v3/              # نموذج Whisper الكبير
-├── whisper-large-v3/              # نموذج Whisper الثقيل (اختياري)
+├── whisper-large-v3/              # نموذج Whisper المستخدم (heavy = large-v3)
 ├── multilingual-e5-base/          # نموذج التضمين متعدد اللغات
 ├── spkrec_ecapa_cpu/              # نموذج تمييز المتحدثين
 ├── summarizers/
