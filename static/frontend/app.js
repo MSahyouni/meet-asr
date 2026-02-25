@@ -36,6 +36,7 @@
     var h = { "Accept": "application/json" };
     var key = getId("apiKey");
     if (key && key.value && key.value.trim()) h["X-API-Key"] = key.value.trim();
+    if (session && session.token) h["Authorization"] = "Bearer " + session.token;
     return h;
   }
 
@@ -125,6 +126,7 @@
     fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
     fd.append("device_sel", getId("deviceSel") ? getId("deviceSel").value : "auto");
     fd.append("compute_sel", getId("computeSel") ? getId("computeSel").value : "auto");
+    if (session.email) fd.append("user_email", session.email);
 
     getId("outText").value = "جاري التحويل...";
     getId("outSummary").value = "";
@@ -188,6 +190,7 @@
     fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
     fd.append("device_sel", getId("deviceSel") ? getId("deviceSel").value : "auto");
     fd.append("compute_sel", getId("computeSel") ? getId("computeSel").value : "auto");
+    if (session.email) fd.append("user_email", session.email);
 
     getId("outText").value = "جاري تحويل عدة ملفات...";
     getId("outSummary").value = "";
@@ -242,6 +245,7 @@
     var fd = new FormData();
     fd.append("text", text);
     fd.append("summary_mode", mode);
+    if (session.email) fd.append("user_email", session.email);
     getId("outSummary").value = "جاري التلخيص...";
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     fetchWithTimeout("/summarize", { method: "POST", headers: getHeaders(), body: fd }, timeout)
@@ -324,6 +328,7 @@
     dlEl.innerHTML = "";
 
     var body = { text: text, voice: voice, speed: speed };
+    if (session.email) body.user_email = session.email;
     if (seed != null) body.seed = seed;
 
     var h = getHeaders();
@@ -573,11 +578,11 @@
         email: email,
         password: password,
       }).then(function (data) {
-        var userEmail = (data.user && data.user.email) || email;
+        var userEmail = data.email || email;
         setSession(userEmail, data.access_token || "");
         setText("authStatus", "تم تسجيل الدخول بنجاح.");
-        if (getId("authFullName") && data.user && data.user.full_name) {
-          getId("authFullName").value = data.user.full_name;
+        if (getId("authFullName") && data.full_name) {
+          getId("authFullName").value = data.full_name;
         }
       }).catch(function (e) {
         setText("authStatus", "خطأ: " + (e.message || String(e)));
@@ -591,7 +596,7 @@
         setText("authStatus", "لا يوجد مستخدم مسجل دخول.");
         return;
       }
-      fetchWithTimeout("/auth/logout?email=" + encodeURIComponent(session.email), {
+      fetchWithTimeout("/auth/logout", {
         method: "POST",
         headers: getHeaders(),
       }, getId("timeout") ? getId("timeout").value : 300)
@@ -617,7 +622,7 @@
       return;
     }
     setText("profileStatus", "جاري تحميل الملف...");
-    fetchWithTimeout("/users/profile/" + encodeURIComponent(session.email), {
+    fetchWithTimeout("/users/me", {
       method: "GET",
       headers: getHeaders(),
     }, getId("timeout") ? getId("timeout").value : 300)
@@ -649,7 +654,7 @@
         return;
       }
       setText("profileStatus", "جاري حفظ التعديلات...");
-      jsonRequest("/users/profile/" + encodeURIComponent(session.email), "PUT", {
+      jsonRequest("/users/me", "PUT", {
         full_name: (getId("profileFullName") && getId("profileFullName").value || "").trim(),
         bio: (getId("profileBio") && getId("profileBio").value || "").trim(),
         avatar_url: (getId("profileAvatar") && getId("profileAvatar").value || "").trim(),
@@ -672,12 +677,16 @@
     setText("dashStatus", "جاري تحديث الإحصائيات...");
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     Promise.all([
-      fetchWithTimeout("/dashboard/summary/" + encodeURIComponent(session.email), { method: "GET", headers: getHeaders() }, timeout)
+      fetchWithTimeout("/dashboard/my-summary", { method: "GET", headers: getHeaders() }, timeout)
         .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || r.statusText); return d; }); }),
-      fetchWithTimeout("/dashboard/overview", { method: "GET", headers: getHeaders() }, timeout)
+      fetchWithTimeout("/dashboard/my-usage", { method: "GET", headers: getHeaders() }, timeout)
         .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || r.statusText); return d; }); })
     ]).then(function (res) {
-      var summary = res[0], overview = res[1];
+      var summary = res[0], usage = Array.isArray(res[1]) ? res[1] : [];
+      var totalCalls = usage.reduce(function (acc, item) { return acc + (item.total_calls || 0); }, 0);
+      var asrCalls = usage.reduce(function (acc, item) { return acc + (item.asr_calls || 0); }, 0);
+      var ttsCalls = usage.reduce(function (acc, item) { return acc + (item.tts_calls || 0); }, 0);
+      var nlpCalls = usage.reduce(function (acc, item) { return acc + (item.nlp_calls || 0); }, 0);
       var summaryText = [
         "المستخدم: " + (summary.user_email || "-"),
         "وظائف ASR: " + ((summary.jobs && summary.jobs.asr) || 0),
@@ -688,11 +697,11 @@
         "حالة النظام: " + (summary.system_health || "-"),
       ].join("\n");
       var overviewText = [
-        "إجمالي المستخدمين: " + (overview.total_users || 0),
-        "النشطون اليوم: " + (overview.active_users_today || 0),
-        "الجدد هذا الشهر: " + (overview.new_users_this_month || 0),
-        "معدل التسرب: " + (overview.churn_rate || 0),
-        "متوسط الجلسة (ث): " + (overview.avg_session_duration || 0),
+        "إجمالي نداءات API (آخر فترة): " + totalCalls,
+        "نداءات ASR: " + asrCalls,
+        "نداءات TTS: " + ttsCalls,
+        "نداءات NLP: " + nlpCalls,
+        "عدد الأيام في التقرير: " + usage.length,
       ].join("\n");
       if (getId("dashSummary")) getId("dashSummary").textContent = summaryText;
       if (getId("dashOverview")) getId("dashOverview").textContent = overviewText;
