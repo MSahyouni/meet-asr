@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import time
+import uuid
 from typing import Dict, Optional
 
 
@@ -20,6 +21,31 @@ def _jwt_secret() -> str:
     return os.getenv("JWT_SECRET", "meet-asr-offline-secret-change-me")
 
 
+def _is_production_env() -> bool:
+    env = (
+        os.getenv("ASR_ENV")
+        or os.getenv("APP_ENV")
+        or os.getenv("ENV")
+        or ""
+    ).strip().lower()
+    return env in {"prod", "production"}
+
+
+def _jwt_issuer() -> str:
+    return (os.getenv("JWT_ISSUER", "meet-asr") or "meet-asr").strip()
+
+
+def _jwt_audience() -> str:
+    return (os.getenv("JWT_AUDIENCE", "meet-asr-api") or "meet-asr-api").strip()
+
+
+def _validate_jwt_config() -> None:
+    secret = _jwt_secret().strip()
+    weak_default = "meet-asr-offline-secret-change-me"
+    if _is_production_env() and (not secret or secret == weak_default):
+        raise RuntimeError("JWT_SECRET must be set to a strong value in production")
+
+
 def token_ttl_seconds() -> int:
     try:
         return max(300, int(os.getenv("JWT_EXPIRES_SECONDS", "86400")))
@@ -28,11 +54,15 @@ def token_ttl_seconds() -> int:
 
 
 def create_access_token(email: str, user_id: str, full_name: str) -> str:
+    _validate_jwt_config()
     now = int(time.time())
     payload = {
         "sub": email,
         "uid": user_id,
         "name": full_name,
+        "iss": _jwt_issuer(),
+        "aud": _jwt_audience(),
+        "jti": str(uuid.uuid4()),
         "iat": now,
         "exp": now + token_ttl_seconds(),
     }
@@ -46,6 +76,7 @@ def create_access_token(email: str, user_id: str, full_name: str) -> str:
 
 def decode_access_token(token: str) -> Optional[Dict[str, str]]:
     try:
+        _validate_jwt_config()
         parts = token.split(".")
         if len(parts) != 3:
             return None
@@ -57,6 +88,10 @@ def decode_access_token(token: str) -> Optional[Dict[str, str]]:
             return None
 
         payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+        if str(payload.get("iss", "")) != _jwt_issuer():
+            return None
+        if str(payload.get("aud", "")) != _jwt_audience():
+            return None
         exp = int(payload.get("exp", 0))
         if exp <= int(time.time()):
             return None
