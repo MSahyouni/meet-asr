@@ -5,6 +5,7 @@ import json
 import os
 import time
 import uuid
+from functools import lru_cache
 from typing import Dict, Optional
 
 
@@ -154,5 +155,10 @@ def is_admin_email(email: Optional[str]) -> bool:
     raw = os.getenv("ADMIN_EMAILS", "").strip()
     if not raw:
         return False
-    admin_emails = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    admin_emails = _parse_admin_emails(raw)
     return email.lower() in admin_emails
+
+
+@lru_cache(maxsize=16)
+def _parse_admin_emails(raw: str) -> set[str]:
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}

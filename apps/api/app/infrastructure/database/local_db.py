@@ -54,6 +54,11 @@ def init_db() -> None:
         )
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_email ON activities(user_email)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_timestamp ON activities(timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_user_time ON activities(user_email, timestamp DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_user_type ON activities(user_email, activity_type)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_type_time ON activities(activity_type, timestamp)")
         connection.commit()
 
 
@@ -261,6 +266,8 @@ def count_activities_by_type_for_user(user_email: str, activity_type: str) -> in
 
 
 def get_usage_by_date(user_email: str, days: int = 30) -> List[Dict[str, Any]]:
+    window_days = max(1, int(days))
+    since_expr = f"-{window_days} days"
     with _conn() as connection:
         rows = connection.execute(
             """
@@ -271,12 +278,13 @@ def get_usage_by_date(user_email: str, days: int = 30) -> List[Dict[str, Any]]:
                 SUM(CASE WHEN activity_type = 'nlp' THEN 1 ELSE 0 END) AS nlp_calls,
                 COUNT(*) AS total_calls
             FROM activities
-            WHERE user_email = ?
+                        WHERE user_email = ?
+                            AND timestamp >= datetime('now', ?)
             GROUP BY day
             ORDER BY day DESC
             LIMIT ?
             """,
-            (user_email, days),
+                        (user_email, since_expr, window_days),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -287,7 +295,8 @@ def count_active_users_today() -> int:
             """
             SELECT COUNT(DISTINCT user_email) AS cnt
             FROM activities
-            WHERE substr(timestamp, 1, 10) = date('now')
+            WHERE timestamp >= datetime(date('now'))
+              AND timestamp < datetime(date('now', '+1 day'))
             """
         ).fetchone()
         return int(row["cnt"] if row else 0)
@@ -299,7 +308,8 @@ def count_new_users_this_month() -> int:
             """
             SELECT COUNT(*) AS cnt
             FROM users
-            WHERE substr(created_at, 1, 7) = strftime('%Y-%m', 'now')
+            WHERE created_at >= strftime('%Y-%m-01T00:00:00', 'now')
+              AND created_at < strftime('%Y-%m-01T00:00:00', 'now', '+1 month')
             """
         ).fetchone()
         return int(row["cnt"] if row else 0)
