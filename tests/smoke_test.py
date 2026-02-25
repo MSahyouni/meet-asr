@@ -10,6 +10,6 @@ def test_imports():
         importlib.import_module(mod)
 
 def test_api_health_route_import():
-    # مجرد تحقق أن api.py قابل للاستيراد
-    import api
-    assert hasattr(api, "app")
+    # check that the FastAPI application can be imported from the new location
+    from apps.api import api as api_mod
+    assert hasattr(api_mod, "app")

@@ -28,6 +28,8 @@
       <button class="tab active" data-tab="asr">استماع وتحويل</button>
       <button class="tab" data-tab="tts">تحويل النص إلى صوت</button>
       <button class="tab" data-tab="speakers">بصمات الصوت والمتحدثون</button>
+      <button class="tab" data-tab="account">الحساب</button>
+      <button class="tab" data-tab="dashboard">لوحة التحكم</button>
     </nav>
 
     <div id="asr-panel" class="panel active">
@@ -52,10 +54,10 @@
           </div>
           <details class="accordion">
             <summary>خيارات النموذج</summary>
-            <label>نموذج Whisper <select id="model"><option value="light">light</option><option value="heavy">heavy</option></select></label>
+            <!-- نموذج Whisper ثابت على heavy -->
             <label>وضع الحساسية <select id="whisperMode"><option value="normal">normal</option><option value="whisper">whisper</option></select></label>
-            <label>تحسين الصوت <select id="enhance"><option value="off">بدون</option><option value="light">خفيف</option><option value="full">كامل</option></select></label>
-            <label>مستوى التحسين <select id="enhanceLevel"><option value="medium">medium</option><option value="light">light</option><option value="strong">strong</option><option value="aggressive">aggressive</option></select></label>
+            <label>تحسين الصوت <select id=\"enhance\"><option value=\"off\">بدون</option><option value=\"light\">خفيف</option><option value=\"full\" selected>كامل</option></select></label>
+            <label>مستوى التحسين <select id=\"enhanceLevel\"><option value=\"light\">light</option><option value=\"medium\">medium</option><option value=\"strong\" selected>strong</option><option value=\"aggressive\">aggressive</option></select></label>
             <label>تمييز المتكلمين <input type="checkbox" id="diarize" checked></label>
             <label>تقدير عدد المتكلمين تلقائياً <input type="checkbox" id="autoK" checked></label>
             <label>عدد المتكلمين <select id="maxSpeakers"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
@@ -164,6 +166,79 @@
             <audio id="ttsAudio" controls class="audio-player"></audio>
           </div>
           <div id="ttsDl" class="links"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="account-panel" class="panel">
+      <div class="grid">
+        <div class="col-input">
+          <h3>الدخول والتسجيل</h3>
+          <div class="zone">
+            <label>البريد الإلكتروني</label>
+            <input type="email" id="authEmail" class="input" placeholder="name@example.com">
+          </div>
+          <div class="zone">
+            <label>كلمة المرور</label>
+            <input type="password" id="authPassword" class="input" placeholder="••••••••">
+          </div>
+          <div class="zone">
+            <label>الاسم الكامل (للتسجيل)</label>
+            <input type="text" id="authFullName" class="input" placeholder="الاسم الكامل">
+          </div>
+          <div class="btn-row">
+            <button id="btnRegister" class="btn btn-secondary">تسجيل</button>
+            <button id="btnLogin" class="btn btn-primary">دخول</button>
+            <button id="btnLogout" class="btn btn-secondary">خروج</button>
+          </div>
+          <div id="authStatus" class="zone hint"></div>
+        </div>
+
+        <div class="col-output">
+          <h3>الملف الشخصي</h3>
+          <div class="zone">
+            <label>البريد الحالي</label>
+            <input type="text" id="profileEmail" class="input" readonly>
+          </div>
+          <div class="zone">
+            <label>الاسم الكامل</label>
+            <input type="text" id="profileFullName" class="input" placeholder="الاسم الكامل">
+          </div>
+          <div class="zone">
+            <label>نبذة</label>
+            <textarea id="profileBio" rows="4" placeholder="نبذة قصيرة..."></textarea>
+          </div>
+          <div class="zone">
+            <label>رابط الصورة</label>
+            <input type="text" id="profileAvatar" class="input" placeholder="https://...">
+          </div>
+          <div class="btn-row">
+            <button id="btnLoadProfile" class="btn btn-secondary">تحميل الملف</button>
+            <button id="btnSaveProfile" class="btn btn-primary">حفظ التعديل</button>
+          </div>
+          <div id="profileStatus" class="zone hint"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="dashboard-panel" class="panel">
+      <div class="grid">
+        <div class="col-input">
+          <h3>لوحة التحكم</h3>
+          <div class="zone">
+            <label>البريد الحالي</label>
+            <input type="text" id="dashEmail" class="input" readonly>
+          </div>
+          <div class="btn-row">
+            <button id="btnRefreshDashboard" class="btn btn-primary">تحديث الإحصائيات</button>
+          </div>
+          <div id="dashStatus" class="zone hint"></div>
+        </div>
+        <div class="col-output">
+          <h3>ملخص سريع</h3>
+          <pre id="dashSummary" class="segments-text"></pre>
+          <h3>نظرة عامة</h3>
+          <pre id="dashOverview" class="segments-text"></pre>
         </div>
       </div>
     </div>

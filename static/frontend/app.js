@@ -39,6 +39,47 @@
     return h;
   }
 
+  var session = {
+    email: localStorage.getItem("meetasr_email") || "",
+    token: localStorage.getItem("meetasr_token") || "",
+  };
+
+  function setSession(email, token) {
+    session.email = email || "";
+    session.token = token || "";
+    if (session.email) localStorage.setItem("meetasr_email", session.email);
+    else localStorage.removeItem("meetasr_email");
+    if (session.token) localStorage.setItem("meetasr_token", session.token);
+    else localStorage.removeItem("meetasr_token");
+    var profileEmail = getId("profileEmail");
+    var dashEmail = getId("dashEmail");
+    if (profileEmail) profileEmail.value = session.email;
+    if (dashEmail) dashEmail.value = session.email;
+  }
+
+  function setText(id, text) {
+    var el = getId(id);
+    if (el) el.textContent = text || "";
+  }
+
+  function jsonRequest(url, method, body, timeoutSec) {
+    var headers = getHeaders();
+    headers["Content-Type"] = "application/json";
+    return fetchWithTimeout(url, {
+      method: method,
+      headers: headers,
+      body: body ? JSON.stringify(body) : undefined,
+    }, timeoutSec || (getId("timeout") ? getId("timeout").value : 300))
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          if (!r.ok) {
+            throw new Error(data.detail || data.error || r.statusText);
+          }
+          return data;
+        });
+      });
+  }
+
   function fetchWithTimeout(url, opts, timeoutMs) {
     var t = Math.max(60000, parseInt(timeoutMs || 900, 10) * 1000);
     var ctrl = new AbortController();
@@ -73,7 +114,7 @@
       getId("outText").value = "يرجى اختيار ملف أو تسجيل صوت.";
       return;
     }
-    fd.append("model_name", getId("model").value || "light");
+    fd.append("model_name", "heavy");
     fd.append("whisper_mode", getId("whisperMode") ? getId("whisperMode").value : "normal");
     fd.append("enhance", (getId("enhance") && getId("enhance").value !== "off") ? "true" : "false");
     fd.append("enhance_mode", getId("enhance").value || "off");
@@ -136,7 +177,7 @@
     }
     var fd = new FormData();
     for (var i = 0; i < filesIn.files.length; i++) fd.append("files", filesIn.files[i]);
-    fd.append("model_name", getId("model").value || "light");
+    fd.append("model_name", "heavy");
     fd.append("whisper_mode", getId("whisperMode") ? getId("whisperMode").value : "normal");
     fd.append("enhance", (getId("enhance") && getId("enhance").value !== "off") ? "true" : "false");
     fd.append("enhance_mode", getId("enhance").value || "off");
@@ -491,4 +532,179 @@
       }
     })
     .catch(function () {});
+
+  // ——— الحساب (تسجيل/دخول/خروج) ———
+  var btnRegister = getId("btnRegister");
+  var btnLogin = getId("btnLogin");
+  var btnLogout = getId("btnLogout");
+
+  if (btnRegister) {
+    btnRegister.addEventListener("click", function () {
+      var email = (getId("authEmail") && getId("authEmail").value || "").trim();
+      var password = (getId("authPassword") && getId("authPassword").value || "").trim();
+      var fullName = (getId("authFullName") && getId("authFullName").value || "").trim();
+      if (!email || !password || !fullName) {
+        setText("authStatus", "الرجاء إدخال البريد وكلمة المرور والاسم الكامل.");
+        return;
+      }
+      setText("authStatus", "جاري إنشاء الحساب...");
+      jsonRequest("/auth/register", "POST", {
+        email: email,
+        password: password,
+        full_name: fullName,
+      }).then(function () {
+        setText("authStatus", "تم إنشاء الحساب بنجاح. يمكنك تسجيل الدخول الآن.");
+      }).catch(function (e) {
+        setText("authStatus", "خطأ: " + (e.message || String(e)));
+      });
+    });
+  }
+
+  if (btnLogin) {
+    btnLogin.addEventListener("click", function () {
+      var email = (getId("authEmail") && getId("authEmail").value || "").trim();
+      var password = (getId("authPassword") && getId("authPassword").value || "").trim();
+      if (!email || !password) {
+        setText("authStatus", "الرجاء إدخال البريد وكلمة المرور.");
+        return;
+      }
+      setText("authStatus", "جاري تسجيل الدخول...");
+      jsonRequest("/auth/login", "POST", {
+        email: email,
+        password: password,
+      }).then(function (data) {
+        var userEmail = (data.user && data.user.email) || email;
+        setSession(userEmail, data.access_token || "");
+        setText("authStatus", "تم تسجيل الدخول بنجاح.");
+        if (getId("authFullName") && data.user && data.user.full_name) {
+          getId("authFullName").value = data.user.full_name;
+        }
+      }).catch(function (e) {
+        setText("authStatus", "خطأ: " + (e.message || String(e)));
+      });
+    });
+  }
+
+  if (btnLogout) {
+    btnLogout.addEventListener("click", function () {
+      if (!session.email) {
+        setText("authStatus", "لا يوجد مستخدم مسجل دخول.");
+        return;
+      }
+      fetchWithTimeout("/auth/logout?email=" + encodeURIComponent(session.email), {
+        method: "POST",
+        headers: getHeaders(),
+      }, getId("timeout") ? getId("timeout").value : 300)
+        .then(function () {
+          setSession("", "");
+          setText("authStatus", "تم تسجيل الخروج.");
+          setText("profileStatus", "");
+          setText("dashStatus", "");
+        })
+        .catch(function (e) {
+          setText("authStatus", "خطأ: " + (e.message || String(e)));
+        });
+    });
+  }
+
+  // ——— الملف الشخصي ———
+  var btnLoadProfile = getId("btnLoadProfile");
+  var btnSaveProfile = getId("btnSaveProfile");
+
+  function loadProfile() {
+    if (!session.email) {
+      setText("profileStatus", "الرجاء تسجيل الدخول أولاً.");
+      return;
+    }
+    setText("profileStatus", "جاري تحميل الملف...");
+    fetchWithTimeout("/users/profile/" + encodeURIComponent(session.email), {
+      method: "GET",
+      headers: getHeaders(),
+    }, getId("timeout") ? getId("timeout").value : 300)
+      .then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) throw new Error(data.detail || r.statusText);
+          return data;
+        });
+      })
+      .then(function (data) {
+        if (getId("profileFullName")) getId("profileFullName").value = data.full_name || "";
+        if (getId("profileBio")) getId("profileBio").value = data.bio || "";
+        if (getId("profileAvatar")) getId("profileAvatar").value = data.avatar_url || "";
+        setText("profileStatus", "تم تحميل الملف الشخصي.");
+      })
+      .catch(function (e) {
+        setText("profileStatus", "خطأ: " + (e.message || String(e)));
+      });
+  }
+
+  if (btnLoadProfile) {
+    btnLoadProfile.addEventListener("click", loadProfile);
+  }
+
+  if (btnSaveProfile) {
+    btnSaveProfile.addEventListener("click", function () {
+      if (!session.email) {
+        setText("profileStatus", "الرجاء تسجيل الدخول أولاً.");
+        return;
+      }
+      setText("profileStatus", "جاري حفظ التعديلات...");
+      jsonRequest("/users/profile/" + encodeURIComponent(session.email), "PUT", {
+        full_name: (getId("profileFullName") && getId("profileFullName").value || "").trim(),
+        bio: (getId("profileBio") && getId("profileBio").value || "").trim(),
+        avatar_url: (getId("profileAvatar") && getId("profileAvatar").value || "").trim(),
+      }).then(function () {
+        setText("profileStatus", "تم حفظ الملف الشخصي.");
+      }).catch(function (e) {
+        setText("profileStatus", "خطأ: " + (e.message || String(e)));
+      });
+    });
+  }
+
+  // ——— لوحة التحكم ———
+  var btnRefreshDashboard = getId("btnRefreshDashboard");
+
+  function refreshDashboard() {
+    if (!session.email) {
+      setText("dashStatus", "الرجاء تسجيل الدخول أولاً.");
+      return;
+    }
+    setText("dashStatus", "جاري تحديث الإحصائيات...");
+    var timeout = getId("timeout") ? getId("timeout").value : 300;
+    Promise.all([
+      fetchWithTimeout("/dashboard/summary/" + encodeURIComponent(session.email), { method: "GET", headers: getHeaders() }, timeout)
+        .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || r.statusText); return d; }); }),
+      fetchWithTimeout("/dashboard/overview", { method: "GET", headers: getHeaders() }, timeout)
+        .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || r.statusText); return d; }); })
+    ]).then(function (res) {
+      var summary = res[0], overview = res[1];
+      var summaryText = [
+        "المستخدم: " + (summary.user_email || "-"),
+        "وظائف ASR: " + ((summary.jobs && summary.jobs.asr) || 0),
+        "وظائف TTS: " + ((summary.jobs && summary.jobs.tts) || 0),
+        "وظائف NLP: " + ((summary.jobs && summary.jobs.nlp) || 0),
+        "المكالمات هذا الشهر: " + (summary.api_calls_this_month || 0),
+        "حد المكالمات: " + (summary.api_calls_limit == null ? "غير محدود" : summary.api_calls_limit),
+        "حالة النظام: " + (summary.system_health || "-"),
+      ].join("\n");
+      var overviewText = [
+        "إجمالي المستخدمين: " + (overview.total_users || 0),
+        "النشطون اليوم: " + (overview.active_users_today || 0),
+        "الجدد هذا الشهر: " + (overview.new_users_this_month || 0),
+        "معدل التسرب: " + (overview.churn_rate || 0),
+        "متوسط الجلسة (ث): " + (overview.avg_session_duration || 0),
+      ].join("\n");
+      if (getId("dashSummary")) getId("dashSummary").textContent = summaryText;
+      if (getId("dashOverview")) getId("dashOverview").textContent = overviewText;
+      setText("dashStatus", "تم تحديث لوحة التحكم.");
+    }).catch(function (e) {
+      setText("dashStatus", "خطأ: " + (e.message || String(e)));
+    });
+  }
+
+  if (btnRefreshDashboard) {
+    btnRefreshDashboard.addEventListener("click", refreshDashboard);
+  }
+
+  setSession(session.email, session.token);
 })();

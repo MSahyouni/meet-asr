@@ -1,0 +1,26 @@
+# ASR Models
+asr:
+  whisper:
+    model_id: "Systran/faster-whisper"
+    size: "large-v3"
+    device: "auto"
+
+# TTS Engines
+tts:
+  kokoro:
+    model_id: "kokoro"
+    voices:
+      - "af_heart"
+      - "af_sky"
+       
+  mms:
+    model_id: "facebook/mms-tts-ara"
+    
+# NLP Models
+nlp:
+  summarizer: 
+    model_id: "csebuetnlp/mT5_multilingual_XLSum"
+    mode: "lite"
+    
+  embeddings:
+    model_id: "intfloat/multilingual-e5-base"

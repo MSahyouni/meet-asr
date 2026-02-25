@@ -66,21 +66,31 @@ Web UI
 
 🗂️ بنية المشروع
 
-**نقاط الدخول:** `api.py` (خادم API + واجهة ويب) · `config.py`
-
-**الحزم:** `asr/` (تفريغ صوت) · `nlp/` (تلخيص، NER، RAG) · `routers/` (مسارات API) · `static/frontend/` (واجهة HTML/JS)
-
-تفاصيل الهيكل والتبعيات: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
+المشروع مُنظَّم طبقاً للقالب الرسمي:
 
 ```
-docker/            — Dockerfile.api, docker-compose, docker-compose.prod
-.github/workflows/ — docker-test.yml, docker-publish.yml, python-ci.yml
-scripts/           — إعداد RAG، اختبارات TTS
-tools/             — تحميل وفهرسة ArabicText
-tests/             — smoke_test، test_api_units، test_tts_integration
-static/frontend/   — واجهة HTML/JS
-flutter_app/       — تطبيق Flutter (عميل اختياري)
+meet-asr/
+├── apps/
+│   ├── web/              # واجهة Flutter (اختيارية/مستقلة)
+│   └── api/              # خادم FastAPI
+├── static/
+│   └── frontend/         # الواجهة الافتراضية المدمجة مع API (تعمل على /)
+├── docker/               # Dockerfile.api
+├── scripts/              # سكربتات مساعدة
+├── docs/                 # وثائق المشروع
+├── docker-compose.yml    # تعريف البنية التحتية (Development)
+└── docker-compose.prod.yml # تعريف البنية التحتية (Production)
 ```
+
+الإصدارات الحالية تستخدم:
+- `apps/api/` يحتوي على كود FastAPI (ملفات `api.py` و `app/…`).
+- `static/frontend/` هي الواجهة الافتراضية المرتبطة مباشرة مع API.
+- `apps/web/` يحتوي تطبيق Flutter ويمكن تشغيله بشكل مستقل إذا رغبت.
+
+**المواقع الرسمية الحالية:**
+- بيئة Python الافتراضية: `.venv/` في جذر المشروع.
+- بيانات التشغيل والنماذج والمخرجات: `data/` في جذر المشروع (وليس داخل `apps/api/`).
+
 
 
 ---
@@ -125,12 +135,18 @@ sudo apt-get install -y ffmpeg
 
 2) إنشاء بيئة Python
 
+**الموقع المعياري (Canonical):**  
+المشروع يَستخدِم `.venv/` في جذر المشروع (مُضبَط في `.vscode/settings.json` عند استخدام VS Code). 
+إن وُجِدَ `venv/` قديم، تجاهَله (مُخفِي في إعدادات المحرر والبحث).
+
+```bash
 python -m venv .venv
-source .venv/bin/activate   (Linux / Mac)
-.venv\Scripts\activate     (Windows)
+source .venv/bin/activate   # Linux / Mac
+.venv\Scripts\activate     # Windows
+```
 
 pip install -U pip
-pip install -r requirements.txt
+pip install -r apps/api/requirements.txt
 
 TTS عربي: ar_mms (أوفلاين مع transformers، مع خيار seed لتغيير الإيقاع). لأربعة أصوات إضافية: pip install git+https://github.com/nipponjo/tts_arabic.git ثم استخدم ar_1, ar_2, ar_3, ar_4.
 
@@ -142,20 +158,51 @@ TTS عربي: ar_mms (أوفلاين مع transformers، مع خيار seed لت
 انسخ القالب وعدّل القيم:
 
 ```bash
-cp .env.example .env
+cp apps/api/.env.example apps/api/.env
 ```
 
+أو على Windows (PowerShell):
+
+```powershell
+Copy-Item apps/api/.env.example apps/api/.env
+```
+
+**ملاحظة مهمة:** النماذج المحملة مسبقاً في `data/models/` ستُستخدم تلقائياً. 
+- `HF_HOME` تُضبط تلقائياً على `data/models/` بحيث لا تُحمّل النماذج من الإنترنت
+- `SENTENCE_TRANSFORMERS_HOME` تُضبط على `data/models/`
+- إذا أضفت نموذجاً جديداً، ضعه مباشرة في `data/models/{model-name}/`
+
 المتغيرات الأساسية في `.env`:
-- `HF_TOKEN` — مفتاح Hugging Face (للنماذج الخاصة)
-- `WHISPER_MODEL` — light | medium | large-v3
+- `HF_TOKEN` — مفتاح Hugging Face (للنماذج الخاصة فقط)
+- `WHISPER_MODEL` — heavy (large-v3) - افتراضي وثابت
 - `ASR_DATA_DIR` — مجلد البيانات (افتراضي: `data`)
+- `WHISPER_DEVICE` — cuda أو cpu
 
 
 ---
 
 ▶️ تشغيل API
 
+**ملاحظة:** جميع وحدات التطبيق (`app/config.py`, `app/tts_core.py`، إلخ) موجودة تحت `apps/api/app/`،  
+لذا يجب ضمان أن مسار الاستيراد صحيح عند بدء الخادم.
+
+**الطريقة الموصى بها:**
+
+```powershell
+# من جذر المشروع
+cd apps/api
 uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+**بدائل:**
+
+```powershell
+# من جذر المشروع مباشرة (بدون cd)
+uvicorn api:app --app-dir apps/api --host 0.0.0.0 --port 8000
+```
+
+بعد التشغيل الناجح ستظهر رسالة `INFO: Application startup complete.`
+
 
 تحقق من الصحة: http://127.0.0.1:8000/health
 
@@ -177,11 +224,11 @@ uvicorn api:app --host 0.0.0.0 --port 8000
 
 Development
 
-docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker-compose.yml up -d --build
 
 Production + GPU
 
-docker compose -f docker/docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 
 
 ---
@@ -197,6 +244,14 @@ docker compose -f docker/docker-compose.prod.yml up -d --build
 - **POST /enroll-speaker** — تسجيل بصمة متحدث
 - **GET /enrolled-speakers** — قائمة المتحدثين المسجلين
 - **GET /download?path=...** — تحميل ملف من مجلد المخرجات
+
+**ميزات المنصة الجديدة:**
+- **POST /auth/register** — تسجيل مستخدم
+- **POST /auth/login** — تسجيل دخول
+- **GET /users/profile/{email}** — الملف الشخصي
+- **PUT /users/profile/{email}** — تحديث الملف الشخصي
+- **GET /dashboard/summary/{user_email}** — ملخص لوحة التحكم
+- **GET /dashboard/overview** — نظرة عامة للإحصائيات
 
 ---
 
@@ -247,6 +302,47 @@ curl -X POST http://localhost:8000/tts \
 الأرشفة الصوتية
 
 أدوات البحث والتحليل
+
+
+
+---
+
+📚 نماذج محلية وتخزين مؤقت (Local Model Caching)
+
+يدعم المشروع استخدام النماذج المحملة محليا في `data/models/` لتجنب اعادة التحميل من الانترنت.
+
+**النماذج المدعومة محليا:**
+
+```
+data/models/
+├── whisper-large-v3/              # نموذج Whisper الكبير
+├── whisper-large-v3/              # نموذج Whisper الثقيل (اختياري)
+├── multilingual-e5-base/          # نموذج التضمين متعدد اللغات
+├── spkrec_ecapa_cpu/              # نموذج تمييز المتحدثين
+├── summarizers/
+│   └── mT5_XLSum/                 # نموذج التلخيص
+└── ultra/                         # نماذج اضافية
+```
+
+**كيفية التشغيل:**
+
+1. تُحمّل النماذج تلقائيا من `data/models/` ان وجدت
+2. لا تُعاد تحميل من الانترنت (يستثنى NER و Punct اذا لم تُوجد محليا)
+3. متغيرات البيئة تُضبط تلقائيا:
+  - `HF_HOME=data/models` (مكان تخزين النماذج)
+  - `SENTENCE_TRANSFORMERS_HOME=data/models`
+
+**لتجنب تحميل النماذج من الانترنت:**
+
+```python
+# في config.py، كل نموذج يفحص المسار المحلي اولا:
+_prefer_local(path: pathlib.Path, fallback_hf_id: str) -> str
+```
+
+اذا كنت تريد اضافة نموذج جديد:
+1. حمّله من Hugging Face يدويا او عبر `huggingface_hub.snapshot_download()`
+2. ضعه في `data/models/{model-name}/`
+3. عدّل المسار في `config.py` اذا لزم الامر
 
 
 
