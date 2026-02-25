@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [nabra, main, master]
 
+concurrency:
+  group: security-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   secure-endpoints:
     runs-on: ubuntu-latest
