@@ -11,7 +11,7 @@ from .schema import (
     UserTokenResponse, ChangePasswordRequest
 )
 from .service import AuthService
-from .security import resolve_payload_from_authorization
+from .security import resolve_payload_from_authorization, is_admin_email
 from app.infrastructure.database import local_db
 from app.features.dashboard.service import DashboardService
 from app.features.dashboard.schema import ActivityType
@@ -29,6 +29,23 @@ def _resolve_email(email: Optional[str], authorization: Optional[str]) -> str:
             detail="Invalid or expired token",
         )
     return str(payload["sub"])
+
+
+def _resolve_logout_target(email: Optional[str], authorization: Optional[str]) -> tuple[str, str]:
+    payload = resolve_payload_from_authorization(authorization)
+    if not payload or not payload.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    caller_email = str(payload["sub"])
+    target_email = (email or "").strip() or caller_email
+    if target_email.lower() != caller_email.lower() and not is_admin_email(caller_email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: self or admin access required",
+        )
+    return caller_email, target_email
 
 
 @router.post("/register", response_model=dict)
@@ -149,3 +166,32 @@ async def logout(email: Optional[str] = None, authorization: Optional[str] = Hea
     except Exception:
         pass
     return {"status": "success", "message": "Logged out"}
+
+
+@router.post("/logout-all")
+async def logout_all(email: Optional[str] = None, authorization: Optional[str] = Header(None)):
+    """
+    Invalidate all active sessions for a user.
+
+    - Without `email`: invalidates caller sessions
+    - With `email`: allowed for self, or admin targeting another user
+    """
+    caller_email, target_email = _resolve_logout_target(email, authorization)
+    try:
+        local_db.rotate_token_version(target_email)
+    except Exception:
+        pass
+    try:
+        DashboardService.record_activity(
+            target_email,
+            ActivityType.LOGOUT,
+            "all sessions invalidated",
+            {"event": "logout_all", "actor": caller_email},
+        )
+    except Exception:
+        pass
+    return {
+        "status": "success",
+        "message": "All sessions invalidated",
+        "email": target_email,
+    }
