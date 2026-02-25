@@ -5,6 +5,7 @@ starlette==0.48.0
 python-multipart==0.0.20
 aiofiles==24.1.0
 requests==2.32.3
+httpx==0.27.2
 
 # ==== ASR (Whisper) ====
 faster-whisper==1.2.0
