@@ -54,8 +54,10 @@
     else localStorage.removeItem("meetasr_token");
     var profileEmail = getId("profileEmail");
     var dashEmail = getId("dashEmail");
+    var ttsUserEmail = getId("ttsUserEmail");
     if (profileEmail) profileEmail.value = session.email;
     if (dashEmail) dashEmail.value = session.email;
+    if (ttsUserEmail && session.email) ttsUserEmail.value = session.email;
   }
 
   function setText(id, text) {
@@ -115,11 +117,14 @@
       getId("outText").value = "يرجى اختيار ملف أو تسجيل صوت.";
       return;
     }
+    var whisperModeEl = getId("whisperMode");
+    var enhanceEl = getId("enhance");
+    var enhanceLevelEl = getId("enhanceLevel");
     fd.append("model_name", "heavy");
-    fd.append("whisper_mode", getId("whisperMode") ? getId("whisperMode").value : "normal");
-    fd.append("enhance", (getId("enhance") && getId("enhance").value !== "off") ? "true" : "false");
-    fd.append("enhance_mode", getId("enhance").value || "off");
-    fd.append("enhance_level", getId("enhanceLevel") ? getId("enhanceLevel").value : "medium");
+    fd.append("whisper_mode", whisperModeEl ? whisperModeEl.value : "normal");
+    fd.append("enhance", (enhanceEl && enhanceEl.value !== "off") ? "true" : "false");
+    fd.append("enhance_mode", enhanceEl ? (enhanceEl.value || "off") : "off");
+    fd.append("enhance_level", enhanceLevelEl ? enhanceLevelEl.value : "medium");
     fd.append("diarize", getId("diarize").checked ? "true" : "false");
     fd.append("auto_k", getId("autoK").checked ? "true" : "false");
     fd.append("max_speakers", getId("maxSpeakers") ? getId("maxSpeakers").value : "2");
@@ -179,11 +184,14 @@
     }
     var fd = new FormData();
     for (var i = 0; i < filesIn.files.length; i++) fd.append("files", filesIn.files[i]);
+    var whisperModeEl = getId("whisperMode");
+    var enhanceEl = getId("enhance");
+    var enhanceLevelEl = getId("enhanceLevel");
     fd.append("model_name", "heavy");
-    fd.append("whisper_mode", getId("whisperMode") ? getId("whisperMode").value : "normal");
-    fd.append("enhance", (getId("enhance") && getId("enhance").value !== "off") ? "true" : "false");
-    fd.append("enhance_mode", getId("enhance").value || "off");
-    fd.append("enhance_level", getId("enhanceLevel") ? getId("enhanceLevel").value : "medium");
+    fd.append("whisper_mode", whisperModeEl ? whisperModeEl.value : "normal");
+    fd.append("enhance", (enhanceEl && enhanceEl.value !== "off") ? "true" : "false");
+    fd.append("enhance_mode", enhanceEl ? (enhanceEl.value || "off") : "off");
+    fd.append("enhance_level", enhanceLevelEl ? enhanceLevelEl.value : "medium");
     fd.append("diarize", getId("diarize").checked ? "true" : "false");
     fd.append("auto_k", getId("autoK").checked ? "true" : "false");
     fd.append("max_speakers", getId("maxSpeakers") ? getId("maxSpeakers").value : "2");
@@ -307,6 +315,161 @@
   }
 
   // TTS
+  function getTtsUserEmail() {
+    var ttsUserEmail = (getId("ttsUserEmail") && getId("ttsUserEmail").value || "").trim();
+    return ttsUserEmail || session.email || "";
+  }
+
+  function refreshTtsVoiceSamples() {
+    var statusEl = getId("ttsVoiceStatus");
+    var listEl = getId("ttsVoiceFilesList");
+    var userEmail = getTtsUserEmail();
+    if (!listEl) return;
+    listEl.innerHTML = '<option value="">— اختر ملف بصمة —</option>';
+    if (!userEmail) {
+      if (statusEl) statusEl.textContent = "أدخل بريد المستخدم أو سجّل الدخول أولاً.";
+      return;
+    }
+    var timeout = getId("timeout") ? getId("timeout").value : 300;
+    fetchWithTimeout("/tts/voice-samples?user_email=" + encodeURIComponent(userEmail), {
+      method: "GET",
+      headers: getHeaders(),
+    }, timeout)
+      .then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) throw new Error(data.detail || data.error || r.statusText);
+          return data;
+        });
+      })
+      .then(function (data) {
+        var files = (data && data.files) ? data.files : [];
+        files.forEach(function (item) {
+          var name = (item && item.name) ? item.name : "";
+          if (!name) return;
+          var opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name + (item.size_bytes ? " (" + item.size_bytes + " bytes)" : "");
+          listEl.appendChild(opt);
+        });
+        if (statusEl) statusEl.textContent = "تم تحميل " + files.length + " بصمة.";
+      })
+      .catch(function (e) {
+        if (statusEl) statusEl.textContent = "خطأ: " + (e.message || String(e));
+      });
+  }
+
+  var btnTtsRefreshVoices = getId("btnTtsRefreshVoices");
+  if (btnTtsRefreshVoices) {
+    btnTtsRefreshVoices.addEventListener("click", refreshTtsVoiceSamples);
+  }
+
+  var btnTtsUploadVoices = getId("btnTtsUploadVoices");
+  if (btnTtsUploadVoices) {
+    btnTtsUploadVoices.addEventListener("click", function () {
+      var statusEl = getId("ttsVoiceStatus");
+      var filesEl = getId("ttsVoiceFiles");
+      var userEmail = getTtsUserEmail();
+      if (!userEmail) {
+        if (statusEl) statusEl.textContent = "أدخل بريد المستخدم أولاً.";
+        return;
+      }
+      if (!filesEl || !filesEl.files || filesEl.files.length === 0) {
+        if (statusEl) statusEl.textContent = "اختر ملفًا واحدًا أو أكثر.";
+        return;
+      }
+      var fd = new FormData();
+      fd.append("user_email", userEmail);
+      for (var i = 0; i < filesEl.files.length; i++) fd.append("files", filesEl.files[i]);
+      if (statusEl) statusEl.textContent = "جاري رفع البصمات...";
+      var timeout = getId("timeout") ? getId("timeout").value : 300;
+      fetchWithTimeout("/tts/voice-samples", {
+        method: "POST",
+        headers: getHeaders(),
+        body: fd,
+      }, timeout)
+        .then(function (r) {
+          return r.json().then(function (data) {
+            if (!r.ok) throw new Error(data.detail || data.error || r.statusText);
+            return data;
+          });
+        })
+        .then(function (data) {
+          if (statusEl) statusEl.textContent = "تم رفع " + (data.count || 0) + " ملف.";
+          refreshTtsVoiceSamples();
+          filesEl.value = "";
+        })
+        .catch(function (e) {
+          if (statusEl) statusEl.textContent = "خطأ: " + (e.message || String(e));
+        });
+    });
+  }
+
+  var btnTtsDeleteVoice = getId("btnTtsDeleteVoice");
+  if (btnTtsDeleteVoice) {
+    btnTtsDeleteVoice.addEventListener("click", function () {
+      var statusEl = getId("ttsVoiceStatus");
+      var userEmail = getTtsUserEmail();
+      var selectedFile = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
+      if (!userEmail || !selectedFile) {
+        if (statusEl) statusEl.textContent = "حدّد البريد وملف البصمة أولاً.";
+        return;
+      }
+      var timeout = getId("timeout") ? getId("timeout").value : 300;
+      var url = "/tts/voice-sample?user_email=" + encodeURIComponent(userEmail) + "&file=" + encodeURIComponent(selectedFile);
+      fetchWithTimeout(url, {
+        method: "DELETE",
+        headers: getHeaders(),
+      }, timeout)
+        .then(function (r) {
+          return r.json().then(function (data) {
+            if (!r.ok) throw new Error(data.detail || data.error || r.statusText);
+            return data;
+          });
+        })
+        .then(function () {
+          if (statusEl) statusEl.textContent = "تم حذف البصمة: " + selectedFile;
+          refreshTtsVoiceSamples();
+          var voiceAudio = getId("ttsVoiceAudio");
+          if (voiceAudio) voiceAudio.removeAttribute("src");
+        })
+        .catch(function (e) {
+          if (statusEl) statusEl.textContent = "خطأ: " + (e.message || String(e));
+        });
+    });
+  }
+
+  var ttsVoiceFilesList = getId("ttsVoiceFilesList");
+  if (ttsVoiceFilesList) {
+    ttsVoiceFilesList.addEventListener("change", function () {
+      var userEmail = getTtsUserEmail();
+      var file = (ttsVoiceFilesList.value || "").trim();
+      var audioEl = getId("ttsVoiceAudio");
+      if (!userEmail || !file || !audioEl) {
+        if (audioEl) audioEl.removeAttribute("src");
+        return;
+      }
+      var url = "/tts/voice-file?user_email=" + encodeURIComponent(userEmail) + "&file=" + encodeURIComponent(file);
+      fetch(url, { headers: getHeaders() })
+        .then(function (r) {
+          if (!r.ok) throw new Error(r.statusText);
+          return r.blob();
+        })
+        .then(function (blob) {
+          var prev = audioEl.src;
+          if (prev && prev.indexOf("blob:") === 0) URL.revokeObjectURL(prev);
+          audioEl.src = URL.createObjectURL(blob);
+        })
+        .catch(function () {
+          audioEl.removeAttribute("src");
+        });
+    });
+  }
+
+  var ttsUserEmailEl = getId("ttsUserEmail");
+  if (ttsUserEmailEl) {
+    ttsUserEmailEl.addEventListener("change", refreshTtsVoiceSamples);
+  }
+
   getId("btnTts").addEventListener("click", function () {
     var textEl = getId("ttsText"), text = (textEl && textEl.value || "").trim();
     if (!text) {
@@ -316,20 +479,26 @@
       return;
     }
     var voice = getId("ttsVoice").value || "ar_mms";
+    var engine = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
     var speed = parseFloat(getId("ttsSpeed").value) || 1;
     var seedEl = getId("ttsSeed");
     var seed = seedEl && seedEl.value ? parseInt(seedEl.value, 10) : undefined;
+    var speakerRef = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
+    var userEmailForTts = getTtsUserEmail();
     if (isNaN(seed)) seed = undefined;
 
     var errEl = getId("ttsError");
     errEl.classList.add("hidden");
     var audioEl = getId("ttsAudio");
     var dlEl = getId("ttsDl");
+    var metaEl = getId("ttsMeta");
     dlEl.innerHTML = "";
+    if (metaEl) metaEl.textContent = "";
 
-    var body = { text: text, voice: voice, speed: speed };
-    if (session.email) body.user_email = session.email;
+    var body = { text: text, voice: voice, speed: speed, engine: engine || "auto" };
+    if (userEmailForTts) body.user_email = userEmailForTts;
     if (seed != null) body.seed = seed;
+    if (speakerRef) body.speaker_ref = speakerRef;
 
     var h = getHeaders();
     h["Content-Type"] = "application/json";
@@ -344,6 +513,17 @@
         if (data.download_url) {
           audioEl.src = data.download_url;
           dlEl.innerHTML = '<a href="' + data.download_url + '" download="tts.wav">تحميل الصوت</a>';
+        }
+        if (metaEl) {
+          var meta = [
+            "engine_used: " + (data.engine_used || "-"),
+            "requested_voice: " + (data.requested_voice || "-"),
+            "resolved_voice: " + (data.resolved_voice || "-"),
+            "speaker_ref: " + (data.speaker_ref || "-"),
+            "fallback_used: " + (data.fallback_used ? "yes" : "no"),
+            "arabic_detected: " + (data.arabic_detected ? "yes" : "no")
+          ].join("\n");
+          metaEl.textContent = meta;
         }
       })
       .catch(function (e) {
@@ -537,6 +717,8 @@
       }
     })
     .catch(function () {});
+
+  refreshTtsVoiceSamples();
 
   // ——— الحساب (تسجيل/دخول/خروج) ———
   var btnRegister = getId("btnRegister");

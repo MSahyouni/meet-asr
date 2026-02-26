@@ -31,7 +31,57 @@ def cleanup_punctuation(text: str) -> str:
     # Ensure space after common punctuation for natural pauses
     t = re.sub(r"([،.!؟])([^\s])", r"\1 \2", text)
     t = re.sub(r"([،.!؟])\s+", r"\1 ", t)
+    t = re.sub(r"\s+", " ", t)
     return t.strip()
+
+
+def split_text_for_tts(text: str, max_chunk_chars: int = 220) -> list[str]:
+    """
+    Split long text into sentence-like chunks for better TTS quality.
+    Designed for Arabic punctuation with conservative fallback.
+    """
+    if not text:
+        return []
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return []
+    if len(text) <= max_chunk_chars:
+        return [text]
+
+    pieces = re.split(r"(?<=[\.\!\?؟،؛:])\s+", text)
+    chunks: list[str] = []
+    current = ""
+
+    for piece in pieces:
+        sentence = piece.strip()
+        if not sentence:
+            continue
+        if len(sentence) > max_chunk_chars:
+            words = sentence.split(" ")
+            part = ""
+            for word in words:
+                candidate = f"{part} {word}".strip()
+                if len(candidate) <= max_chunk_chars:
+                    part = candidate
+                    continue
+                if part:
+                    chunks.append(part)
+                part = word
+            if part:
+                chunks.append(part)
+            continue
+
+        candidate = f"{current} {sentence}".strip()
+        if not current or len(candidate) <= max_chunk_chars:
+            current = candidate
+        else:
+            chunks.append(current)
+            current = sentence
+
+    if current:
+        chunks.append(current)
+
+    return chunks
 
 
 def _num_to_ar_0_99(n: int) -> str:

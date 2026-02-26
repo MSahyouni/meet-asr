@@ -111,6 +111,11 @@ class Settings:
 
         # --- TTS (Kokoro) — optional diacritization before TTS (P2: CAMeL / Farasa) ---
         self.TTS_DIACRITIZE = os.getenv("TTS_DIACRITIZE", "0").lower() in ("1", "true", "yes")
+        # --- TTS Kokoro model path (fixed folder under data/models, like whisper-large-v3) ---
+        self.TTS_KOKORO_DIR = (self.MODELS_DIR / "kokoro-82m").resolve()
+        self.TTS_KOKORO_DIR.mkdir(parents=True, exist_ok=True)
+        # Allow first-time download into TTS_KOKORO_DIR when model missing
+        self.TTS_KOKORO_ALLOW_DOWNLOAD = os.getenv("TTS_KOKORO_ALLOW_DOWNLOAD", "1").lower() in ("1", "true", "yes")
         # --- TTS Arabic preprocessing (normalize, numbers-to-words, punctuation) ---
         self.TTS_PREPROCESS_ENABLED = os.getenv("TTS_PREPROCESS_ENABLED", "1").lower() in ("1", "true", "yes")
         # --- TTS MMS for Arabic — use facebook/mms-tts-ara when text is Arabic (offline, transformers) ---

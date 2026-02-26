@@ -14,6 +14,18 @@ _MMS_MODEL = None
 _MMS_TOKENIZER = None
 
 
+def _apply_speed_numpy(waveform, speed: float):
+    import numpy as np
+    speed_f = float(speed or 1.0)
+    speed_f = max(0.5, min(2.0, speed_f))
+    if abs(speed_f - 1.0) < 1e-6 or waveform.size == 0:
+        return waveform
+    src_idx = np.arange(waveform.shape[0], dtype=np.float32)
+    target_len = max(1, int(round(waveform.shape[0] / speed_f)))
+    dst_idx = np.linspace(0.0, waveform.shape[0] - 1, num=target_len, dtype=np.float32)
+    return np.interp(dst_idx, src_idx, waveform).astype(np.float32)
+
+
 def _get_mms():
     """Lazy-load MMS-TTS model (singleton)."""
     global _MMS_MODEL, _MMS_TOKENIZER
@@ -65,18 +77,51 @@ def synthesize_mms(
         p.parent.mkdir(parents=True, exist_ok=True)
         out_path = str(p.resolve())
 
+    from app.tts.text_utils import split_text_for_tts
+
     import torch
     if seed is not None:
         torch.manual_seed(int(seed))
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-    if torch.cuda.is_available():
-        inputs = {k: v.cuda() for k, v in inputs.items()}
 
-    with torch.no_grad():
-        output = model(**inputs).waveform
+    chunks = split_text_for_tts(text, max_chunk_chars=220)
+    if not chunks:
+        chunks = [text]
 
-    # output: [1, samples], float32 in [-1,1]
-    waveform = output.squeeze().cpu().numpy()
+    audio_parts = []
+    silence_cache = {}
+    for chunk in chunks:
+        inputs = tokenizer(chunk, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        if torch.cuda.is_available():
+            inputs = {k: v.cuda() for k, v in inputs.items()}
+
+        with torch.no_grad():
+            output = model(**inputs).waveform
+
+        wav = output.squeeze().cpu().numpy()
+        audio_parts.append(wav)
+
+        end_mark = chunk[-1] if chunk else ""
+        pause_sec = 0.08 if end_mark in ("،", ";", "؛", ":") else 0.14
+        silence_cache.setdefault(pause_sec, (pause_sec, None))
+        audio_parts.append(("__silence__", pause_sec))
+
+    sample_rate = model.config.sampling_rate
+    import numpy as np
+    final_parts = []
+    for part in audio_parts:
+        if isinstance(part, tuple) and part and part[0] == "__silence__":
+            pause_sec = float(part[1])
+            num_samples = max(1, int(sample_rate * pause_sec))
+            final_parts.append(np.zeros(num_samples, dtype=np.float32))
+            continue
+        final_parts.append(np.asarray(part, dtype=np.float32))
+
+    if final_parts:
+        waveform = np.concatenate(final_parts, axis=0)
+    else:
+        waveform = np.zeros(1, dtype=np.float32)
+
+    waveform = _apply_speed_numpy(waveform, speed)
     sample_rate = model.config.sampling_rate
 
     import soundfile as sf
@@ -88,4 +133,5 @@ def synthesize_mms(
         "sample_rate": sample_rate,
         "duration_sec": round(duration_sec, 3),
         "voice": "ar_mms",
+        "chunks_count": len(chunks),
     }

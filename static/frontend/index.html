@@ -56,8 +56,8 @@
             <summary>خيارات النموذج</summary>
             <!-- نموذج Whisper ثابت على heavy -->
             <label>وضع الحساسية <select id="whisperMode"><option value="normal">normal</option><option value="whisper">whisper</option></select></label>
-            <label>تحسين الصوت <select id=\"enhance\"><option value=\"off\">بدون</option><option value=\"light\">خفيف</option><option value=\"full\" selected>كامل</option></select></label>
-            <label>مستوى التحسين <select id=\"enhanceLevel\"><option value=\"light\">light</option><option value=\"medium\">medium</option><option value=\"strong\" selected>strong</option><option value=\"aggressive\">aggressive</option></select></label>
+            <label>تحسين الصوت <select id="enhance"><option value="off">بدون</option><option value="light">خفيف</option><option value="full" selected>كامل</option></select></label>
+            <label>مستوى التحسين <select id="enhanceLevel"><option value="light">light</option><option value="medium">medium</option><option value="strong" selected>strong</option><option value="aggressive">aggressive</option></select></label>
             <label>تمييز المتكلمين <input type="checkbox" id="diarize" checked></label>
             <label>تقدير عدد المتكلمين تلقائياً <input type="checkbox" id="autoK" checked></label>
             <label>عدد المتكلمين <select id="maxSpeakers"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
@@ -134,6 +134,19 @@
         <div class="col-input">
           <h3>المدخلات</h3>
           <div class="zone">
+            <label>المحرك</label>
+            <select id="ttsEngine" class="input">
+              <option value="auto">auto (تلقائي)</option>
+              <option value="xtts">xtts (بصمة صوت المستخدم)</option>
+              <option value="mms">mms (عربي)</option>
+              <option value="kokoro">kokoro (عام)</option>
+            </select>
+          </div>
+          <div class="zone">
+            <label>البريد المستخدم للبصمة (XTTS)</label>
+            <input type="email" id="ttsUserEmail" class="input" placeholder="user@example.com">
+          </div>
+          <div class="zone">
             <label>النص</label>
             <textarea id="ttsText" rows="10" placeholder="أدخل النص هنا..."></textarea>
           </div>
@@ -156,7 +169,18 @@
             <label>Seed للإيقاع (ar_mms فقط)</label>
             <input type="number" id="ttsSeed" placeholder="رقم عشوائي لتنويع الإيقاع" class="input">
           </div>
+          <div class="zone">
+            <label>بصمات المستخدم (speaker_ref لـ XTTS)</label>
+            <div class="btn-row">
+              <button id="btnTtsRefreshVoices" class="btn btn-secondary" type="button">🔄 تحديث البصمات</button>
+              <button id="btnTtsDeleteVoice" class="btn btn-secondary" type="button">🗑️ حذف المحدد</button>
+            </div>
+            <select id="ttsVoiceFilesList" class="input"><option value="">— اختر ملف بصمة —</option></select>
+            <input type="file" id="ttsVoiceFiles" multiple accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aac,.opus" class="input">
+            <button id="btnTtsUploadVoices" class="btn btn-secondary" type="button">⬆️ رفع بصمات</button>
+          </div>
           <button id="btnTts" class="btn btn-primary">🔊 توليد الصوت</button>
+          <div id="ttsVoiceStatus" class="zone hint"></div>
         </div>
         <div class="col-output">
           <h3>المخرجات</h3>
@@ -165,6 +189,11 @@
             <label>تشغيل الصوت</label>
             <audio id="ttsAudio" controls class="audio-player"></audio>
           </div>
+          <div class="zone">
+            <label>تشغيل بصمة المستخدم المحددة</label>
+            <audio id="ttsVoiceAudio" controls class="audio-player"></audio>
+          </div>
+          <pre id="ttsMeta" class="segments-text"></pre>
           <div id="ttsDl" class="links"></div>
         </div>
       </div>

@@ -2,6 +2,7 @@
 import logging
 import os
 import pathlib
+from functools import lru_cache
 from typing import Optional
 
 from app.config import settings
@@ -14,13 +15,18 @@ logger = logging.getLogger("tts_core")
 # TODO: when TTS_DIACRITIZE=1, plug in CAMeL Tools or Farasa for Arabic diacritization
 #       to improve pronunciation. Set TTS_DIACRITIZE=1 in env when backend is ready.
 # ---------------------------------------------------------------------------
+@lru_cache(maxsize=512)
+def _preprocess_text_cached(text: str) -> str:
+    from app.tts.text_utils import preprocess_for_tts
+    return preprocess_for_tts(text, normalize=True, numbers=True, punctuation=True)
+
+
 def _preprocess_text(text: str) -> str:
     """Apply Arabic preprocessing (normalize, numbers, punctuation) before TTS."""
     if not getattr(settings, "TTS_PREPROCESS_ENABLED", True):
         return text
     try:
-        from app.tts.text_utils import preprocess_for_tts
-        return preprocess_for_tts(text, normalize=True, numbers=True, punctuation=True)
+        return _preprocess_text_cached(text)
     except ImportError:
         return text
 
@@ -43,10 +49,12 @@ TTS_SPEED_MAX = 2.0
 TTS_SAMPLE_RATE = 24000
 TTS_DEFAULT_VOICE = "af_heart"
 TTS_DEFAULT_LANG = "a"  # American English; Kokoro supports a,b,e,f,h,i,j,p,z
+TTS_ALLOWED_ENGINES = {"auto", "kokoro", "mms", "xtts"}
 
 # Static list of known Kokoro-82M voices (from hexgrad/Kokoro-82M VOICES.md).
 # ar_mms: Arabic MMS-TTS (single voice, optional seed). ar_1..ar_4: tts_arabic (4 voices, optional pkg).
 TTS_KNOWN_VOICES = [
+    "xtts",
     "ar_mms", "ar_1", "ar_2", "ar_3", "ar_4",  # Arabic
     "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
     "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
@@ -65,6 +73,12 @@ _PIPELINE = None
 KOKORO_REPO_ID = "hexgrad/Kokoro-82M"
 
 
+def _kokoro_model_ready(model_dir: pathlib.Path) -> bool:
+    config_file = model_dir / "config.json"
+    has_weights = any(model_dir.glob("*.pth"))
+    return config_file.exists() and has_weights
+
+
 def _get_pipeline():
     """Load Kokoro pipeline once; reuse on subsequent calls."""
     global _PIPELINE
@@ -73,12 +87,29 @@ def _get_pipeline():
     # Ensure HF cache is project-local (config already sets HF_HOME; kokoro uses hf_hub_download)
     os.environ.setdefault("HF_HOME", str(settings.HF_DIR))
     os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(settings.HF_DIR / "hub"))
+    kokoro_dir = pathlib.Path(settings.TTS_KOKORO_DIR).resolve()
+    kokoro_dir.mkdir(parents=True, exist_ok=True)
     try:
+        if not _kokoro_model_ready(kokoro_dir):
+            if not getattr(settings, "TTS_KOKORO_ALLOW_DOWNLOAD", True):
+                raise RuntimeError(
+                    f"Kokoro model not found in {kokoro_dir}. "
+                    "Place model files there or set TTS_KOKORO_ALLOW_DOWNLOAD=1 for first-time fetch."
+                )
+            from huggingface_hub import snapshot_download
+
+            logger.info("Downloading Kokoro model into fixed folder: %s", kokoro_dir)
+            snapshot_download(
+                repo_id=KOKORO_REPO_ID,
+                local_dir=str(kokoro_dir),
+                local_dir_use_symlinks=False,
+            )
+
         from kokoro import KPipeline
-        logger.info("Loading Kokoro TTS model (first run may download ~327MB to %s)...", settings.HF_DIR)
+        logger.info("Loading Kokoro TTS model from %s", kokoro_dir)
         _PIPELINE = KPipeline(
             lang_code=os.getenv("TTS_LANG_CODE", TTS_DEFAULT_LANG),
-            repo_id=KOKORO_REPO_ID,
+            repo_id=str(kokoro_dir),
         )
         logger.info("Kokoro TTS pipeline loaded (singleton).")
         return _PIPELINE
@@ -121,6 +152,9 @@ class TTSCore:
         speed: float = 1.0,
         out_path: str = "",
         seed: Optional[int] = None,
+        engine: str = "auto",
+        user_email: Optional[str] = None,
+        speaker_ref: Optional[str] = None,
     ) -> dict:
         """
         Convert text to speech and save as WAV.
@@ -148,24 +182,90 @@ class TTSCore:
                 f"Speed must be between {TTS_SPEED_MIN} and {TTS_SPEED_MAX}, got {speed_f}."
             )
         speed = speed_f
+        engine_requested = (engine or "auto").strip().lower()
+        if engine_requested not in TTS_ALLOWED_ENGINES:
+            raise ValueError(f"engine must be one of: {', '.join(sorted(TTS_ALLOWED_ENGINES))}")
 
         # Route Arabic: ar_1..ar_4 -> tts_arabic (4 voices), else ar_mms -> MMS-TTS (with optional seed)
-        if _use_mms_for_arabic(text):
+        requested_voice = (voice or "").strip() or TTS_DEFAULT_VOICE
+        arabic_detected = _use_mms_for_arabic(text)
+
+        if engine_requested == "xtts":
             text = _preprocess_text(text)
             text = maybe_diacritize(text)
-            voice_ar = (voice or "").strip().lower()
+            try:
+                from app.tts.tts_xtts import synthesize_xtts
+                result = synthesize_xtts(
+                    text=text,
+                    voice=requested_voice,
+                    speed=speed,
+                    out_path=out_path,
+                    user_email=user_email,
+                    speaker_ref=speaker_ref,
+                )
+                result.update({
+                    "engine_used": "xtts",
+                    "arabic_detected": arabic_detected,
+                    "fallback_used": False,
+                    "requested_voice": requested_voice,
+                    "resolved_voice": result.get("voice", "xtts"),
+                    "speaker_ref": result.get("speaker_ref"),
+                })
+                return result
+            except (ImportError, RuntimeError, FileNotFoundError, ValueError) as e:
+                raise ValueError(f"XTTS failed: {e}") from e
+
+        if engine_requested == "mms":
+            text = _preprocess_text(text)
+            text = maybe_diacritize(text)
+            try:
+                from app.tts.tts_mms import synthesize_mms
+                result = synthesize_mms(text=text, voice="ar_mms", speed=speed, out_path=out_path, seed=seed)
+                result.update({
+                    "engine_used": "mms_arabic",
+                    "arabic_detected": arabic_detected,
+                    "fallback_used": False,
+                    "requested_voice": requested_voice,
+                    "resolved_voice": "ar_mms",
+                })
+                return result
+            except (ImportError, RuntimeError) as e:
+                raise ValueError(f"MMS failed: {e}") from e
+
+        if engine_requested == "kokoro":
+            arabic_detected = False
+
+        if arabic_detected:
+            text = _preprocess_text(text)
+            text = maybe_diacritize(text)
+            voice_ar = requested_voice.strip().lower()
+            fallback_used = False
             if voice_ar in ("ar_1", "ar_2", "ar_3", "ar_4"):
                 try:
                     from app.tts.tts_arabic_multi import synthesize_arabic_multi
-                    return synthesize_arabic_multi(text=text, voice=voice_ar, speed=speed, out_path=out_path)
+                    result = synthesize_arabic_multi(text=text, voice=voice_ar, speed=speed, out_path=out_path)
+                    result.update({
+                        "engine_used": "arabic_multi",
+                        "arabic_detected": True,
+                        "fallback_used": False,
+                        "requested_voice": requested_voice,
+                        "resolved_voice": result.get("voice", voice_ar),
+                    })
+                    return result
                 except (ImportError, RuntimeError) as e:
                     logger.warning("tts_arabic multi-voice failed: %s", e)
-                    raise ValueError(
-                        "أصوات ar_1–ar_4 تتطلب تثبيت tts_arabic: pip install git+https://github.com/nipponjo/tts_arabic.git"
-                    ) from e
+                    fallback_used = True
             try:
                 from app.tts.tts_mms import synthesize_mms
-                return synthesize_mms(text=text, voice="ar_mms", speed=speed, out_path=out_path, seed=seed)
+                result = synthesize_mms(text=text, voice="ar_mms", speed=speed, out_path=out_path, seed=seed)
+                result.update({
+                    "engine_used": "mms_arabic",
+                    "arabic_detected": True,
+                    "fallback_used": fallback_used,
+                    "requested_voice": requested_voice,
+                    "resolved_voice": "ar_mms",
+                })
+                return result
             except (ImportError, RuntimeError) as e:
                 logger.warning("MMS-TTS failed: %s", e)
                 raise ValueError(
@@ -175,7 +275,7 @@ class TTSCore:
         # Kokoro path (English / non-Arabic)
         text = _preprocess_text(text)
         text = maybe_diacritize(text)
-        voice = (voice or "").strip() or TTS_DEFAULT_VOICE
+        voice = requested_voice
         if voice.lower() == "default":
             voice = TTS_DEFAULT_VOICE
         # If user passed Arabic voice for non-Arabic text, use default Kokoro voice
@@ -227,6 +327,11 @@ class TTSCore:
             "sample_rate": TTS_SAMPLE_RATE,
             "duration_sec": round(duration_sec, 3),
             "voice": voice,
+            "engine_used": "kokoro",
+            "arabic_detected": False,
+            "fallback_used": False,
+            "requested_voice": requested_voice,
+            "resolved_voice": voice,
         }
 
 

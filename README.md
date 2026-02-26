@@ -151,6 +151,8 @@ pip install -U pip
 pip install -r apps/api/requirements.txt
 
 TTS عربي: ar_mms (أوفلاين مع transformers، مع خيار seed لتغيير الإيقاع). لأربعة أصوات إضافية: pip install git+https://github.com/nipponjo/tts_arabic.git ثم استخدم ar_1, ar_2, ar_3, ar_4.
+النصوص العربية الطويلة تُقسَّم تلقائياً إلى مقاطع قبل التخليق (بدون قص صامت)، مع fallback تلقائي من ar_1..ar_4 إلى ar_mms عند عدم توفر مكتبة multi-voice.
+استنساخ الصوت (XTTS): لكل مستخدم مجلد مستقل داخل `data/voices/<user_email_sanitized>/`، ويتم اختيار العينة عبر `speaker_ref`.
 
 
 ---
@@ -254,7 +256,12 @@ docker compose -f docker-compose.prod.yml up -d --build
 - **POST /transcribe** — تفريغ ملف صوتي واحد
 - **POST /transcribe-batch** — تفريغ عدة ملفات
 - **GET /tts/voices** — قائمة أصوات TTS المتاحة
-- **POST /tts** — تحويل نص إلى كلام (حد 5000 حرف، 12 طلب/دقيقة)
+- **POST /tts/voice-sample** — رفع بصمة صوت للمستخدم الحالي (مجلد مستقل لكل مستخدم)
+- **POST /tts/voice-samples** — رفع عدة بصمات صوت دفعة واحدة (مثل enroll-speaker)
+- **GET /tts/voice-samples** — عرض كل بصمات المستخدم
+- **GET /tts/voice-file** — تشغيل/تحميل بصمة واحدة للمراجعة
+- **DELETE /tts/voice-sample** — حذف بصمة واحدة من مجلد المستخدم
+- **POST /tts** — تحويل نص إلى كلام (حد 5000 حرف، 12 طلب/دقيقة) مع `engine_used` و`fallback_used` في الاستجابة
 - **POST /summarize** — تلخيص نص
 - **POST /enroll-speaker** — تسجيل بصمة متحدث
 - **GET /enrolled-speakers** — قائمة المتحدثين المسجلين
@@ -308,7 +315,45 @@ curl -X POST http://localhost:8000/tts \
   -H "Content-Type: application/json" \
   -d '{"text":"مرحبا هذا اختبار","voice":"af_heart","speed":1.0,"format":"wav","user_email":"user@example.com"}'
 ```
-الاستجابة تتضمن `download_url` لتحميل ملف WAV.
+الاستجابة تتضمن `download_url` لتحميل ملف WAV، بالإضافة إلى حقول تشخيص مفيدة: `engine_used`, `arabic_detected`, `fallback_used`, `requested_voice`, `resolved_voice`.
+
+**رفع بصمة صوت (XTTS) لكل مستخدم:**
+```bash
+curl -X POST http://localhost:8000/tts/voice-sample \
+  -F "user_email=user@example.com" \
+  -F "file=@./my_voice.wav"
+```
+
+**رفع عدة بصمات بنفس أسلوب إضافة المتحدثين:**
+```bash
+curl -X POST http://localhost:8000/tts/voice-samples \
+  -F "user_email=user@example.com" \
+  -F "files=@./voice1.wav" \
+  -F "files=@./voice2.wav"
+```
+
+**عرض بصمات المستخدم:**
+```bash
+curl "http://localhost:8000/tts/voice-samples?user_email=user@example.com"
+```
+
+**تشغيل ملف بصمة محدد:**
+```bash
+curl "http://localhost:8000/tts/voice-file?user_email=user@example.com&file=voice1.wav"
+```
+
+**حذف بصمة:**
+```bash
+curl -X DELETE "http://localhost:8000/tts/voice-sample?user_email=user@example.com&file=voice2.wav"
+```
+
+**استخدام بصمة المستخدم في التخليق (XTTS):**
+```bash
+curl -X POST http://localhost:8000/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text":"اهلا وسهلا","engine":"xtts","user_email":"user@example.com","speaker_ref":"my_voice.wav","speed":1.0}'
+```
+إذا لم ترسل `speaker_ref` سيتم استخدام `voice.wav` تلقائيًا من مجلد المستخدم.
 
 ملاحظة: `user_email` اختياري، لكنه يفعّل تسجيل النشاطات في لوحة التحكم (ASR/TTS/NLP).
 
