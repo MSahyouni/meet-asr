@@ -180,7 +180,7 @@ from app.features.health import router as health_router
 from app.features.asr import router as asr_router
 from app.features.nlp import router as nlp_router
 from app.features.tts import router as tts_router
-from app.features.auth import router as auth_router
+from app.features.auth.router import router as auth_router
 from app.features.users import router as users_router
 from app.features.billing import router as billing_router
 from app.features.dashboard import router as dashboard_router

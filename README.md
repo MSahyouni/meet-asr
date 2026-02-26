@@ -247,6 +247,21 @@ Production + GPU
 
 docker compose -f docker-compose.prod.yml up -d --build
 
+اختصار مريح (PowerShell)
+
+`powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action up -Env dev`
+
+أوامر جاهزة:
+
+- `-Action up` تشغيل + بناء
+- `-Action down` إيقاف وحذف الخدمات
+- `-Action logs` متابعة لوج خدمة API
+- `-Action ps` عرض الحالة
+- `-Action restart` إعادة تشغيل API
+- `-Action pull` سحب الصور
+
+ولـ production استخدم: `-Env prod`
+
 
 ---
 

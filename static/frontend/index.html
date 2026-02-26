@@ -11,18 +11,21 @@
 </head>
 <body>
   <header class="header">
-    <img src="/static/assets/syria-emblem.png" alt="شعار الجمهورية العربية السورية" class="emblem">
-    <div class="logo-line-1">الجمهورية العربية السورية</div>
-    <div class="logo-line-2">وزارة الدفاع</div>
-    <div class="logo-line-3">نَبْرَة</div>
-    <p class="tagline">نظام تحويل الكلام إلى نص — استماع · تحويل · توليد صوت</p>
+    <div class="header-layout">
+      <div class="header-right">
+        <img src="/static/assets/syria-emblem.png" alt="شعار الجمهورية العربية السورية" class="emblem">
+        <div class="logo-line-1">الجمهورية العربية السورية</div>
+        <div class="logo-line-2">وزارة الدفاع</div>
+      </div>
+      <div class="header-center">
+        <div class="logo-line-3">نَبْرَة</div>
+        <p class="tagline">نظام تحويل الكلام إلى نص — استماع · تحويل · توليد صوت</p>
+      </div>
+      <div class="header-spacer" aria-hidden="true"></div>
+    </div>
   </header>
 
   <main class="main">
-    <section class="settings-bar">
-      <input type="password" id="apiKey" placeholder="مفتاح API (اختياري)" class="input">
-      <label>مهلة الاتصال (ثانية) <input type="number" id="timeout" value="900" min="60" max="1800" class="input input-sm" title="للتحويل الصوتي: 600–900 ثانية أو أكثر"></label>
-    </section>
 
     <nav class="tabs">
       <button class="tab active" data-tab="asr">استماع وتحويل</button>
@@ -271,6 +274,7 @@
         </div>
       </div>
     </div>
+    
   </main>
 
   <footer class="footer">الجمهورية العربية السورية · وزارة الدفاع · نَبْرَة</footer>
