@@ -3,7 +3,7 @@ dashboard / schema.py
 Dashboard domain schemas
 """
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from datetime import datetime
 from enum import Enum
 
@@ -28,8 +28,7 @@ class UserActivity(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     metadata: dict = Field(default_factory=dict)
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class SystemMetrics(BaseModel):

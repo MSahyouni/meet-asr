@@ -3,7 +3,7 @@ billing / schema.py
 Billing domain schemas
 """
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from datetime import datetime
 from enum import Enum
 
@@ -33,8 +33,7 @@ class BillingPlan(BaseModel):
     max_requests_per_month: int | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class Subscription(BaseModel):
@@ -48,8 +47,7 @@ class Subscription(BaseModel):
     auto_renew: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class Invoice(BaseModel):
@@ -64,8 +62,7 @@ class Invoice(BaseModel):
     status: str  # "paid", "pending", "failed"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class PaymentMethod(BaseModel):
@@ -77,8 +74,7 @@ class PaymentMethod(BaseModel):
     is_default: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class SubscribeRequest(BaseModel):
@@ -110,5 +106,4 @@ class SubscriptionResponse(BaseModel):
     end_date: datetime | None
     next_billing_date: datetime | None
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)

@@ -34,7 +34,8 @@ def test_decode_rejects_tampered_token(monkeypatch):
     monkeypatch.setenv("JWT_AUDIENCE", "meet-asr-api")
     token = security.create_access_token("user@example.com", "u1", "User One")
     head, body, sig = token.split(".")
-    tampered = f"{head}.{body}.{'A' + sig[1:]}"
+    replacement = "A" if sig[0] != "A" else "B"
+    tampered = f"{head}.{body}.{replacement + sig[1:]}"
 
     assert security.decode_access_token(tampered) is None
 
