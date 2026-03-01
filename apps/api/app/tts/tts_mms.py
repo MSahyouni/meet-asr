@@ -6,6 +6,7 @@ import pathlib
 from typing import Optional
 
 from app.config import settings
+from app.infrastructure.download_retry import run_with_download_retry
 
 logger = logging.getLogger("tts_mms")
 
@@ -37,8 +38,14 @@ def _get_mms():
         from transformers import VitsModel, AutoTokenizer
         import torch
         logger.info("Loading MMS-TTS Arabic (first run may download ~200MB)...")
-        _MMS_TOKENIZER = AutoTokenizer.from_pretrained(MMS_MODEL_ID)
-        _MMS_MODEL = VitsModel.from_pretrained(MMS_MODEL_ID)
+        _MMS_TOKENIZER = run_with_download_retry(
+            lambda: AutoTokenizer.from_pretrained(MMS_MODEL_ID),
+            "tts:mms-tokenizer",
+        )
+        _MMS_MODEL = run_with_download_retry(
+            lambda: VitsModel.from_pretrained(MMS_MODEL_ID),
+            "tts:mms-model",
+        )
         _MMS_MODEL.eval()
         if torch.cuda.is_available():
             _MMS_MODEL = _MMS_MODEL.cuda()

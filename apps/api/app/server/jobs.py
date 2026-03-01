@@ -3,7 +3,7 @@ import asyncio
 import json
 import pathlib
 import shutil
-from typing import Callable, Any, Optional
+from typing import Callable, Any, Optional, List
 
 from ..config import settings
 from .. import nlp_core
@@ -109,4 +109,68 @@ async def run_summary_job(
             encoding="utf-8",
         )
         JOBS[job_id] = {"status": "error", "result_path": None, "error": str(e)}
+
+
+async def run_transcribe_batch_job(
+    job_id: str,
+    file_paths: List[pathlib.Path],
+    kwargs: dict,
+    get_core: Callable[[], Any],
+) -> None:
+    sem = get_transcribe_semaphore()
+    async with sem:
+        core = get_core()
+        JOBS[job_id] = {"status": "running", "result_path": None, "error": None}
+        try:
+            result = await asyncio.to_thread(core.process_many, [str(p) for p in file_paths], **kwargs)
+            if not isinstance(result, dict):
+                raise RuntimeError("unexpected_result_type")
+
+            merged_text = result.get("text", "")
+            merged_path = result.get("txt_path")
+            merged_sum = result.get("summary", "") or ""
+            keywords = result.get("keywords", "") or ""
+            merged_sum_path = result.get("summary_path")
+
+            summary_mode = str(kwargs.get("summary_mode") or "off").lower()
+            if summary_mode != "off":
+                if not (merged_sum or "").strip():
+                    s_text, kw_csv = nlp_core.summarize(merged_text, mode=summary_mode)
+                    merged_sum, keywords = s_text, kw_csv
+                try:
+                    if (merged_sum or "").strip() and merged_path:
+                        sum_p = pathlib.Path(merged_path).with_suffix(".summary.txt")
+                        sum_p.write_text(
+                            merged_sum
+                            + (("\n\nالكلمات المفتاحية: " + (keywords or "")) if keywords else ""),
+                            encoding="utf-8",
+                        )
+                        merged_sum_path = str(sum_p)
+                except Exception:
+                    pass
+            else:
+                nlp_core.set_summary_source("off")
+
+            payload_result = dict(result)
+            payload_result["summary"] = merged_sum
+            payload_result["keywords"] = keywords
+            payload_result["summary_path"] = merged_sum_path
+
+            payload = job_payload("done", payload_result, None)
+            out = job_file(job_id)
+            out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            JOBS[job_id]["status"] = "done"
+            JOBS[job_id]["result_path"] = out.as_posix()
+        except Exception as e:
+            payload = job_payload("error", None, str(e))
+            out = job_file(job_id)
+            out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            JOBS[job_id]["status"] = "error"
+            JOBS[job_id]["error"] = str(e)
+        finally:
+            try:
+                for d in {p.parent for p in file_paths if p is not None}:
+                    shutil.rmtree(d, ignore_errors=True)
+            except Exception:
+                pass
 

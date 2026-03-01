@@ -5,32 +5,270 @@
   function qsa(s) { return document.querySelectorAll(s); }
   function getId(id) { return document.getElementById(id); }
 
+  var UI_STATE_KEY = "meetasr_ui_state_v1";
+  var uiSaveTimer = null;
+
+  function setActiveTab(tabName) {
+    if (!tabName) return;
+    qsa(".tab[data-tab]").forEach(function (x) { x.classList.remove("active"); });
+    qsa(".panel").forEach(function (p) { p.classList.remove("active"); });
+    var tabBtn = qs('.tab[data-tab="' + tabName + '"]');
+    if (tabBtn) tabBtn.classList.add("active");
+    var panel = getId(tabName + "-panel");
+    if (panel) panel.classList.add("active");
+  }
+
+  function setActiveSource(srcName) {
+    if (!srcName) return;
+    qsa(".src-btn").forEach(function (x) { x.classList.remove("active"); });
+    var srcBtn = qs('.src-btn[data-src="' + srcName + '"]');
+    if (srcBtn) srcBtn.classList.add("active");
+    var fileZone = getId("file-zone"), micZone = getId("mic-zone");
+    if (srcName === "file") {
+      if (fileZone) fileZone.classList.remove("hidden");
+      if (micZone) micZone.classList.add("hidden");
+    } else {
+      if (fileZone) fileZone.classList.add("hidden");
+      if (micZone) micZone.classList.remove("hidden");
+    }
+  }
+
+  function queueUIStateSave() {
+    if (uiSaveTimer) clearTimeout(uiSaveTimer);
+    uiSaveTimer = setTimeout(function () {
+      uiSaveTimer = null;
+      saveUIState();
+    }, 50);
+  }
+
+  function saveUIState() {
+    try {
+      var state = {
+        activeTab: (qs(".tab.active[data-tab]") && qs(".tab.active[data-tab]").dataset.tab) || "asr",
+        activeSource: (qs(".src-btn.active") && qs(".src-btn.active").dataset.src) || "file",
+        values: {},
+        checks: {},
+        texts: {},
+        html: {},
+        media: {},
+      };
+
+      [
+        "apiKey", "timeout", "whisperMode", "enhance", "enhanceLevel", "maxSpeakers", "enrollThreshold",
+        "deviceSel", "computeSel", "summaryMode", "ttsEngine", "ttsUserEmail", "ttsText", "ttsVoice",
+        "ttsSpeed", "ttsSeed", "ttsVoiceFilesList", "spkName", "spkList", "spkFilesList",
+        "authEmail", "authFullName", "profileFullName", "profileBio", "profileAvatar"
+      ].forEach(function (id) {
+        var el = getId(id);
+        if (el) state.values[id] = el.value;
+      });
+
+      ["diarize", "autoK"].forEach(function (id) {
+        var el = getId(id);
+        if (el) state.checks[id] = !!el.checked;
+      });
+
+      [
+        "micStatus", "outSegments", "enrollOut", "spkMicStatus", "ttsVoiceStatus", "ttsMeta", "authStatus",
+        "profileStatus", "dashStatus", "dashSummary", "dashOverview", "ttsError"
+      ].forEach(function (id) {
+        var el = getId(id);
+        if (el) state.texts[id] = el.textContent || "";
+      });
+
+      ["outText", "outSummary", "outKeywords"].forEach(function (id) {
+        var el = getId(id);
+        if (el) state.values[id] = (typeof el.value !== "undefined") ? el.value : (el.textContent || "");
+      });
+
+      ["dlLinks", "ttsDl"].forEach(function (id) {
+        var el = getId(id);
+        if (el) state.html[id] = el.innerHTML || "";
+      });
+
+      var ttsErrorEl = getId("ttsError");
+      if (ttsErrorEl) state.ttsErrorHidden = ttsErrorEl.classList.contains("hidden");
+
+      ["ttsAudio", "spkAudio", "ttsVoiceAudio"].forEach(function (id) {
+        var el = getId(id);
+        if (el && el.src && el.src.indexOf("blob:") !== 0) state.media[id] = el.src;
+      });
+
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify(state));
+    } catch (_) {}
+  }
+
+  function restoreUIState() {
+    var raw = localStorage.getItem(UI_STATE_KEY);
+    if (!raw) return;
+    try {
+      var state = JSON.parse(raw);
+      if (!state || typeof state !== "object") return;
+
+      if (state.activeTab) setActiveTab(state.activeTab);
+      if (state.activeSource) setActiveSource(state.activeSource);
+
+      var values = state.values || {};
+      Object.keys(values).forEach(function (id) {
+        var el = getId(id);
+        if (!el) return;
+        if (typeof el.value !== "undefined") el.value = values[id] == null ? "" : String(values[id]);
+      });
+
+      var checks = state.checks || {};
+      Object.keys(checks).forEach(function (id) {
+        var el = getId(id);
+        if (el) el.checked = !!checks[id];
+      });
+
+      var texts = state.texts || {};
+      Object.keys(texts).forEach(function (id) {
+        var el = getId(id);
+        if (el) el.textContent = texts[id] == null ? "" : String(texts[id]);
+      });
+
+      var html = state.html || {};
+      Object.keys(html).forEach(function (id) {
+        var el = getId(id);
+        if (el) el.innerHTML = html[id] == null ? "" : String(html[id]);
+      });
+
+      var ttsErrorEl = getId("ttsError");
+      if (ttsErrorEl && typeof state.ttsErrorHidden !== "undefined") {
+        if (state.ttsErrorHidden) ttsErrorEl.classList.add("hidden");
+        else ttsErrorEl.classList.remove("hidden");
+      }
+
+      var media = state.media || {};
+      Object.keys(media).forEach(function (id) {
+        var el = getId(id);
+        var src = media[id];
+        if (el && src) el.src = src;
+      });
+
+      var speedSliderEl = getId("ttsSpeed");
+      var speedValueEl = getId("speedValue");
+      if (speedSliderEl && speedValueEl) {
+        speedValueEl.textContent = parseFloat(speedSliderEl.value || "1").toFixed(1);
+      }
+    } catch (_) {}
+  }
+
   // تبويبات ASR / TTS
   qsa(".tab[data-tab]").forEach(function (t) {
     t.addEventListener("click", function () {
-      qsa(".tab[data-tab]").forEach(function (x) { x.classList.remove("active"); });
-      qsa(".panel").forEach(function (p) { p.classList.remove("active"); });
-      t.classList.add("active");
-      var panel = getId(t.dataset.tab + "-panel");
-      if (panel) panel.classList.add("active");
+      setActiveTab(t.dataset.tab);
+      queueUIStateSave();
     });
   });
 
   // مصدر الصوت: ملف / ميكروفون
   qsa(".src-btn").forEach(function (b) {
     b.addEventListener("click", function () {
-      qsa(".src-btn").forEach(function (x) { x.classList.remove("active"); });
-      b.classList.add("active");
-      var fileZone = getId("file-zone"), micZone = getId("mic-zone");
-      if (b.dataset.src === "file") {
-        if (fileZone) fileZone.classList.remove("hidden");
-        if (micZone) micZone.classList.add("hidden");
-      } else {
-        if (fileZone) fileZone.classList.add("hidden");
-        if (micZone) micZone.classList.remove("hidden");
-      }
+      setActiveSource(b.dataset.src || "file");
+      queueUIStateSave();
     });
   });
+
+  restoreUIState();
+
+  document.addEventListener("input", function (e) {
+    var t = e && e.target;
+    if (!t || !t.id || t.type === "file") return;
+    queueUIStateSave();
+  });
+
+  document.addEventListener("change", function (e) {
+    var t = e && e.target;
+    if (!t || !t.id || t.type === "file") return;
+    queueUIStateSave();
+  });
+
+  window.addEventListener("beforeunload", function () {
+    saveUIState();
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") saveUIState();
+  });
+
+  function updateSingleFileLabel() {
+    var fileInput = getId("fileIn");
+    var label = getId("fileInLabel");
+    var clearBtn = getId("btnClearFileIn");
+    if (!fileInput || !label) return;
+    if (fileInput.files && fileInput.files.length > 0) {
+      label.textContent = fileInput.files[0].name || "تم اختيار ملف صوتي";
+      label.classList.add("selected");
+      if (clearBtn) clearBtn.classList.remove("hidden");
+      return;
+    }
+    label.textContent = "اختر ملف صوتي واحد";
+    label.classList.remove("selected");
+    if (clearBtn) clearBtn.classList.add("hidden");
+  }
+
+  function updateMultiFilesStatus() {
+    var filesInput = getId("filesIn");
+    var label = getId("filesInLabel");
+    var status = getId("filesInStatus");
+    var clearBtn = getId("btnClearFilesIn");
+    if (!filesInput) return;
+    var count = filesInput.files ? filesInput.files.length : 0;
+    if (count > 0) {
+      var first = filesInput.files[0] ? (filesInput.files[0].name || "") : "";
+      if (label) {
+        label.textContent = count === 1 ? ("ملف مرفوع: " + first) : ("ملفات مرفوعة: " + count);
+      }
+      if (status) {
+        status.textContent = count === 1 ? first : ("أول ملف: " + first + " — العدد: " + count);
+        status.classList.remove("hidden");
+      }
+      filesInput.classList.add("selected-files");
+      if (clearBtn) clearBtn.classList.remove("hidden");
+      return;
+    }
+    if (label) label.textContent = "رفع عدة ملفات";
+    if (status) {
+      status.textContent = "";
+      status.classList.add("hidden");
+    }
+    filesInput.classList.remove("selected-files");
+    if (clearBtn) clearBtn.classList.add("hidden");
+  }
+
+  var fileInEl = getId("fileIn");
+  if (fileInEl) {
+    fileInEl.addEventListener("change", updateSingleFileLabel);
+    updateSingleFileLabel();
+  }
+
+  var btnClearFileIn = getId("btnClearFileIn");
+  if (btnClearFileIn && fileInEl) {
+    btnClearFileIn.addEventListener("click", function () {
+      fileInEl.value = "";
+      updateSingleFileLabel();
+      queueUIStateSave();
+    });
+  }
+
+  var filesInEl = getId("filesIn");
+  if (filesInEl) {
+    filesInEl.addEventListener("change", function () {
+      updateMultiFilesStatus();
+      queueUIStateSave();
+    });
+    updateMultiFilesStatus();
+  }
+
+  var btnClearFilesIn = getId("btnClearFilesIn");
+  if (btnClearFilesIn && filesInEl) {
+    btnClearFilesIn.addEventListener("click", function () {
+      filesInEl.value = "";
+      updateMultiFilesStatus();
+      queueUIStateSave();
+    });
+  }
 
   function getHeaders() {
     var h = { "Accept": "application/json" };
@@ -58,11 +296,13 @@
     if (profileEmail) profileEmail.value = session.email;
     if (dashEmail) dashEmail.value = session.email;
     if (ttsUserEmail && session.email) ttsUserEmail.value = session.email;
+    queueUIStateSave();
   }
 
   function setText(id, text) {
     var el = getId(id);
     if (el) el.textContent = text || "";
+    queueUIStateSave();
   }
 
   function jsonRequest(url, method, body, timeoutSec) {
@@ -83,8 +323,23 @@
       });
   }
 
+  function normalizeDigits(value) {
+    return String(value == null ? "" : value)
+      .replace(/[٠-٩]/g, function (d) { return String(d.charCodeAt(0) - 1632); })
+      .replace(/[۰-۹]/g, function (d) { return String(d.charCodeAt(0) - 1776); });
+  }
+
+  function resolveTimeoutSeconds(timeoutSec, fallbackSec) {
+    var raw = normalizeDigits(timeoutSec);
+    var parsed = parseInt(raw, 10);
+    if (!isFinite(parsed) || parsed <= 0) parsed = parseInt(fallbackSec, 10);
+    if (!isFinite(parsed) || parsed <= 0) parsed = 900;
+    return parsed;
+  }
+
   function fetchWithTimeout(url, opts, timeoutMs) {
-    var t = Math.max(60000, parseInt(timeoutMs || 900, 10) * 1000);
+    var sec = resolveTimeoutSeconds(timeoutMs, 900);
+    var t = Math.max(60000, sec * 1000);
     var ctrl = new AbortController();
     var id = setTimeout(function () { ctrl.abort(); }, t);
     opts = opts || {};
@@ -94,12 +349,233 @@
       return r;
     }, function (e) {
       clearTimeout(id);
+      if (e && e.name === "AbortError") {
+        throw new Error("انتهت مهلة الطلب. زِد قيمة timeout ثم أعد المحاولة.");
+      }
       throw e;
     });
   }
 
+  function setButtonBusy(btnOrId, busy, busyText) {
+    var btn = (typeof btnOrId === "string") ? getId(btnOrId) : btnOrId;
+    if (!btn) return;
+    if (busy) {
+      if (!btn.dataset.originalText) btn.dataset.originalText = btn.textContent;
+      if (busyText) btn.textContent = busyText;
+      btn.disabled = true;
+      btn.classList.add("loading");
+      return;
+    }
+    btn.disabled = false;
+    btn.classList.remove("loading");
+    if (btn.dataset.originalText) btn.textContent = btn.dataset.originalText;
+  }
+
+  function isAudioFileLike(file) {
+    if (!file) return false;
+    var type = String(file.type || "").toLowerCase();
+    if (type.indexOf("audio/") === 0) return true;
+    var n = String(file.name || "").toLowerCase();
+    return /\.(wav|mp3|m4a|mp4|webm|3gp|ogg|flac|aac|opus)$/i.test(n);
+  }
+
+  function validateAudioFilesList(fileList, minCount) {
+    var files = fileList || [];
+    if (!files.length || files.length < (minCount || 1)) return "يرجى اختيار ملف صوتي صالح.";
+    for (var i = 0; i < files.length; i++) {
+      if (!isAudioFileLike(files[i])) {
+        return "بعض الملفات ليست صوتية مدعومة.";
+      }
+    }
+    return "";
+  }
+
+  function setupDropZone(zoneId, inputId, onFilesSet) {
+    var zone = getId(zoneId);
+    var input = getId(inputId);
+    if (!zone || !input) return;
+
+    ["dragenter", "dragover"].forEach(function (evName) {
+      zone.addEventListener(evName, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.add("drag-over");
+      });
+    });
+
+    ["dragleave", "dragend", "drop"].forEach(function (evName) {
+      zone.addEventListener(evName, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.remove("drag-over");
+      });
+    });
+
+    zone.addEventListener("drop", function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      try {
+        input.files = e.dataTransfer.files;
+      } catch (_) {
+        return;
+      }
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      if (typeof onFilesSet === "function") onFilesSet();
+    });
+  }
+
+  setupDropZone("file-zone", "fileIn", function () {
+    updateSingleFileLabel();
+    queueUIStateSave();
+  });
+
+  setupDropZone("files-zone", "filesIn", function () {
+    updateMultiFilesStatus();
+    queueUIStateSave();
+  });
+
+  var PENDING_JOBS_KEY = "meetasr_pending_jobs_v1";
+  var pendingPollTimers = {};
+
+  function getPendingJobs() {
+    try {
+      var raw = localStorage.getItem(PENDING_JOBS_KEY);
+      var parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function setPendingJob(kind, info) {
+    var jobs = getPendingJobs();
+    if (info) jobs[kind] = info;
+    else delete jobs[kind];
+    localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(jobs));
+  }
+
+  function clearPendingJob(kind) {
+    if (pendingPollTimers[kind]) {
+      clearTimeout(pendingPollTimers[kind]);
+      delete pendingPollTimers[kind];
+    }
+    setPendingJob(kind, null);
+  }
+
+  function segText(segments) {
+    var segs = Array.isArray(segments) ? segments : [];
+    return segs.map(function (x) {
+      var spk = x && x.speaker !== undefined ? " [" + ((x.speaker || "?")) + "] " : " ";
+      var start = (x && typeof x.start === "number") ? x.start : 0;
+      return start.toFixed(1) + "s" + spk + ((x && x.text) || "");
+    }).join("\n");
+  }
+
+  function buildDownloadUrls(data) {
+    var urls = (data && data.download_urls) ? data.download_urls : {};
+    if (urls.txt || urls.srt || urls.vtt || urls.summary || urls.segments) return urls;
+    var out = {};
+    if (data && data.txt_path) out.txt = "/download?path=" + encodeURIComponent(data.txt_path);
+    if (data && data.srt_path) out.srt = "/download?path=" + encodeURIComponent(data.srt_path);
+    if (data && data.vtt_path) out.vtt = "/download?path=" + encodeURIComponent(data.vtt_path);
+    if (data && data.summary_path) out.summary = "/download?path=" + encodeURIComponent(data.summary_path);
+    if (data && data.segments_path) out.segments = "/download?path=" + encodeURIComponent(data.segments_path);
+    return out;
+  }
+
+  function renderDownloadLinks(urls, clearFirst) {
+    var links = getId("dlLinks");
+    if (!links) return;
+    if (clearFirst) links.innerHTML = "";
+    urls = urls || {};
+    if (urls.txt) links.innerHTML += '<a href="' + urls.txt + '" download>تحميل TXT</a> ';
+    if (urls.srt) links.innerHTML += '<a href="' + urls.srt + '" download>تحميل SRT</a> ';
+    if (urls.vtt) links.innerHTML += '<a href="' + urls.vtt + '" download>تحميل VTT</a> ';
+    if (urls.segments) links.innerHTML += '<a href="' + urls.segments + '" download>تحميل segments</a> ';
+    if (urls.summary) links.innerHTML += '<a href="' + urls.summary + '" download>تحميل الملخص</a>';
+  }
+
+  function applyTranscribeResult(data) {
+    getId("outText").value = data.text || "";
+    getId("outSummary").value = data.summary || "";
+    getId("outKeywords").value = data.keywords || "";
+    var segs = data.segments || [];
+    if (getId("outSegments")) getId("outSegments").textContent = segText(segs);
+    renderDownloadLinks(buildDownloadUrls(data), true);
+    queueUIStateSave();
+  }
+
+  function applySummaryResult(data) {
+    getId("outSummary").value = data.summary || "";
+    getId("outKeywords").value = data.keywords || "";
+    renderDownloadLinks(buildDownloadUrls(data), false);
+    queueUIStateSave();
+  }
+
+  function pollJob(kind, info) {
+    if (!info || !info.job_id) return;
+    if (pendingPollTimers[kind]) clearTimeout(pendingPollTimers[kind]);
+    var pollUrl = info.poll_url || ("/job/" + encodeURIComponent(info.job_id));
+    var timeout = getId("timeout") ? getId("timeout").value : 300;
+
+    var tick = function () {
+      fetchWithTimeout(pollUrl, { method: "GET", headers: getHeaders() }, timeout)
+        .then(function (r) {
+          return r.json().then(function (data) {
+            if (!r.ok) throw new Error((data && (data.detail || data.error)) || r.statusText);
+            return data;
+          });
+        })
+        .then(function (job) {
+          var status = (job && job.status) ? String(job.status).toLowerCase() : "";
+          if (status === "queued" || status === "running") {
+            if (kind === "transcribe") {
+              getId("outText").value = "المعالجة مستمرة في الخلفية... (" + status + ")";
+            } else if (kind === "summary") {
+              getId("outSummary").value = "التلخيص مستمر في الخلفية... (" + status + ")";
+            }
+            queueUIStateSave();
+            pendingPollTimers[kind] = setTimeout(tick, 2000);
+            return;
+          }
+
+          if (status === "done") {
+            var result = (job && job.result) ? job.result : {};
+            if (kind === "transcribe") applyTranscribeResult(result);
+            if (kind === "summary") applySummaryResult(result);
+            clearPendingJob(kind);
+            return;
+          }
+
+          var errMsg = (job && (job.error || job.detail)) || "فشل تنفيذ المهمة.";
+          if (kind === "transcribe") getId("outText").value = "خطأ: " + errMsg;
+          if (kind === "summary") getId("outSummary").value = "خطأ: " + errMsg;
+          clearPendingJob(kind);
+          queueUIStateSave();
+        })
+        .catch(function () {
+          pendingPollTimers[kind] = setTimeout(tick, 2500);
+        });
+    };
+
+    tick();
+  }
+
+  function resumePendingJobs() {
+    var jobs = getPendingJobs();
+    if (jobs.transcribe && jobs.transcribe.job_id) {
+      getId("outText").value = "تم استعادة مهمة التحويل بعد التحديث...";
+      pollJob("transcribe", jobs.transcribe);
+    }
+    if (jobs.summary && jobs.summary.job_id) {
+      getId("outSummary").value = "تم استعادة مهمة التلخيص بعد التحديث...";
+      pollJob("summary", jobs.summary);
+    }
+    queueUIStateSave();
+  }
+
   // إرسال ملف واحد
   getId("btnSend").addEventListener("click", function () {
+    var btnSend = getId("btnSend");
     var src = qs(".src-btn.active");
     var fileIn = getId("fileIn"), micZone = getId("mic-zone");
     var fd = new FormData();
@@ -112,6 +588,11 @@
       }
       fd.append("file", recBlob, "recording.webm");
     } else if (fileIn && fileIn.files && fileIn.files[0]) {
+      var fileErr = validateAudioFilesList(fileIn.files, 1);
+      if (fileErr) {
+        getId("outText").value = fileErr;
+        return;
+      }
       fd.append("file", fileIn.files[0]);
     } else {
       getId("outText").value = "يرجى اختيار ملف أو تسجيل صوت.";
@@ -131,6 +612,7 @@
     fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
     fd.append("device_sel", getId("deviceSel") ? getId("deviceSel").value : "auto");
     fd.append("compute_sel", getId("computeSel") ? getId("computeSel").value : "auto");
+    fd.append("async_mode", "true");
     if (session.email) fd.append("user_email", session.email);
 
     getId("outText").value = "جاري التحويل...";
@@ -138,6 +620,7 @@
     getId("outKeywords").value = "";
     getId("dlLinks").innerHTML = "";
     getId("outSegments").textContent = "";
+  setButtonBusy(btnSend, true, "جاري الإرسال...");
 
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     fetchWithTimeout("/transcribe", {
@@ -150,36 +633,33 @@
         return r.json();
       })
       .then(function (data) {
-        getId("outText").value = data.text || "";
-        getId("outSummary").value = data.summary || "";
-        getId("outKeywords").value = data.keywords || "";
-        var segs = data.segments || [];
-        if (segs.length && getId("outSegments")) {
-          var s = segs.map(function (x) {
-            var spk = x.speaker !== undefined ? " [" + (x.speaker || "?") + "] " : " ";
-            return (x.start || 0).toFixed(1) + "s" + spk + (x.text || "");
-          }).join("\n");
-          getId("outSegments").textContent = s;
+        if (data && data.job_id && (data.status === "queued" || data.status === "running")) {
+          setPendingJob("transcribe", {
+            job_id: data.job_id,
+            poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
+          });
+          getId("outText").value = "تم إرسال المهمة للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.";
+          queueUIStateSave();
+          pollJob("transcribe", getPendingJobs().transcribe);
+          return;
         }
-        var links = getId("dlLinks");
-        links.innerHTML = "";
-        var urls = data.download_urls || {};
-        if (urls.txt) links.innerHTML += '<a href="' + urls.txt + '" download>تحميل TXT</a> ';
-        if (urls.srt) links.innerHTML += '<a href="' + urls.srt + '" download>تحميل SRT</a> ';
-        if (urls.vtt) links.innerHTML += '<a href="' + urls.vtt + '" download>تحميل VTT</a> ';
-        if (urls.segments) links.innerHTML += '<a href="' + urls.segments + '" download>تحميل segments</a> ';
-        if (urls.summary) links.innerHTML += '<a href="' + urls.summary + '" download>تحميل الملخص</a>';
+        applyTranscribeResult(data || {});
       })
       .catch(function (e) {
         getId("outText").value = "خطأ: " + (e.message || String(e));
+      })
+      .finally(function () {
+        setButtonBusy(btnSend, false);
       });
   });
 
   // إرسال عدة ملفات
   getId("btnBatch").addEventListener("click", function () {
+    var btnBatch = getId("btnBatch");
     var filesIn = getId("filesIn");
-    if (!filesIn || !filesIn.files || filesIn.files.length === 0) {
-      getId("outText").value = "يرجى اختيار عدة ملفات.";
+    var batchErr = validateAudioFilesList(filesIn && filesIn.files, 1);
+    if (batchErr) {
+      getId("outText").value = "يرجى اختيار عدة ملفات صوتية صالحة.";
       return;
     }
     var fd = new FormData();
@@ -198,6 +678,7 @@
     fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
     fd.append("device_sel", getId("deviceSel") ? getId("deviceSel").value : "auto");
     fd.append("compute_sel", getId("computeSel") ? getId("computeSel").value : "auto");
+    fd.append("async_mode", "true");
     if (session.email) fd.append("user_email", session.email);
 
     getId("outText").value = "جاري تحويل عدة ملفات...";
@@ -205,6 +686,7 @@
     getId("outKeywords").value = "";
     getId("dlLinks").innerHTML = "";
     getId("outSegments").textContent = "";
+    setButtonBusy(btnBatch, true, "جاري إرسال الدفعة...");
 
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     fetchWithTimeout("/transcribe-batch", {
@@ -217,44 +699,42 @@
         return r.json();
       })
       .then(function (data) {
-        getId("outText").value = data.text || "";
-        getId("outSummary").value = data.summary || "";
-        getId("outKeywords").value = data.keywords || "";
-        var segs = data.segments || [];
-        if (segs.length) {
-          var s = segs.map(function (x) {
-            var spk = x.speaker !== undefined ? " [" + (x.speaker || "?") + "] " : " ";
-            return (x.start || 0).toFixed(1) + "s" + spk + (x.text || "");
-          }).join("\n");
-          getId("outSegments").textContent = s;
+        if (data && data.job_id && (data.status === "queued" || data.status === "running")) {
+          setPendingJob("transcribe", {
+            job_id: data.job_id,
+            poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
+          });
+          getId("outText").value = "تم إرسال مهمة الدفعة للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.";
+          queueUIStateSave();
+          pollJob("transcribe", getPendingJobs().transcribe);
+          return;
         }
-        var links = getId("dlLinks");
-        links.innerHTML = "";
-        var urls = data.download_urls || {};
-        if (urls.txt) links.innerHTML += '<a href="' + urls.txt + '" download>تحميل TXT</a> ';
-        if (urls.srt) links.innerHTML += '<a href="' + urls.srt + '" download>تحميل SRT</a> ';
-        if (urls.vtt) links.innerHTML += '<a href="' + urls.vtt + '" download>تحميل VTT</a> ';
-        if (urls.segments) links.innerHTML += '<a href="' + urls.segments + '" download>تحميل segments</a> ';
-        if (urls.summary) links.innerHTML += '<a href="' + urls.summary + '" download>تحميل الملخص</a>';
+        applyTranscribeResult(data || {});
       })
       .catch(function (e) {
         getId("outText").value = "خطأ: " + (e.message || String(e));
+      })
+      .finally(function () {
+        setButtonBusy(btnBatch, false);
       });
   });
 
   // تلخيص النص
   getId("btnSummary").addEventListener("click", function () {
+    var btnSummary = getId("btnSummary");
     var text = (getId("outText") && getId("outText").value || "").trim();
     if (!text) {
       getId("outSummary").value = "أدخل نصاً أولاً أو قم بالتحويل الصوتي.";
       return;
     }
-    var mode = getId("summaryMode") ? getId("summaryMode").value : "lite";
+    var mode = getId("summaryMode") ? getId("summaryMode").value : "ultra";
     var fd = new FormData();
     fd.append("text", text);
     fd.append("summary_mode", mode);
+    fd.append("async_mode", "true");
     if (session.email) fd.append("user_email", session.email);
     getId("outSummary").value = "جاري التلخيص...";
+    setButtonBusy(btnSummary, true, "جاري التلخيص...");
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     fetchWithTimeout("/summarize", { method: "POST", headers: getHeaders(), body: fd }, timeout)
       .then(function (r) {
@@ -262,14 +742,23 @@
         return r.json();
       })
       .then(function (data) {
-        getId("outSummary").value = data.summary || "";
-        getId("outKeywords").value = data.keywords || "";
-        var links = getId("dlLinks");
-        var urls = data.download_urls || {};
-        if (urls.summary) links.innerHTML += ' <a href="' + urls.summary + '" download>تحميل الملخص</a>';
+        if (data && data.job_id && (data.status === "queued" || data.status === "running")) {
+          setPendingJob("summary", {
+            job_id: data.job_id,
+            poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
+          });
+          getId("outSummary").value = "تم إرسال التلخيص للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.";
+          queueUIStateSave();
+          pollJob("summary", getPendingJobs().summary);
+          return;
+        }
+        applySummaryResult(data || {});
       })
       .catch(function (e) {
         getId("outSummary").value = "خطأ: " + (e.message || String(e));
+      })
+      .finally(function () {
+        setButtonBusy(btnSummary, false);
       });
   });
 
@@ -471,6 +960,7 @@
   }
 
   getId("btnTts").addEventListener("click", function () {
+    var btnTts = getId("btnTts");
     var textEl = getId("ttsText"), text = (textEl && textEl.value || "").trim();
     if (!text) {
       var errEl = getId("ttsError");
@@ -504,6 +994,7 @@
     h["Content-Type"] = "application/json";
 
     var timeout = getId("timeout") ? getId("timeout").value : 300;
+    setButtonBusy(btnTts, true, "جاري توليد الصوت...");
     fetchWithTimeout("/tts", { method: "POST", headers: h, body: JSON.stringify(body) }, timeout)
       .then(function (r) {
         if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
@@ -529,6 +1020,9 @@
       .catch(function (e) {
         errEl.textContent = "خطأ: " + (e.message || String(e));
         errEl.classList.remove("hidden");
+      })
+      .finally(function () {
+        setButtonBusy(btnTts, false);
       });
   });
 
@@ -556,6 +1050,7 @@
   }
 
   getId("btnEnroll").addEventListener("click", function () {
+    var btnEnroll = getId("btnEnroll");
     var name = (getId("spkName") && getId("spkName").value || "").trim();
     if (!name) {
       getId("enrollOut").textContent = "الرجاء إدخال اسم المتكلم.";
@@ -579,7 +1074,15 @@
       getId("enrollOut").textContent = "الرجاء رفع ملفات صوتية أو تسجيل مقطع.";
       return;
     }
+    if (filesIn && filesIn.files && filesIn.files.length) {
+      var enrollErr = validateAudioFilesList(filesIn.files, 1);
+      if (enrollErr) {
+        getId("enrollOut").textContent = enrollErr;
+        return;
+      }
+    }
     getId("enrollOut").textContent = "جاري التسجيل...";
+    setButtonBusy(btnEnroll, true, "جاري التسجيل...");
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     fetchWithTimeout("/enroll-speaker", { method: "POST", headers: getHeaders(), body: fd }, timeout)
       .then(function (r) {
@@ -592,6 +1095,9 @@
       })
       .catch(function (e) {
         getId("enrollOut").textContent = "خطأ: " + (e.message || String(e));
+      })
+      .finally(function () {
+        setButtonBusy(btnEnroll, false);
       });
   });
 
@@ -898,4 +1404,6 @@
   }
 
   setSession(session.email, session.token);
+  resumePendingJobs();
+  queueUIStateSave();
 })();

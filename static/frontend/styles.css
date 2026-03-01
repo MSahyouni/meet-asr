@@ -284,6 +284,18 @@ body {
   margin-bottom: 1.05rem;
 }
 
+.drop-zone {
+  border: 2px dashed transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.35rem;
+  transition: var(--transition);
+}
+
+.drop-zone.drag-over {
+  border-color: var(--forest);
+  background: rgba(66, 129, 119, 0.08);
+}
+
 .zone:last-child {
   margin-bottom: 0;
 }
@@ -312,6 +324,35 @@ body {
   transform: translateY(-2px);
   box-shadow: var(--shadow-hover);
   filter: brightness(1.1);
+}
+
+.file-label.selected {
+  background: linear-gradient(135deg, var(--wheat) 0%, var(--wheat-dark) 100%);
+  color: var(--charcoal-main);
+  border: 1px solid var(--wheat-dark);
+}
+
+.file-control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.file-control-row label {
+  margin-bottom: 0;
+}
+
+.file-clear-btn {
+  min-height: 36px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+}
+
+#filesIn.selected-files {
+  border-color: var(--forest);
+  box-shadow: 0 0 0 3px rgba(66, 129, 119, 0.15);
+  background: var(--wheat-light);
 }
 
 .input, textarea, select {

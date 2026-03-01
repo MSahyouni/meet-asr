@@ -4,7 +4,7 @@ import re
 from typing import Tuple
 
 from fastapi import HTTPException
-from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 
 from ..config import settings
 from .text_utils import advanced_clean_text, set_summary_source, get_summary_source
@@ -13,6 +13,7 @@ from .models_loader import ensure_local
 from .rag import rag_retrieve
 
 _ABST_PIPE = None
+_ULTRA_PIPE = None
 
 
 def _load_abstractive_pipe():
@@ -51,9 +52,108 @@ def _summarize_abstractive(text: str) -> str:
 
 
 def _summarize_ultra(prompt: str) -> str:
-    print("[SUM] Ultra mode (Jais-13B) is not implemented yet.")
-    set_summary_source("ultra:not_implemented")
-    return ""
+    p = _load_ultra_pipe()
+    if p is None:
+        return ""
+    try:
+        max_new_tokens = max(120, int(os.getenv("SUM_ULTRA_MAX_NEW_TOKENS", "280")))
+        prompt_text = (
+            "أنت مساعد تلخيص عربي احترافي. "
+            "اكتب ملخصاً عربيًا فصيحًا، دقيقًا، ومركّزًا على الحقائق فقط. "
+            "بدون حشو، وبدون تكرار، ويفضّل شكل نقاط قصيرة عند الحاجة.\n\n"
+            f"النص:\n{prompt}\n\n"
+            "الملخص:"
+        )
+        out = p(
+            prompt_text,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=0.2,
+            repetition_penalty=1.12,
+            return_full_text=False,
+        )
+        generated = ""
+        if isinstance(out, list) and out:
+            generated = (out[0].get("generated_text") or "").strip()
+        summary = generated.strip()
+        if summary:
+            set_summary_source(f"ultra:{settings.ULTRA_MODEL}")
+        return summary
+    except Exception as e:
+        print(f"[ULTRA] summarize failed: {e}")
+        return ""
+
+
+def _load_ultra_pipe():
+    global _ULTRA_PIPE
+    if _ULTRA_PIPE is not None:
+        return _ULTRA_PIPE
+    try:
+        print("[SUM] Loading ultra Arabic summarizer with Transformers...")
+        allow_download = os.getenv("ULTRA_ALLOW_DOWNLOAD", "1").strip().lower() in ("1", "true", "yes")
+        local_path = ensure_local(settings.ULTRA_MODEL, "summarizers/ultra", allow_download=allow_download)
+        tok = AutoTokenizer.from_pretrained(
+            local_path,
+            token=settings.HF_TOKEN,
+            trust_remote_code=settings.ULTRA_TRUST_REMOTE,
+            use_fast=False,
+        )
+
+        model = None
+        if settings.ULTRA_4BIT:
+            try:
+                import torch
+                from transformers import BitsAndBytesConfig
+
+                bnb_cfg = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                )
+                model = AutoModelForCausalLM.from_pretrained(
+                    local_path,
+                    token=settings.HF_TOKEN,
+                    trust_remote_code=settings.ULTRA_TRUST_REMOTE,
+                    quantization_config=bnb_cfg,
+                    device_map="auto",
+                )
+                _ULTRA_PIPE = pipeline("text-generation", model=model, tokenizer=tok)
+                print("[SUM] Ultra summarizer loaded (4bit).")
+                return _ULTRA_PIPE
+            except Exception as e:
+                print(f"[ULTRA] 4bit unavailable, fallback to standard load: {e}")
+
+        try:
+            import torch
+
+            use_cuda = bool(torch.cuda.is_available())
+        except Exception:
+            use_cuda = False
+
+        model = AutoModelForCausalLM.from_pretrained(
+            local_path,
+            token=settings.HF_TOKEN,
+            trust_remote_code=settings.ULTRA_TRUST_REMOTE,
+            torch_dtype=(__import__("torch").float16 if use_cuda else None),
+            device_map="auto" if use_cuda else None,
+        )
+
+        if use_cuda:
+            _ULTRA_PIPE = pipeline("text-generation", model=model, tokenizer=tok)
+        else:
+            _ULTRA_PIPE = pipeline(
+                "text-generation",
+                model=model,
+                tokenizer=tok,
+                device=settings.HF_DEVICE_ID,
+            )
+
+        print("[SUM] Ultra summarizer loaded.")
+        return _ULTRA_PIPE
+    except Exception as e:
+        print(f"[ULTRA] model load failed: {e}")
+        return None
 
 
 def summarize(text: str, mode: str = "lite") -> Tuple[str, str]:
@@ -85,7 +185,15 @@ def summarize(text: str, mode: str = "lite") -> Tuple[str, str]:
         ctx = rag_retrieve(clean, k=3)
         prompt = f"السياق المسترجع:\n{ctx}\n\nالنص:\n{clean}" if ctx else clean
         summary_text = _summarize_ultra(prompt)
+        if not summary_text:
+            print("[SUM] ultra failed -> fallback to lite abstractive")
+            summary_text = _summarize_abstractive(clean)
     else:
         raise HTTPException(status_code=400, detail=f"unsupported summary_mode: {mode}")
+
+    if m == "lite" and not summary_text:
+        set_summary_source("extractive:tfidf")
+        summary_text = extractive_summary
+
     keywords = extract_keywords(clean) if summary_text else ""
     return (summary_text, keywords)

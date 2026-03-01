@@ -38,8 +38,10 @@ from .jobs import (
     job_file,
     job_payload,
     run_transcribe_job,
+    run_transcribe_batch_job,
     run_summary_job,
 )
 
 run_transcribe_job_impl = run_transcribe_job
+run_transcribe_batch_job_impl = run_transcribe_batch_job
 run_summary_job_impl = run_summary_job

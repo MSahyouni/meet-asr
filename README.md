@@ -4,7 +4,7 @@
 
 - ASR: تفريغ صوتي + تمييز متحدثين.
 - NLP: تلخيص + كلمات مفتاحية + NER.
-- TTS: MMS عربي + Kokoro + XTTS (بصمات صوت لكل مستخدم).
+- TTS: MMS عربي + Kokoro + XTTS v2 (بصمات صوت لكل مستخدم).
 - Auth + Users + Dashboard + Billing.
 - تشغيل محلي أو Docker، مع دعم CPU/GPU.
 
@@ -41,7 +41,7 @@ meet-asr/
 ├─ data/
 │  ├─ models/                  # نماذج محلية
 │  ├─ outputs/                 # مخرجات ASR/TTS/NLP
-│  ├─ voices/                  # بصمات XTTS لكل مستخدم
+│  ├─ voices/                  # بصمات XTTS v2 لكل مستخدم
 │  └─ meetasr.sqlite3          # قاعدة SQLite المحلية
 ├─ docker/Dockerfile.api
 ├─ docker-compose.yml
@@ -137,6 +137,12 @@ docker compose -f docker-compose.yml up -d --build
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
+**ملاحظات تشغيل على الخادم (إنتاج):**
+- يستخدم ملف الإنتاج ربطًا مباشرًا للمجلد `./data` داخل الحاوية (`/app/data`) لضمان حفظ النماذج والمخرجات.
+- تم ضبط `shm_size` و `ulimits` في ملف الإنتاج لتحسين الاستقرار مع أحمال الذكاء الاصطناعي.
+- أول تشغيل يمكن أن يكون أبطأ بسبب تنزيل النماذج المطلوبة.
+- بعد اكتمال تنزيل نموذج `ultra` بنجاح، يمكن قفل الأوفلاين بتغيير `ULTRA_ALLOW_DOWNLOAD=0` في `.env` ثم إعادة تشغيل الخدمة.
+
 ### سكربت مختصر
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action up -Env dev
@@ -161,11 +167,14 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 - `POST /summarize` / `POST /nlp/summarize`
 - `POST /ner` / `POST /nlp/ner`
 - `summarize` يقبل FormData و JSON.
+- الوضع الافتراضي للتلخيص أصبح `ultra` لأعلى جودة عربية.
+- عند أول طلب `ultra` يتم تنزيل النموذج إلى `data/models/summarizers/ultra/` ثم الاعتماد عليه محليًا.
 
 ### TTS
 - `POST /tts` (تحويل نص إلى WAV)
 - `GET /tts/voices`
-- XTTS بصمات لكل مستخدم:
+- وضع `engine=auto` يعطي أولوية لـ XTTS v2 عند وجود بصمة للمستخدم، ثم fallback تلقائي إلى TTS العربي.
+- XTTS v2 بصمات لكل مستخدم:
   - `POST /tts/voice-sample`
   - `POST /tts/voice-samples`
   - `GET /tts/voice-samples`

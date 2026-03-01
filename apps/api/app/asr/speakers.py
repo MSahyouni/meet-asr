@@ -17,6 +17,7 @@ except Exception:
 from huggingface_hub import snapshot_download
 
 from app.config import settings
+from app.infrastructure.download_retry import run_with_download_retry
 from .common import speaker_label, to_ar_speaker
 from .audio import wav_read_mono
 
@@ -46,13 +47,16 @@ def get_spkrec():
         local_dir = local_dir_path.as_posix()
         if not local_dir_path.exists():
             print("[SB] Downloading ECAPA model...")
-            snapshot_download(
-                repo_id="speechbrain/spkrec-ecapa-voxceleb",
-                local_dir=local_dir,
-                local_dir_use_symlinks=False,
-                cache_dir=str(settings.HF_DIR),
-                token=_HF_TOKEN,
-            )
+            def _download_once():
+                return snapshot_download(
+                    repo_id="speechbrain/spkrec-ecapa-voxceleb",
+                    local_dir=local_dir,
+                    local_dir_use_symlinks=False,
+                    cache_dir=str(settings.HF_DIR),
+                    token=_HF_TOKEN,
+                )
+
+            run_with_download_retry(_download_once, "asr:spkrec-ecapa")
         _SPKRECOG = SpeakerRecognition.from_hparams(
             source=local_dir, savedir=local_dir, run_opts={"device": "cpu"}
         )

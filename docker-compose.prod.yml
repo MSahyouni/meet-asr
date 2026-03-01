@@ -7,17 +7,27 @@ services:
     container_name: meetasr-api
     env_file:
       - .env
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_HOME=/app/data/models
+      - HUGGINGFACE_HUB_CACHE=/app/data/models/hub
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
-      - data:/app/data
+      - ./data:/app/data
     gpus: all
-    restart: always
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+      nofile:
+        soft: 65535
+        hard: 65535
+    restart: unless-stopped
+    stop_grace_period: 60s
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 20s
       timeout: 5s
       retries: 5
-
-volumes:
-  data:

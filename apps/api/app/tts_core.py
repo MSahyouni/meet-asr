@@ -6,6 +6,7 @@ from functools import lru_cache
 from typing import Optional
 
 from app.config import settings
+from app.infrastructure.download_retry import run_with_download_retry
 
 logger = logging.getLogger("tts_core")
 
@@ -49,12 +50,12 @@ TTS_SPEED_MAX = 2.0
 TTS_SAMPLE_RATE = 24000
 TTS_DEFAULT_VOICE = "af_heart"
 TTS_DEFAULT_LANG = "a"  # American English; Kokoro supports a,b,e,f,h,i,j,p,z
-TTS_ALLOWED_ENGINES = {"auto", "kokoro", "mms", "xtts"}
+TTS_ALLOWED_ENGINES = {"auto", "kokoro", "mms", "xtts_v2", "xtts"}
 
 # Static list of known Kokoro-82M voices (from hexgrad/Kokoro-82M VOICES.md).
 # ar_mms: Arabic MMS-TTS (single voice, optional seed). ar_1..ar_4: tts_arabic (4 voices, optional pkg).
 TTS_KNOWN_VOICES = [
-    "xtts",
+    "xtts_v2",
     "ar_mms", "ar_1", "ar_2", "ar_3", "ar_4",  # Arabic
     "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
     "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
@@ -99,10 +100,13 @@ def _get_pipeline():
             from huggingface_hub import snapshot_download
 
             logger.info("Downloading Kokoro model into fixed folder: %s", kokoro_dir)
-            snapshot_download(
-                repo_id=KOKORO_REPO_ID,
-                local_dir=str(kokoro_dir),
-                local_dir_use_symlinks=False,
+            run_with_download_retry(
+                lambda: snapshot_download(
+                    repo_id=KOKORO_REPO_ID,
+                    local_dir=str(kokoro_dir),
+                    local_dir_use_symlinks=False,
+                ),
+                "tts:kokoro-82m",
             )
 
         from kokoro import KPipeline
@@ -131,6 +135,21 @@ def _use_mms_for_arabic(text: str) -> bool:
         return is_arabic(text)
     except ImportError:
         return False
+
+
+def _resolve_xtts_speaker_ref_if_available(user_email: Optional[str], speaker_ref: Optional[str]) -> Optional[str]:
+    """Return a valid XTTS speaker_ref filename if available for the user; otherwise None."""
+    if not (user_email or "").strip():
+        return None
+    try:
+        from app.tts.voice_profiles import resolve_user_speaker_path
+
+        candidate = resolve_user_speaker_path(user_email=user_email, speaker_ref=speaker_ref)
+        if candidate.exists() and candidate.is_file():
+            return candidate.name
+    except Exception:
+        return None
+    return None
 
 
 class TTSCore:
@@ -183,14 +202,45 @@ class TTSCore:
             )
         speed = speed_f
         engine_requested = (engine or "auto").strip().lower()
+        if engine_requested == "xtts":
+            engine_requested = "xtts_v2"
         if engine_requested not in TTS_ALLOWED_ENGINES:
             raise ValueError(f"engine must be one of: {', '.join(sorted(TTS_ALLOWED_ENGINES))}")
 
         # Route Arabic: ar_1..ar_4 -> tts_arabic (4 voices), else ar_mms -> MMS-TTS (with optional seed)
         requested_voice = (voice or "").strip() or TTS_DEFAULT_VOICE
         arabic_detected = _use_mms_for_arabic(text)
+        auto_fallback_used = False
 
-        if engine_requested == "xtts":
+        if engine_requested == "auto":
+            xtts_speaker_ref = _resolve_xtts_speaker_ref_if_available(user_email=user_email, speaker_ref=speaker_ref)
+            if xtts_speaker_ref:
+                xtts_text = maybe_diacritize(_preprocess_text(text))
+                try:
+                    from app.tts.tts_xtts import synthesize_xtts
+
+                    result = synthesize_xtts(
+                        text=xtts_text,
+                        voice=requested_voice,
+                        speed=speed,
+                        out_path=out_path,
+                        user_email=user_email,
+                        speaker_ref=xtts_speaker_ref,
+                    )
+                    result.update({
+                        "engine_used": "xtts_v2",
+                        "arabic_detected": arabic_detected,
+                        "fallback_used": False,
+                        "requested_voice": requested_voice,
+                        "resolved_voice": result.get("voice", "xtts_v2"),
+                        "speaker_ref": result.get("speaker_ref") or xtts_speaker_ref,
+                    })
+                    return result
+                except (ImportError, RuntimeError, FileNotFoundError, ValueError) as e:
+                    auto_fallback_used = True
+                    logger.warning("Auto XTTS failed, falling back to built-in engines: %s", e)
+
+        if engine_requested == "xtts_v2":
             text = _preprocess_text(text)
             text = maybe_diacritize(text)
             try:
@@ -204,11 +254,11 @@ class TTSCore:
                     speaker_ref=speaker_ref,
                 )
                 result.update({
-                    "engine_used": "xtts",
+                    "engine_used": "xtts_v2",
                     "arabic_detected": arabic_detected,
                     "fallback_used": False,
                     "requested_voice": requested_voice,
-                    "resolved_voice": result.get("voice", "xtts"),
+                    "resolved_voice": result.get("voice", "xtts_v2"),
                     "speaker_ref": result.get("speaker_ref"),
                 })
                 return result
@@ -239,7 +289,7 @@ class TTSCore:
             text = _preprocess_text(text)
             text = maybe_diacritize(text)
             voice_ar = requested_voice.strip().lower()
-            fallback_used = False
+            fallback_used = auto_fallback_used
             if voice_ar in ("ar_1", "ar_2", "ar_3", "ar_4"):
                 try:
                     from app.tts.tts_arabic_multi import synthesize_arabic_multi

@@ -134,11 +134,11 @@ def synthesize_xtts(
         "audio_path": out_path,
         "sample_rate": sample_rate,
         "duration_sec": round(duration_sec, 3),
-        "voice": voice or "xtts",
+        "voice": voice or "xtts_v2",
         "speaker_ref": speaker_wav.name,
     }
 
 
 def list_xtts_voices() -> list:
     """Return XTTS mode label."""
-    return ["xtts"]
+    return ["xtts_v2"]

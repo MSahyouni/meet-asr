@@ -235,7 +235,7 @@ async def tts(
 ):
     """
     Synthesize speech from text. Returns WAV path and download URL.
-    Body (JSON): { "text", "voice" (optional), "speed" (optional), "seed" (optional), "engine" (auto|mms|kokoro|xtts), "speaker_ref" (optional for xtts), "format" (ignored; always wav) }
+    Body (JSON): { "text", "voice" (optional), "speed" (optional), "seed" (optional), "engine" (auto|mms|kokoro|xtts_v2), "speaker_ref" (optional for xtts_v2), "format" (ignored; always wav) }
     Max text length: 5000 chars. Rate: 12/minute per IP.
     """
     auth_error = check_api_key(x_api_key)
@@ -254,7 +254,7 @@ async def tts(
     from app.tts_core import TTS_TEXT_MAX_LEN
     if len(text) > TTS_TEXT_MAX_LEN:
         return response_error(400, "validation_error", f"text length exceeds maximum ({TTS_TEXT_MAX_LEN} characters)")
-    voice = (body.get("voice") or "af_heart").strip() or "af_heart"
+    voice = (body.get("voice") or "ar_mms").strip() or "ar_mms"
     try:
         speed = float(body.get("speed", 1.0))
     except (TypeError, ValueError):

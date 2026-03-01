@@ -61,6 +61,19 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+
+class _UvicornJobPollFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return '"GET /job/' not in msg and '"GET /asr/job/' not in msg
+
+
+_uvicorn_access_logger = logging.getLogger("uvicorn.access")
+_uvicorn_access_logger.addFilter(_UvicornJobPollFilter())
+
 # ——— Request ID Context Variable ———
 
 

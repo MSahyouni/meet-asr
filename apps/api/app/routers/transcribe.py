@@ -27,6 +27,7 @@ from app.server.deps import (
     JOBS,
     job_file,
     run_transcribe_job_impl,
+    run_transcribe_batch_job_impl,
     limiter,
     check_api_key,
 )
@@ -243,6 +244,7 @@ async def transcribe(
 async def transcribe_batch(
     request: Request,
     files: List[UploadFile] = File(...),
+    async_mode: bool = Form(False),
     model_name: Optional[str] = Form(None),
     enhance: bool = Form(False),
     enhance_mode: str = Form(None),
@@ -274,6 +276,7 @@ async def transcribe_batch(
     em = _resolve_enhance_mode(enhance_mode, enhance)
 
     tmpdir = tempfile.mkdtemp(prefix="asr_batch_")
+    cleanup_tmpdir = True
     try:
         saved: List[str] = []
         max_bytes = int(settings.MAX_UPLOAD_MB * 1024 * 1024)
@@ -296,6 +299,59 @@ async def transcribe_batch(
                 dst.unlink(missing_ok=True)
                 return response_error(413, "file_too_large", f"max={settings.MAX_UPLOAD_MB}MB")
             saved.append(str(dst))
+
+        if async_mode:
+            job_id = str(uuid.uuid4())
+            job_kwargs = dict(
+                model_name=model_name or settings.WHISPER_MODEL,
+                enhance=enhance,
+                enhance_mode=em,
+                enhance_level=enhance_level,
+                whisper_mode=whisper_mode,
+                diarize=diarize,
+                auto_k=auto_k,
+                max_speakers=max_speakers,
+                enroll_threshold=enroll_threshold,
+                device_sel=device_sel,
+                compute_sel=compute_sel,
+                summary_mode=summary_mode,
+                punctuate=punctuate,
+                job_id=job_id,
+            )
+            max_queued = getattr(settings, "TRANSCRIBE_MAX_QUEUED", 20)
+            active_jobs = sum(1 for j in JOBS.values() if isinstance(j, dict) and j.get("status") in ("queued", "running"))
+            if active_jobs >= max_queued:
+                return response_error(429, "rate_limited", f"too many queued or running transcribe jobs (max {max_queued})")
+            JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
+            cleanup_tmpdir = False
+            asyncio.create_task(
+                run_transcribe_batch_job_impl(
+                    job_id,
+                    [pathlib.Path(p) for p in saved],
+                    job_kwargs,
+                    get_core,
+                )
+            )
+            if user_email:
+                try:
+                    DashboardService.record_activity(
+                        user_email=user_email,
+                        activity_type=ActivityType.ASR,
+                        description="batch transcribe queued",
+                        metadata={"mode": "async", "files_count": len(saved), "job_id": job_id},
+                    )
+                except Exception:
+                    pass
+            base = settings.BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
+            return JSONResponse(
+                {
+                    "job_id": job_id,
+                    "status": "queued",
+                    "poll_url": f"{base}/job/{job_id}",
+                    "result_url": f"{base}/job/{job_id}/download",
+                },
+                status_code=202,
+            )
 
         try:
             batch_job_id = str(uuid.uuid4())
@@ -383,7 +439,8 @@ async def transcribe_batch(
             return response_error(500, "processing_failed", traceback.format_exc())
 
     finally:
-        try:
-            shutil.rmtree(tmpdir)
-        except Exception:
-            pass
+        if cleanup_tmpdir:
+            try:
+                shutil.rmtree(tmpdir)
+            except Exception:
+                pass

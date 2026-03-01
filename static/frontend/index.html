@@ -43,17 +43,24 @@
             <button class="src-btn active" data-src="file">رفع ملف</button>
             <button class="src-btn" data-src="mic">تسجيل من الميكروفون</button>
           </div>
-          <div id="file-zone" class="zone">
+          <div id="file-zone" class="zone drop-zone">
             <input type="file" id="fileIn" accept="audio/*,.m4a,.mp4,.webm,.3gp,.wav,.mp3,.ogg,.flac" class="hidden">
-            <label for="fileIn" class="file-label">اختر ملف صوتي واحد</label>
+            <div class="file-control-row">
+              <label id="fileInLabel" for="fileIn" class="file-label">اختر ملف صوتي واحد</label>
+              <button id="btnClearFileIn" type="button" class="btn btn-secondary file-clear-btn">إلغاء الملف</button>
+            </div>
           </div>
           <div id="mic-zone" class="zone hidden">
             <button id="micBtn" class="btn btn-secondary">بدء التسجيل</button>
             <span id="micStatus"></span>
           </div>
-          <div class="zone">
-            <label>رفع عدة ملفات</label>
+          <div id="files-zone" class="zone drop-zone">
+            <div class="file-control-row">
+              <label id="filesInLabel">رفع عدة ملفات</label>
+              <button id="btnClearFilesIn" type="button" class="btn btn-secondary file-clear-btn">إلغاء الملفات</button>
+            </div>
             <input type="file" id="filesIn" multiple accept="audio/*,.m4a,.mp4,.webm,.3gp,.wav,.mp3,.ogg,.flac" class="input">
+            <div id="filesInStatus" class="hint hidden"></div>
           </div>
           <details class="accordion">
             <summary>خيارات النموذج</summary>
@@ -82,7 +89,7 @@
           </details>
           <textarea id="outSummary" rows="4" readonly placeholder="الملخص..."></textarea>
           <input type="text" id="outKeywords" readonly placeholder="الكلمات المفتاحية...">
-          <label>وضع التلخيص <select id="summaryMode"><option value="lite">lite</option><option value="ultra">ultra</option></select></label>
+          <label>وضع التلخيص <select id="summaryMode"><option value="ultra" selected>ultra</option><option value="lite">lite</option></select></label>
           <button id="btnSummary" class="btn btn-secondary">تلخيص النص (من النص أعلاه)</button>
           <div id="dlLinks" class="links"></div>
         </div>
@@ -139,14 +146,14 @@
           <div class="zone">
             <label>المحرك</label>
             <select id="ttsEngine" class="input">
-              <option value="auto">auto (تلقائي)</option>
-              <option value="xtts">xtts (بصمة صوت المستخدم)</option>
+              <option value="auto" selected>auto (الأقوى: XTTS v2 عند وجود بصمة، ثم fallback عربي)</option>
+              <option value="xtts_v2">xtts_v2 (استنساخ بصمة المستخدم)</option>
               <option value="mms">mms (عربي)</option>
               <option value="kokoro">kokoro (عام)</option>
             </select>
           </div>
           <div class="zone">
-            <label>البريد المستخدم للبصمة (XTTS)</label>
+            <label>البريد المستخدم للبصمة (XTTS v2)</label>
             <input type="email" id="ttsUserEmail" class="input" placeholder="user@example.com">
           </div>
           <div class="zone">
@@ -173,7 +180,7 @@
             <input type="number" id="ttsSeed" placeholder="رقم عشوائي لتنويع الإيقاع" class="input">
           </div>
           <div class="zone">
-            <label>بصمات المستخدم (speaker_ref لـ XTTS)</label>
+            <label>بصمات المستخدم (speaker_ref لـ XTTS v2)</label>
             <div class="btn-row">
               <button id="btnTtsRefreshVoices" class="btn btn-secondary" type="button">🔄 تحديث البصمات</button>
               <button id="btnTtsDeleteVoice" class="btn btn-secondary" type="button">🗑️ حذف المحدد</button>

@@ -14,6 +14,7 @@ except ImportError:
     Pipeline = None
 
 from .common import speaker_label, to_ar_speaker
+from app.infrastructure.download_retry import run_with_download_retry
 
 _HF_TOKEN = None
 _HAS_CUDA = False
@@ -37,7 +38,10 @@ def _load_pyannote_pipeline():
         import logging
         log = logging.getLogger("asr.diarization")
         log.info("Loading diarization pipeline...")
-        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=_HF_TOKEN)
+        pipeline = run_with_download_retry(
+            lambda: Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=_HF_TOKEN),
+            "asr:pyannote-diarization",
+        )
         if _HAS_CUDA:
             pipeline.to(torch.device("cuda"))
         _PYANNOTE_PIPELINE = pipeline

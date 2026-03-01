@@ -5,6 +5,7 @@ from huggingface_hub import snapshot_download
 from faster_whisper import WhisperModel
 
 from app.config import settings
+from app.infrastructure.download_retry import run_with_download_retry
 from .common import resolve_model, safe_compute
 
 # يُملأ من asr/__init__ بعد تعريف _HAS_CUDA, MODELS_DIR, _HF_TOKEN
@@ -29,13 +30,16 @@ def get_model(name: str, device: Optional[str] = None, compute_type: Optional[st
         try:
             local_dir = MODELS_DIR / f"whisper-{name}"
             if not local_dir.exists():
-                snapshot_download(
-                    repo_id=f"Systran/faster-whisper-{name}",
-                    local_dir=str(local_dir),
-                    local_dir_use_symlinks=False,
-                    cache_dir=str(settings.HF_DIR),
-                    token=_HF_TOKEN,
-                )
+                def _download_once():
+                    return snapshot_download(
+                        repo_id=f"Systran/faster-whisper-{name}",
+                        local_dir=str(local_dir),
+                        local_dir_use_symlinks=False,
+                        cache_dir=str(settings.HF_DIR),
+                        token=_HF_TOKEN,
+                    )
+
+                run_with_download_retry(_download_once, f"asr:whisper-{name}")
             model_args = {
                 "device": dev,
                 "compute_type": ctp,

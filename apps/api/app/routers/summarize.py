@@ -22,7 +22,7 @@ async def summarize_after(
     text: Optional[str] = Form(None),
     path: Optional[str] = Form(None),
     user_email: Optional[str] = Form(None),
-    summary_mode: str = Form("lite"),
+    summary_mode: str = Form("ultra"),
     async_mode: bool = Form(False),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     fake_file: Optional[UploadFile] = File(None),
@@ -35,7 +35,7 @@ async def summarize_after(
             text = json_body.get("text") or json_body.get("model_text")
             path = path or json_body.get("path")
             user_email = user_email or json_body.get("user_email")
-            summary_mode = json_body.get("summary_mode", "lite")
+            summary_mode = json_body.get("summary_mode", "ultra")
             async_mode = json_body.get("async_mode", False)
             if "x_api_key" in json_body:
                 x_api_key = json_body.get("x_api_key")
