@@ -647,6 +647,34 @@ textarea {
   margin-top: 2rem;
 }
 
+.bottom-controls {
+  max-width: 1400px;
+  margin: 0 auto 0.8rem;
+  padding: 0 1.8rem;
+}
+
+.bottom-controls-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  background: var(--bg-card);
+  border: 1px solid rgba(152, 133, 97, 0.32);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.7rem 0.9rem;
+}
+
+.bottom-controls-inner label {
+  font-weight: 700;
+  color: var(--forest-dark);
+}
+
+.bottom-controls-inner .hint {
+  margin: 0;
+  padding: 0.35rem 0.55rem;
+}
+
 /* ===== Animations ===== */
 @keyframes fadeIn {
   from {
