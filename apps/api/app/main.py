@@ -208,9 +208,9 @@ app.include_router(billing_router, tags=["Billing"])
 app.include_router(dashboard_router, tags=["Dashboard"])
 
 
-# ——— Legacy Route Includes (from routers; for backward compatibility) ———
+# ——— Legacy Route Includes (via app.compat; backward compatibility layer) ———
 try:
-    from app.routers import router as legacy_router
+    from app.compat import legacy_router
     app.include_router(legacy_router)
 except ImportError:
-    logging.warning("Legacy routers not found")
+    logging.warning("Compatibility legacy router not found")

@@ -12,14 +12,16 @@
 
 ## 1) نظرة معمارية سريعة
 
-- نقطة تشغيل API: `apps/api/api.py` (تحوّل إلى `app.main`).
+- نقطة التشغيل الأساسية: `apps/api/app/main.py`.
+- `apps/api/api.py` غلاف توافق فقط لتشغيل قديم (`uvicorn api:app`).
 - التطبيق الرئيسي: `apps/api/app/main.py`.
-- الواجهة المدمجة: `static/frontend/` وتُخدَّم على `/`.
+- الواجهة الأساسية الحالية: `static/frontend/` وتُخدَّم على `/`.
+- واجهة Flutter في `apps/web/` اختيارية/بديلة وليست المسار التشغيلي الافتراضي.
 - البيانات المحلية: `data/` (نماذج، مخرجات، أصوات، SQLite).
 
 ملاحظة مهمة:
 - توجد مسارات حديثة مهيكلة (`/asr/*`, `/nlp/*`, `/tts/*`) 
-- ويوجد أيضًا توافق خلفي عبر راوترات legacy (مثل `/transcribe`, `/summarize`, `/tts`).
+- ويوجد أيضًا توافق خلفي عبر طبقة `app/compat` (مثل `/transcribe`, `/summarize`, `/tts`).
 
 ---
 
@@ -35,7 +37,9 @@ meet-asr/
 │  │     ├─ main.py
 │  │     ├─ config.py
 │  │     ├─ routers/
+│  │     ├─ compat/
 │  │     └─ features/
+│  │  └─ tests/                # مرآة هيكلية للاختبارات (unit/integration)
 │  └─ web/                    # Flutter app (اختياري)
 ├─ static/frontend/            # واجهة HTML/CSS/JS المدمجة
 ├─ data/
@@ -104,8 +108,9 @@ python -m uvicorn api:app --host 0.0.0.0 --port 8000
 
 ## 5) إعداد البيئة
 
-القالب:
-- `apps/api/.env.example`
+القوالب:
+- `apps/api/.env.example` للتشغيل المحلي من داخل `apps/api`.
+- `.env.example` في الجذر لتشغيل Docker/Compose من الجذر.
 
 للتشغيل المحلي (داخل Python app):
 ```powershell
@@ -122,6 +127,7 @@ Copy-Item apps/api/.env.example apps/api/.env
 ملاحظات:
 - التطبيق يحمّل `.env` من `apps/api/.env` محليًا.
 - في Docker، ملف `docker-compose*.yml` يمرر `.env` من جذر المشروع إلى الحاوية.
+- عند تغيير إعدادات جوهرية، حدّث القالبين معًا (`apps/api/.env.example` و`.env.example`).
 
 ---
 
@@ -214,6 +220,10 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 ---
 
 ## 10) اختبارات سريعة
+
+المرجع التشغيلي الحالي للاختبارات: `tests/` في جذر المشروع.
+
+مرآة الهيكلية المعيارية موجودة في: `apps/api/tests/` (تنظيم فقط حاليًا).
 
 من داخل `apps/api`:
 ```powershell
