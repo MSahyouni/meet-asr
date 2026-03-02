@@ -1,0 +1,64 @@
+name: flutter_app
+description: "A new Flutter project."
+
+publish_to: 'none' 
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  gap: ^3.0.1
+  go_router: ^16.2.5
+  http: ^1.6.0
+  path_provider: ^2.1.5
+  record: ^6.1.2
+  permission_handler: ^12.0.1
+  voice_note_kit: ^1.3.3
+  file_picker: ^10.3.6
+  open_file: ^3.5.10
+  animated_splash_screen: ^1.3.0
+  just_audio: ^0.10.5
+
+
+
+
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+
+  flutter_lints: ^6.0.0
+
+flutter:
+
+  uses-material-design: true
+
+
+  assets:
+    - assets/images/image_5.png
+    - assets/images/image_4.png
+    - assets/images/image_1.png
+    - assets/images/image_2.png
+    - assets/images/image_3.png
+
+   
+
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+
