@@ -113,7 +113,7 @@ def _get_pipeline():
         logger.info("Loading Kokoro TTS model from %s", kokoro_dir)
         _PIPELINE = KPipeline(
             lang_code=os.getenv("TTS_LANG_CODE", TTS_DEFAULT_LANG),
-            repo_id=str(kokoro_dir),
+            repo_id=KOKORO_REPO_ID,
         )
         logger.info("Kokoro TTS pipeline loaded (singleton).")
         return _PIPELINE
@@ -209,11 +209,15 @@ class TTSCore:
 
         # Route Arabic: ar_1..ar_4 -> tts_arabic (4 voices), else ar_mms -> MMS-TTS (with optional seed)
         requested_voice = (voice or "").strip() or TTS_DEFAULT_VOICE
-        arabic_detected = _use_mms_for_arabic(text)
+        requested_voice_lc = requested_voice.lower()
+        force_arabic_voice = requested_voice_lc in ("ar_mms", "ar_1", "ar_2", "ar_3", "ar_4")
+        arabic_detected = _use_mms_for_arabic(text) or force_arabic_voice
         auto_fallback_used = False
 
         if engine_requested == "auto":
-            xtts_speaker_ref = _resolve_xtts_speaker_ref_if_available(user_email=user_email, speaker_ref=speaker_ref)
+            xtts_speaker_ref = None
+            if not force_arabic_voice:
+                xtts_speaker_ref = _resolve_xtts_speaker_ref_if_available(user_email=user_email, speaker_ref=speaker_ref)
             if xtts_speaker_ref:
                 xtts_text = maybe_diacritize(_preprocess_text(text))
                 try:
@@ -318,9 +322,14 @@ class TTSCore:
                 return result
             except (ImportError, RuntimeError) as e:
                 logger.warning("MMS-TTS failed: %s", e)
-                raise ValueError(
-                    f"Arabic TTS failed: {e}. Ensure transformers>=4.33 and torch are installed."
-                ) from e
+                if engine_requested == "auto":
+                    auto_fallback_used = True
+                    arabic_detected = False
+                    logger.warning("Falling back to Kokoro after MMS failure in auto mode.")
+                else:
+                    raise ValueError(
+                        f"Arabic TTS failed: {e}. Ensure transformers>=4.33 and torch are installed."
+                    ) from e
 
         # Kokoro path (English / non-Arabic)
         text = _preprocess_text(text)
@@ -379,7 +388,7 @@ class TTSCore:
             "voice": voice,
             "engine_used": "kokoro",
             "arabic_detected": False,
-            "fallback_used": False,
+            "fallback_used": auto_fallback_used,
             "requested_voice": requested_voice,
             "resolved_voice": voice,
         }

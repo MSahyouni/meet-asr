@@ -16,7 +16,7 @@
 - `apps/api/api.py` غلاف توافق فقط لتشغيل قديم (`uvicorn api:app`).
 - التطبيق الرئيسي: `apps/api/app/main.py`.
 - الواجهة الأساسية الحالية: `static/frontend/` وتُخدَّم على `/`.
-- واجهة Flutter في `apps/web/` اختيارية/بديلة وليست المسار التشغيلي الافتراضي.
+- واجهة Flutter في `nabra/` اختيارية/بديلة وليست المسار التشغيلي الافتراضي.
 - البيانات المحلية: `data/` (نماذج، مخرجات، أصوات، SQLite).
 
 ملاحظة مهمة:
@@ -40,7 +40,7 @@ meet-asr/
 │  │     ├─ compat/
 │  │     └─ features/
 │  │  └─ tests/                # مرآة هيكلية للاختبارات (unit/integration)
-│  └─ web/                    # Flutter app (اختياري)
+├─ nabra/                     # Flutter app (اختياري)
 ├─ static/frontend/            # واجهة HTML/CSS/JS المدمجة
 ├─ data/
 │  ├─ models/                  # نماذج محلية

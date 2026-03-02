@@ -98,6 +98,12 @@ def synthesize_mms(
     silence_cache = {}
     for chunk in chunks:
         inputs = tokenizer(chunk, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        if "input_ids" in inputs:
+            inputs["input_ids"] = inputs["input_ids"].long()
+        if "attention_mask" in inputs:
+            inputs["attention_mask"] = inputs["attention_mask"].long()
+        if "token_type_ids" in inputs:
+            inputs["token_type_ids"] = inputs["token_type_ids"].long()
         if torch.cuda.is_available():
             inputs = {k: v.cuda() for k, v in inputs.items()}
 

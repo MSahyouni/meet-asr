@@ -1,5 +1,6 @@
 # routers/jobs.py
 import json
+from json import JSONDecodeError
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
@@ -14,8 +15,18 @@ def job_status(job_id: str):
     meta = JOBS.get(job_id, None)
     file = job_file(job_id)
     if file.exists():
-        data = json.loads(file.read_text(encoding="utf-8"))
-        return data
+        raw = file.read_text(encoding="utf-8").strip()
+        if not raw:
+            if meta is not None:
+                return {"status": meta["status"], "result": {}, "error": meta.get("error") or ""}
+            return response_error(404, "job_not_found")
+        try:
+            data = json.loads(raw)
+            return data
+        except JSONDecodeError:
+            if meta is not None:
+                return {"status": meta["status"], "result": {}, "error": meta.get("error") or ""}
+            return response_error(404, "job_not_found")
     if meta is None:
         return response_error(404, "job_not_found")
     return {"status": meta["status"], "result": {}, "error": meta.get("error") or ""}
