@@ -1,3 +1,4 @@
+import 'package:flutter_app/screens/TTS.dart';
 import 'package:flutter_app/screens/analysis_audio.dart';
 import 'package:flutter_app/screens/home_screen.dart';
 import 'package:flutter_app/screens/splash_screen.dart';
@@ -25,6 +26,15 @@ final GoRouter router = GoRouter(
           model: extra?['model'] ?? 'Light',
           apiUrl: extra?['apiUrl'] ?? '',
         );
+      },
+    ),
+    GoRoute(
+      path: "/text_to_speech",
+      builder: (context, state) {
+        // هنا نستقبل الـ extra كخريطة
+        final extra = state.extra as Map<String, dynamic>?;
+
+        return Tts(apiUrl: extra?['apiUrl'] ?? '');
       },
     ),
   ],

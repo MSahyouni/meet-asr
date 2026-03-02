@@ -332,8 +332,43 @@ class _HomeScreen extends State<HomeScreen> {
                     ),
                   ),
                 ),
-                Gap(20),
-
+                Gap(10),
+                Container(
+                  width: 230,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(25),
+                    gradient: const LinearGradient(
+                      colors: [
+                        Color(0xFF0C3A34),
+                        Color(0xFF125B4A),
+                        Color(0xFF1A7B6A),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      elevation: 5,
+                      backgroundColor: Colors.transparent,
+                      fixedSize: Size(200, 50),
+                    ),
+                    onPressed: () {
+                      context.push("/text_to_speech");
+                    },
+                    child: Row(
+                      children: [
+                        Text(
+                          "تحويل النص إلى صوت",
+                          style: TextStyle(color: Colors.white, fontSize: 16),
+                        ),
+                        Gap(25),
+                        Icon(Icons.volume_up, color: Colors.white, size: 20),
+                      ],
+                    ),
+                  ),
+                ),
+                Gap(10),
                 // Container(
                 //   width: 200,
                 //   decoration: BoxDecoration(
