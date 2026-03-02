@@ -36,7 +36,7 @@ meet-asr/
 │  │     ├─ config.py
 │  │     ├─ routers/
 │  │     └─ features/
-│  └─ web/nabra/              # Flutter app (اختياري)
+│  └─ web/                    # Flutter app (اختياري)
 ├─ static/frontend/            # واجهة HTML/CSS/JS المدمجة
 ├─ data/
 │  ├─ models/                  # نماذج محلية
