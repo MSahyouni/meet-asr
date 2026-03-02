@@ -88,21 +88,21 @@ def test_download_path_forbidden_extension():
 
 # ----- TTS input validation (tts_core) -----
 def test_tts_validation_text_empty_raises():
-    from tts_core import TTSCore
+    from app.tts_core import TTSCore
     core = TTSCore()
     with pytest.raises(ValueError, match="cannot be empty"):
         core.synthesize("", voice="af_heart", speed=1.0, out_path="")
 
 
 def test_tts_validation_text_too_long_raises():
-    from tts_core import TTSCore, TTS_TEXT_MAX_LEN
+    from app.tts_core import TTSCore, TTS_TEXT_MAX_LEN
     core = TTSCore()
     with pytest.raises(ValueError, match="exceeds maximum"):
         core.synthesize("x" * (TTS_TEXT_MAX_LEN + 1), voice="af_heart", speed=1.0, out_path="")
 
 
 def test_tts_validation_speed_out_of_range_raises():
-    from tts_core import TTSCore
+    from app.tts_core import TTSCore
     core = TTSCore()
     with pytest.raises(ValueError, match="Speed must be"):
         core.synthesize("hello", voice="af_heart", speed=3.0, out_path="")
@@ -111,7 +111,7 @@ def test_tts_validation_speed_out_of_range_raises():
 
 
 def test_tts_validation_speed_valid_not_value_error():
-    from tts_core import TTSCore
+    from app.tts_core import TTSCore
     core = TTSCore()
     # Speed 0.5 and 2.0 are in range; must not raise ValueError for speed (may raise RuntimeError if model not loaded)
     for speed in (0.5, 1.0, 2.0):
@@ -125,7 +125,7 @@ def test_tts_validation_speed_valid_not_value_error():
 
 def test_list_voices_returns_non_empty():
     """GET /tts/voices relies on tts_core.list_voices() returning a non-empty list."""
-    from tts_core import list_voices
+    from app.tts_core import list_voices
     voices = list_voices()
     assert isinstance(voices, list)
     assert len(voices) > 0
@@ -134,7 +134,7 @@ def test_list_voices_returns_non_empty():
 
 def test_response_error_format_has_required_keys():
     """All endpoints use response_error from server.deps; it must include error and detail."""
-    from server.deps import response_error
+    from app.server.deps import response_error
     import json
     resp = response_error(400, "bad_request", "Missing text")
     data = json.loads(resp.body.decode())
@@ -156,8 +156,8 @@ def test_upload_uses_chunked_read():
 def test_download_path_traversal_integration():
     """Integration: /download must reject path traversal. Run with: pytest -k test_download_path_traversal_integration --run-skip."""
     from fastapi.testclient import TestClient
-    import api
+    from apps.api import api as api_mod
 
-    client = TestClient(api.app)
+    client = TestClient(api_mod.app)
     resp = client.get("/download?path=asr/../../etc/passwd")
     assert resp.status_code == 403

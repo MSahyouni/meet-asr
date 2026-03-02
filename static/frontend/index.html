@@ -11,23 +11,28 @@
 </head>
 <body>
   <header class="header">
-    <img src="/static/assets/syria-emblem.png" alt="شعار الجمهورية العربية السورية" class="emblem">
-    <div class="logo-line-1">الجمهورية العربية السورية</div>
-    <div class="logo-line-2">وزارة الدفاع</div>
-    <div class="logo-line-3">نَبْرَة</div>
-    <p class="tagline">نظام تحويل الكلام إلى نص — استماع · تحويل · توليد صوت</p>
+    <div class="header-layout">
+      <div class="header-right">
+        <img src="/static/assets/syria-emblem.png" alt="شعار الجمهورية العربية السورية" class="emblem">
+        <div class="logo-line-1">الجمهورية العربية السورية</div>
+        <div class="logo-line-2">وزارة الدفاع</div>
+      </div>
+      <div class="header-center">
+        <div class="logo-line-3">نَبْرَة</div>
+        <p class="tagline">نظام تحويل الكلام إلى نص — استماع · تحويل · توليد صوت</p>
+      </div>
+      <div class="header-spacer" aria-hidden="true"></div>
+    </div>
   </header>
 
   <main class="main">
-    <section class="settings-bar">
-      <input type="password" id="apiKey" placeholder="مفتاح API (اختياري)" class="input">
-      <label>مهلة الاتصال (ثانية) <input type="number" id="timeout" value="900" min="60" max="1800" class="input input-sm" title="للتحويل الصوتي: 600–900 ثانية أو أكثر"></label>
-    </section>
 
     <nav class="tabs">
       <button class="tab active" data-tab="asr">استماع وتحويل</button>
       <button class="tab" data-tab="tts">تحويل النص إلى صوت</button>
       <button class="tab" data-tab="speakers">بصمات الصوت والمتحدثون</button>
+      <button class="tab" data-tab="account">الحساب</button>
+      <button class="tab" data-tab="dashboard">لوحة التحكم</button>
     </nav>
 
     <div id="asr-panel" class="panel active">
@@ -38,24 +43,31 @@
             <button class="src-btn active" data-src="file">رفع ملف</button>
             <button class="src-btn" data-src="mic">تسجيل من الميكروفون</button>
           </div>
-          <div id="file-zone" class="zone">
+          <div id="file-zone" class="zone drop-zone">
             <input type="file" id="fileIn" accept="audio/*,.m4a,.mp4,.webm,.3gp,.wav,.mp3,.ogg,.flac" class="hidden">
-            <label for="fileIn" class="file-label">اختر ملف صوتي واحد</label>
+            <div class="file-control-row">
+              <label id="fileInLabel" for="fileIn" class="file-label">اختر ملف صوتي واحد</label>
+              <button id="btnClearFileIn" type="button" class="btn btn-secondary file-clear-btn">إلغاء الملف</button>
+            </div>
           </div>
           <div id="mic-zone" class="zone hidden">
             <button id="micBtn" class="btn btn-secondary">بدء التسجيل</button>
             <span id="micStatus"></span>
           </div>
-          <div class="zone">
-            <label>رفع عدة ملفات</label>
+          <div id="files-zone" class="zone drop-zone">
+            <div class="file-control-row">
+              <label id="filesInLabel">رفع عدة ملفات</label>
+              <button id="btnClearFilesIn" type="button" class="btn btn-secondary file-clear-btn">إلغاء الملفات</button>
+            </div>
             <input type="file" id="filesIn" multiple accept="audio/*,.m4a,.mp4,.webm,.3gp,.wav,.mp3,.ogg,.flac" class="input">
+            <div id="filesInStatus" class="hint hidden"></div>
           </div>
           <details class="accordion">
             <summary>خيارات النموذج</summary>
-            <label>نموذج Whisper <select id="model"><option value="light">light</option><option value="heavy">heavy</option></select></label>
+            <!-- نموذج Whisper ثابت على heavy -->
             <label>وضع الحساسية <select id="whisperMode"><option value="normal">normal</option><option value="whisper">whisper</option></select></label>
-            <label>تحسين الصوت <select id="enhance"><option value="off">بدون</option><option value="light">خفيف</option><option value="full">كامل</option></select></label>
-            <label>مستوى التحسين <select id="enhanceLevel"><option value="medium">medium</option><option value="light">light</option><option value="strong">strong</option><option value="aggressive">aggressive</option></select></label>
+            <label>تحسين الصوت <select id="enhance"><option value="off">بدون</option><option value="light">خفيف</option><option value="full" selected>كامل</option></select></label>
+            <label>مستوى التحسين <select id="enhanceLevel"><option value="light">light</option><option value="medium">medium</option><option value="strong" selected>strong</option><option value="aggressive">aggressive</option></select></label>
             <label>تمييز المتكلمين <input type="checkbox" id="diarize" checked></label>
             <label>تقدير عدد المتكلمين تلقائياً <input type="checkbox" id="autoK" checked></label>
             <label>عدد المتكلمين <select id="maxSpeakers"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
@@ -77,7 +89,7 @@
           </details>
           <textarea id="outSummary" rows="4" readonly placeholder="الملخص..."></textarea>
           <input type="text" id="outKeywords" readonly placeholder="الكلمات المفتاحية...">
-          <label>وضع التلخيص <select id="summaryMode"><option value="lite">lite</option><option value="ultra">ultra</option></select></label>
+          <label>وضع التلخيص <select id="summaryMode"><option value="ultra" selected>ultra</option><option value="lite">lite</option></select></label>
           <button id="btnSummary" class="btn btn-secondary">تلخيص النص (من النص أعلاه)</button>
           <div id="dlLinks" class="links"></div>
         </div>
@@ -132,6 +144,19 @@
         <div class="col-input">
           <h3>المدخلات</h3>
           <div class="zone">
+            <label>المحرك</label>
+            <select id="ttsEngine" class="input">
+              <option value="auto" selected>auto (الأقوى: XTTS v2 عند وجود بصمة، ثم fallback عربي)</option>
+              <option value="xtts_v2">xtts_v2 (استنساخ بصمة المستخدم)</option>
+              <option value="mms">mms (عربي)</option>
+              <option value="kokoro">kokoro (عام)</option>
+            </select>
+          </div>
+          <div class="zone">
+            <label>البريد المستخدم للبصمة (XTTS v2)</label>
+            <input type="email" id="ttsUserEmail" class="input" placeholder="user@example.com">
+          </div>
+          <div class="zone">
             <label>النص</label>
             <textarea id="ttsText" rows="10" placeholder="أدخل النص هنا..."></textarea>
           </div>
@@ -154,7 +179,18 @@
             <label>Seed للإيقاع (ar_mms فقط)</label>
             <input type="number" id="ttsSeed" placeholder="رقم عشوائي لتنويع الإيقاع" class="input">
           </div>
+          <div class="zone">
+            <label>بصمات المستخدم (speaker_ref لـ XTTS v2)</label>
+            <div class="btn-row">
+              <button id="btnTtsRefreshVoices" class="btn btn-secondary" type="button">🔄 تحديث البصمات</button>
+              <button id="btnTtsDeleteVoice" class="btn btn-secondary" type="button">🗑️ حذف المحدد</button>
+            </div>
+            <select id="ttsVoiceFilesList" class="input"><option value="">— اختر ملف بصمة —</option></select>
+            <input type="file" id="ttsVoiceFiles" multiple accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aac,.opus" class="input">
+            <button id="btnTtsUploadVoices" class="btn btn-secondary" type="button">⬆️ رفع بصمات</button>
+          </div>
           <button id="btnTts" class="btn btn-primary">🔊 توليد الصوت</button>
+          <div id="ttsVoiceStatus" class="zone hint"></div>
         </div>
         <div class="col-output">
           <h3>المخرجات</h3>
@@ -163,11 +199,98 @@
             <label>تشغيل الصوت</label>
             <audio id="ttsAudio" controls class="audio-player"></audio>
           </div>
+          <div class="zone">
+            <label>تشغيل بصمة المستخدم المحددة</label>
+            <audio id="ttsVoiceAudio" controls class="audio-player"></audio>
+          </div>
+          <pre id="ttsMeta" class="segments-text"></pre>
           <div id="ttsDl" class="links"></div>
         </div>
       </div>
     </div>
+
+    <div id="account-panel" class="panel">
+      <div class="grid">
+        <div class="col-input">
+          <h3>الدخول والتسجيل</h3>
+          <div class="zone">
+            <label>البريد الإلكتروني</label>
+            <input type="email" id="authEmail" class="input" placeholder="name@example.com">
+          </div>
+          <div class="zone">
+            <label>كلمة المرور</label>
+            <input type="password" id="authPassword" class="input" placeholder="••••••••">
+          </div>
+          <div class="zone">
+            <label>الاسم الكامل (للتسجيل)</label>
+            <input type="text" id="authFullName" class="input" placeholder="الاسم الكامل">
+          </div>
+          <div class="btn-row">
+            <button id="btnRegister" class="btn btn-secondary">تسجيل</button>
+            <button id="btnLogin" class="btn btn-primary">دخول</button>
+            <button id="btnLogout" class="btn btn-secondary">خروج</button>
+          </div>
+          <div id="authStatus" class="zone hint"></div>
+        </div>
+
+        <div class="col-output">
+          <h3>الملف الشخصي</h3>
+          <div class="zone">
+            <label>البريد الحالي</label>
+            <input type="text" id="profileEmail" class="input" readonly>
+          </div>
+          <div class="zone">
+            <label>الاسم الكامل</label>
+            <input type="text" id="profileFullName" class="input" placeholder="الاسم الكامل">
+          </div>
+          <div class="zone">
+            <label>نبذة</label>
+            <textarea id="profileBio" rows="4" placeholder="نبذة قصيرة..."></textarea>
+          </div>
+          <div class="zone">
+            <label>رابط الصورة</label>
+            <input type="text" id="profileAvatar" class="input" placeholder="https://...">
+          </div>
+          <div class="btn-row">
+            <button id="btnLoadProfile" class="btn btn-secondary">تحميل الملف</button>
+            <button id="btnSaveProfile" class="btn btn-primary">حفظ التعديل</button>
+          </div>
+          <div id="profileStatus" class="zone hint"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="dashboard-panel" class="panel">
+      <div class="grid">
+        <div class="col-input">
+          <h3>لوحة التحكم</h3>
+          <div class="zone">
+            <label>البريد الحالي</label>
+            <input type="text" id="dashEmail" class="input" readonly>
+          </div>
+          <div class="btn-row">
+            <button id="btnRefreshDashboard" class="btn btn-primary">تحديث الإحصائيات</button>
+          </div>
+          <div id="dashStatus" class="zone hint"></div>
+        </div>
+        <div class="col-output">
+          <h3>ملخص سريع</h3>
+          <pre id="dashSummary" class="segments-text"></pre>
+          <h3>نظرة عامة</h3>
+          <pre id="dashOverview" class="segments-text"></pre>
+        </div>
+      </div>
+    </div>
+    
   </main>
+
+    <section class="bottom-controls" aria-label="إعدادات الاتصال">
+      <div class="bottom-controls-inner">
+        <label for="timeout">مهلة الطلب (بالثواني)</label>
+        <input type="number" id="timeout" class="input input-sm" value="900" min="60" step="30">
+        <span class="hint">زِد القيمة للملفات الطويلة (مثل 1200 أو 1800).</span>
+      </div>
+    </section>
 
   <footer class="footer">الجمهورية العربية السورية · وزارة الدفاع · نَبْرَة</footer>
 

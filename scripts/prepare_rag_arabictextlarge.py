@@ -46,7 +46,11 @@ def rows_from_parquet(paths):
             if text and text.strip():
                 yield text.strip()
 
-model = SentenceTransformer("intfloat/multilingual-e5-base")
+# Prefer local model from data/models if available
+_e5_local = ROOT / "data" / "models" / "multilingual-e5-base"
+_e5_model = _e5_local.as_posix() if _e5_local.exists() else "intfloat/multilingual-e5-base"
+print(f"[+] Loading embedding model from: {_e5_model}")
+model = SentenceTransformer(_e5_model)
 dims = model.get_sentence_embedding_dimension()
 index = faiss.IndexFlatIP(dims)
 

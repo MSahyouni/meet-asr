@@ -1,9 +1,14 @@
 name: 📦 Publish Docker Images
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*.*.*"
+
+concurrency:
+  group: docker-publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   publish:

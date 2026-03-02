@@ -1,264 +1,250 @@
-Meet-ASR
+# Meet-ASR (نَبْرَة)
 
-Meet-ASR هو نظام تفريغ صوتي (Speech-to-Text) احترافي يدعم تمييز المتحدثين (Speaker Diarization) وتلخيص النص، مع تحسين جودة الصوت (Enhance) قبل المعالجة، ومصمم ليعمل كخدمة مستقلة قابلة للدمج في أي تطبيق.
+منصة محلية (Offline-first) للاستماع والتحويل والتلخيص وتوليد الصوت، مبنية على FastAPI مع واجهة ويب مدمجة.
 
-المشروع مهيأ للاستخدام البحثي والمؤسسي، ويعمل محليًا أو عبر Docker، مع دعم CPU و GPU.
-
-
----
-
-✨ الميزات
-
-🎙️ تفريغ صوتي عالي الدقة باستخدام Whisper
-
-🧑‍🤝‍🧑 تمييز المتحدثين (Speaker Diarization)
-
-🔊 تحسين جودة الصوت (Enhance)
-
-تقليل الضجيج
-
-تحسين وضوح الصوت البشري
-
-إعادة أخذ العينات تلقائيًا
-
-
-📝 تلخيص النص الناتج
-
-🌐 واجهة برمجية REST (API)
-
-🖥️ واجهة ويب (HTML/JS)
-
-⚡ دعم التشغيل على CPU أو GPU
-
-🐳 دعم Docker و Docker Compose
-
-📦 نشر تلقائي على GitHub Container Registry
-
-🔊 TTS (تحويل النص إلى صوت): Kokoro للإنجليزية + MMS-TTS للعربية (أوفلاين)
-
-
+- ASR: تفريغ صوتي + تمييز متحدثين.
+- NLP: تلخيص + كلمات مفتاحية + NER.
+- TTS: MMS عربي + Kokoro + XTTS v2 (بصمات صوت لكل مستخدم).
+- Auth + Users + Dashboard + Billing.
+- تشغيل محلي أو Docker، مع دعم CPU/GPU.
 
 ---
 
-🧠 كيف يعمل
+## 1) نظرة معمارية سريعة
 
-يعتمد Meet-ASR على فصل واضح بين الواجهة والمعالجة:
+- نقطة التشغيل الأساسية: `apps/api/app/main.py`.
+- `apps/api/api.py` غلاف توافق فقط لتشغيل قديم (`uvicorn api:app`).
+- التطبيق الرئيسي: `apps/api/app/main.py`.
+- الواجهة الأساسية الحالية: `static/frontend/` وتُخدَّم على `/`.
+- واجهة Flutter في `nabra/` اختيارية/بديلة وليست المسار التشغيلي الافتراضي.
+- البيانات المحلية: `data/` (نماذج، مخرجات، أصوات، SQLite).
 
-API
-
-Enhance → ASR → Diarization → Summarize
-
-
-Web UI
-
-واجهة استخدام تتواصل مع الـ API فقط
-
-
-يمكن لأي تطبيق خارجي استخدام الـ API مباشرة
-
-
-> الواجهة تعمل مباشرة من API على المسار / — لا حاجة لخادم منفصل.
-
-
-
+ملاحظة مهمة:
+- توجد مسارات حديثة مهيكلة (`/asr/*`, `/nlp/*`, `/tts/*`) 
+- ويوجد أيضًا توافق خلفي عبر طبقة `app/compat` (مثل `/transcribe`, `/summarize`, `/tts`).
 
 ---
 
-🗂️ بنية المشروع
+## 2) بنية المشروع
 
-**نقاط الدخول:** `api.py` (خادم API + واجهة ويب) · `config.py`
-
-**الحزم:** `asr/` (تفريغ صوت) · `nlp/` (تلخيص، NER، RAG) · `routers/` (مسارات API) · `static/frontend/` (واجهة HTML/JS)
-
-تفاصيل الهيكل والتبعيات: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
-
-```
-docker/            — Dockerfile.api, docker-compose, docker-compose.prod
-.github/workflows/ — docker-test.yml, docker-publish.yml, python-ci.yml
-scripts/           — إعداد RAG، اختبارات TTS
-tools/             — تحميل وفهرسة ArabicText
-tests/             — smoke_test، test_api_units، test_tts_integration
-static/frontend/   — واجهة HTML/JS
-flutter_app/       — تطبيق Flutter (عميل اختياري)
+```text
+meet-asr/
+├─ apps/
+│  ├─ api/                    # FastAPI backend
+│  │  ├─ api.py
+│  │  ├─ requirements.txt
+│  │  └─ app/
+│  │     ├─ main.py
+│  │     ├─ config.py
+│  │     ├─ routers/
+│  │     ├─ compat/
+│  │     └─ features/
+│  │  └─ tests/                # مرآة هيكلية للاختبارات (unit/integration)
+├─ nabra/                     # Flutter app (اختياري)
+├─ static/frontend/            # واجهة HTML/CSS/JS المدمجة
+├─ data/
+│  ├─ models/                  # نماذج محلية
+│  ├─ outputs/                 # مخرجات ASR/TTS/NLP
+│  ├─ voices/                  # بصمات XTTS v2 لكل مستخدم
+│  └─ meetasr.sqlite3          # قاعدة SQLite المحلية
+├─ docker/Dockerfile.api
+├─ docker-compose.yml
+├─ docker-compose.prod.yml
+├─ run.ps1
+├─ run.bat
+└─ scripts/docker.ps1
 ```
 
+---
+
+## 3) المتطلبات
+
+### تشغيل محلي
+- Python 3.10+
+- FFmpeg
+- (اختياري) CUDA/GPU
+
+### Docker
+- Docker + Docker Compose
+- (اختياري) NVIDIA Container Toolkit
 
 ---
 
-⚙️ المتطلبات
+## 4) تشغيل سريع (Windows)
 
-بدون Docker
+### الأسهل
+```powershell
+.\run.ps1
+```
+أو بالنقر المزدوج:
+```bat
+run.bat
+```
 
-Python 3.10 أو أحدث
+ما يفعله `run.ps1`:
+- ينشئ `.venv` إن لم توجد.
+- يشغّل `uvicorn` من `apps/api`.
+- يفتح المتصفح تلقائيًا عند جاهزية المنفذ `8000`.
 
-FFmpeg
+> السكربت لا يثبّت المتطلبات تلقائيًا.
 
-(اختياري) NVIDIA GPU
-
-
-مع Docker
-
-Docker 24 أو أحدث
-
-Docker Compose
-
-(اختياري) NVIDIA Container Toolkit
-
-
-
----
-
-🚀 التشغيل بدون Docker (محليًا)
-
-1) تثبيت FFmpeg
-
-على Ubuntu / Debian: sudo apt-get update
-sudo apt-get install -y ffmpeg
-
-على Windows:
-
-تثبيت FFmpeg وإضافة مساره إلى PATH
-
-
-
----
-
-2) إنشاء بيئة Python
-
+### التشغيل اليدوي
+```powershell
 python -m venv .venv
-source .venv/bin/activate   (Linux / Mac)
-.venv\Scripts\activate     (Windows)
-
+.\.venv\Scripts\activate
 pip install -U pip
-pip install -r requirements.txt
+pip install -r apps/api/requirements.txt
 
-TTS عربي: ar_mms (أوفلاين مع transformers، مع خيار seed لتغيير الإيقاع). لأربعة أصوات إضافية: pip install git+https://github.com/nipponjo/tts_arabic.git ثم استخدم ar_1, ar_2, ar_3, ar_4.
-
-
----
-
-3) إعداد متغيرات البيئة (اختياري)
-
-انسخ القالب وعدّل القيم:
-
-```bash
-cp .env.example .env
+cd apps/api
+python -m uvicorn api:app --host 0.0.0.0 --port 8000
 ```
 
-المتغيرات الأساسية في `.env`:
-- `HF_TOKEN` — مفتاح Hugging Face (للنماذج الخاصة)
-- `WHISPER_MODEL` — light | medium | large-v3
-- `ASR_DATA_DIR` — مجلد البيانات (افتراضي: `data`)
-
-
----
-
-▶️ تشغيل API
-
-uvicorn api:app --host 0.0.0.0 --port 8000
-
-تحقق من الصحة: http://127.0.0.1:8000/health
-
-الواجهة متوفرة على: http://127.0.0.1:8000/
-
+روابط مفيدة بعد التشغيل:
+- الواجهة: `http://127.0.0.1:8000/`
+- الصحة: `http://127.0.0.1:8000/health`
+- OpenAPI: `http://127.0.0.1:8000/docs`
 
 ---
 
-⚡ التشغيل على GPU (بدون Docker)
+## 5) إعداد البيئة
 
-تأكد من تثبيت CUDA وتعريفات NVIDIA.
+القوالب:
+- `apps/api/.env.example` للتشغيل المحلي من داخل `apps/api`.
+- `.env.example` في الجذر لتشغيل Docker/Compose من الجذر.
 
-تحقق: python -c "import torch; print(torch.cuda.is_available())"
-
-
----
-
-🐳 التشغيل عبر Docker
-
-Development
-
-docker compose -f docker/docker-compose.yml up -d --build
-
-Production + GPU
-
-docker compose -f docker/docker-compose.prod.yml up -d --build
-
-
----
-
-🔌 نقاط النهاية (API)
-
-- **GET /health** — حالة الخادم (asr، diarization، tts، ffmpeg)
-- **POST /transcribe** — تفريغ ملف صوتي واحد
-- **POST /transcribe-batch** — تفريغ عدة ملفات
-- **GET /tts/voices** — قائمة أصوات TTS المتاحة
-- **POST /tts** — تحويل نص إلى كلام (حد 5000 حرف، 12 طلب/دقيقة)
-- **POST /summarize** — تلخيص نص
-- **POST /enroll-speaker** — تسجيل بصمة متحدث
-- **GET /enrolled-speakers** — قائمة المتحدثين المسجلين
-- **GET /download?path=...** — تحميل ملف من مجلد المخرجات
-
----
-
-### أمثلة cURL
-
-**التفريغ (رفع ملف):**
-```bash
-curl -X POST http://localhost:8000/transcribe \
-  -F "file=@/path/to/audio.wav" \
-  -F "enhance_mode=off" \
-  -F "diarize=true" \
-  -F "async_mode=false"
+للتشغيل المحلي (داخل Python app):
+```powershell
+Copy-Item apps/api/.env.example apps/api/.env
 ```
 
-**تحويل النص إلى كلام (TTS):**
-```bash
-curl -X POST http://localhost:8000/tts \
-  -H "Content-Type: application/json" \
-  -d '{"text":"مرحبا هذا اختبار","voice":"af_heart","speed":1.0,"format":"wav"}'
+أهم المتغيرات:
+- `ASR_ENV`, `ASR_ALLOWED_ORIGINS`
+- `JWT_SECRET`, `JWT_EXPIRES_SECONDS`, `JWT_ISSUER`, `JWT_AUDIENCE`, `ADMIN_EMAILS`
+- `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE`
+- `TTS_MMS_ENABLED`, `TTS_PREPROCESS_ENABLED`, `TTS_KOKORO_ALLOW_DOWNLOAD`
+- `RAG_ENABLE`, `RAG_EMB_MODEL`
+
+ملاحظات:
+- التطبيق يحمّل `.env` من `apps/api/.env` محليًا.
+- في Docker، ملف `docker-compose*.yml` يمرر `.env` من جذر المشروع إلى الحاوية.
+- عند تغيير إعدادات جوهرية، حدّث القالبين معًا (`apps/api/.env.example` و`.env.example`).
+
+---
+
+## 6) Docker
+
+### Development
+```powershell
+docker compose -f docker-compose.yml up -d --build
 ```
-الاستجابة تتضمن `download_url` لتحميل ملف WAV.
+
+### Production
+```powershell
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+**ملاحظات تشغيل على الخادم (إنتاج):**
+- يستخدم ملف الإنتاج ربطًا مباشرًا للمجلد `./data` داخل الحاوية (`/app/data`) لضمان حفظ النماذج والمخرجات.
+- تم ضبط `shm_size` و `ulimits` في ملف الإنتاج لتحسين الاستقرار مع أحمال الذكاء الاصطناعي.
+- أول تشغيل يمكن أن يكون أبطأ بسبب تنزيل النماذج المطلوبة.
+- بعد اكتمال تنزيل نموذج `ultra` بنجاح، يمكن قفل الأوفلاين بتغيير `ULTRA_ALLOW_DOWNLOAD=0` في `.env` ثم إعادة تشغيل الخدمة.
+
+### سكربت مختصر
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action up -Env dev
+powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action logs -Env dev
+powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env dev
+```
+
+- `-Env prod` لاستخدام ملف الإنتاج.
+- الأفعال المدعومة: `up`, `down`, `logs`, `ps`, `restart`, `pull`.
 
 ---
 
-### تحسين الصوت (enhance_mode)
+## 7) القدرات الأساسية
 
-معامل **enhance_mode** يتحكم بمرحلة تحسين الصوت قبل التفريغ:
+### ASR
+- `POST /transcribe` (legacy)
+- `POST /asr/transcribe` (feature route)
+- `POST /transcribe-batch` / `POST /asr/transcribe-batch`
+- دعم `enhance_mode` (`off`, `light`, `full`) و async jobs.
 
-| القيمة | الوصف |
-|--------|--------|
-| **off** | بدون تحسين (افتراضي، الأسرع) |
-| **light** | تطبيع + فلتر highpass فقط (سريع، بدون تقليل ضجيج) |
-| **full** | تحسين كامل: تقليل ضجيج + فلاتر (أنسب للملفات ذات الضجيج) |
+### NLP
+- `POST /summarize` / `POST /nlp/summarize`
+- `POST /ner` / `POST /nlp/ner`
+- `summarize` يقبل FormData و JSON.
+- الوضع الافتراضي للتلخيص أصبح `ultra` لأعلى جودة عربية.
+- عند أول طلب `ultra` يتم تنزيل النموذج إلى `data/models/summarizers/ultra/` ثم الاعتماد عليه محليًا.
 
-يمكن أيضاً إرسال **enhance=true** (توافق قديم) ويُعادل **enhance_mode=full**.
+### TTS
+- `POST /tts` (تحويل نص إلى WAV)
+- `GET /tts/voices`
+- وضع `engine=auto` يعطي أولوية لـ XTTS v2 عند وجود بصمة للمستخدم، ثم fallback تلقائي إلى TTS العربي.
+- XTTS v2 بصمات لكل مستخدم:
+  - `POST /tts/voice-sample`
+  - `POST /tts/voice-samples`
+  - `GET /tts/voice-samples`
+  - `GET /tts/voice-file`
+  - `DELETE /tts/voice-sample`
+- حفظ بصمات المستخدم في: `data/voices/<sanitized_user_email>/`.
 
+### Auth / Users / Dashboard / Billing
+- Auth: `register`, `login`, `logout`, `logout-all`, `sessions/status`, `me/permissions`.
+- Users: `/users/me`, إدارة ملف شخصي، وقوائم/إحصائيات بصلاحية admin.
+- Dashboard: ملخصات ونشاط واستخدام للمستخدم الحالي أو self/admin.
+- Billing: plans/subscription/invoices/payment-methods.
+
+> التفاصيل الدقيقة للمدخلات/المخرجات في `docs` عبر OpenAPI: `/docs`.
 
 ---
 
-🎯 حالات الاستخدام
+## 8) الأمان
 
-تفريغ الاجتماعات
-
-المقابلات الصحفية
-
-المحاضرات والدروس
-
-الأرشفة الصوتية
-
-أدوات البحث والتحليل
-
-
+- JWT مع `iss` و `aud` وتاريخ صلاحية.
+- إبطال جلسات server-side عبر `token_version` (مثلاً `logout-all`).
+- حماية self/admin لمسارات الحسابات.
+- CORS صارم في الإنتاج (ممنوع wildcard عند `ASR_ENV=production`).
+- Rate limiting عبر `slowapi` على المسارات الحساسة.
 
 ---
 
-📦 Docker Images (GitHub Packages)
+## 9) التخزين المحلي والأوفلاين
 
-ghcr.io/<username>/meetasr-api:latest
+- قاعدة البيانات: `data/meetasr.sqlite3`
+- المخرجات: `data/outputs/`
+- النماذج: `data/models/`
+- الأصوات: `data/voices/`
 
+يعمل المشروع محليًا بالكامل عند توفر النماذج المطلوبة داخل `data/models`.
 
 ---
 
-📄 الترخيص
+## 10) اختبارات سريعة
 
-MIT License
+المرجع التشغيلي الحالي للاختبارات: `tests/` في جذر المشروع.
+
+مرآة الهيكلية المعيارية موجودة في: `apps/api/tests/` (تنظيم فقط حاليًا).
+
+من داخل `apps/api`:
+```powershell
+pytest -q ../../tests/test_auth_security.py ../../tests/test_secure_endpoints.py
+```
+
+اختبار أوسع:
+```powershell
+pytest -q ../../tests/test_api_units.py
+```
+
+---
+
+## 11) ملاحظات تشغيل مهمة
+
+- التزم ببيئة Python واحدة فقط (`.venv`) وتجنب المزج مع `venv` القديم.
+- عند مشاكل CUDA/نماذج، افحص أولاً `/health`.
+- لتجربة الواجهة مباشرة استخدم `http://127.0.0.1:8000/`.
+
+---
+
+## 12) الترخيص
+
+MIT
