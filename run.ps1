@@ -6,6 +6,8 @@ Set-Location $root
 $venvDir = Join-Path $root ".venv"
 $venvPython = Join-Path $venvDir "Scripts\python.exe"
 $apiDir = Join-Path $root "apps\api"
+$requirementsFile = Join-Path $apiDir "requirements.txt"
+$requirementsStamp = Join-Path $venvDir ".requirements.sha256"
 $url = "http://127.0.0.1:8000/"
 $hostName = "127.0.0.1"
 $port = 8000
@@ -23,6 +25,34 @@ if (-not (Test-Path $venvPython)) {
 
 if (-not (Test-Path (Join-Path $apiDir "api.py"))) {
     throw "ملف api.py غير موجود في: $apiDir"
+}
+
+if (-not (Test-Path $requirementsFile)) {
+    throw "ملف requirements.txt غير موجود في: $requirementsFile"
+}
+
+$currentReqHash = (Get-FileHash -Path $requirementsFile -Algorithm SHA256).Hash
+$installedReqHash = ""
+if (Test-Path $requirementsStamp) {
+    $installedReqHash = ((Get-Content -Path $requirementsStamp -ErrorAction SilentlyContinue | Select-Object -First 1) -as [string]).Trim()
+}
+
+if ($currentReqHash -ne $installedReqHash) {
+    Write-Host "[run] تثبيت/تحديث المتطلبات من requirements.txt ..." -ForegroundColor Yellow
+    & $venvPython -m pip install -U pip
+    if ($LASTEXITCODE -ne 0) {
+        throw "فشل تحديث pip داخل البيئة الافتراضية."
+    }
+
+    & $venvPython -m pip install -r $requirementsFile
+    if ($LASTEXITCODE -ne 0) {
+        throw "فشل تثبيت المتطلبات من $requirementsFile"
+    }
+
+    Set-Content -Path $requirementsStamp -Value $currentReqHash -Encoding UTF8
+    Write-Host "[run] اكتمل تثبيت المتطلبات." -ForegroundColor Green
+} else {
+    Write-Host "[run] المتطلبات مثبتة مسبقًا ولا يوجد تغيّر." -ForegroundColor DarkGray
 }
 
 Write-Host "[run] سيتم فتح المتصفح تلقائياً عند جاهزية السيرفر..." -ForegroundColor Green
