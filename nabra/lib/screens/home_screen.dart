@@ -356,6 +356,16 @@ class _HomeScreen extends State<HomeScreen> {
                     ),
                     onPressed: () {
                       final apiUrl = _controller.text.trim();
+
+                      if (apiUrl.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("الرجاء إدخال رابط api"),
+                          ),
+                        );
+                        return;
+                      }
+
                       context.push(
                         "/text_to_speech",
                         extra: {"apiUrl": apiUrl},
