@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/screens/buildVoiceRecorderSection.dart';
 import 'package:flutter_app/screens/loading_files.dart';
+import 'package:flutter_app/widgets/staggered_fade_slide.dart';
 import 'package:flutter_app/widgets/standerd.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
@@ -45,7 +46,7 @@ class _HomeScreen extends State<HomeScreen> {
         final screenHeight = MediaQuery.of(context).size.height;
         return Standerd(
           widget: SingleChildScrollView(
-            child: Column(
+            child: StaggeredFadeSlide(
               children: [
                 Divider(
                   color: Color(0xFF125B4A),
@@ -354,7 +355,11 @@ class _HomeScreen extends State<HomeScreen> {
                       fixedSize: Size(200, 50),
                     ),
                     onPressed: () {
-                      context.push("/text_to_speech");
+                      final apiUrl = _controller.text.trim();
+                      context.push(
+                        "/text_to_speech",
+                        extra: {"apiUrl": apiUrl},
+                      );
                     },
                     child: Row(
                       children: [

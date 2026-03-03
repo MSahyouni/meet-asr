@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/services/tts_services.dart';
 import 'package:flutter_app/widgets/duildttsmodeldropdown.dart';
+import 'package:flutter_app/widgets/staggered_fade_slide.dart';
 import 'package:gap/gap.dart';
 
 class Tts extends StatefulWidget {
@@ -42,7 +43,7 @@ class _TtsState extends State<Tts> {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 140, 20, 20),
             child: SingleChildScrollView(
-              child: Column(
+              child: StaggeredFadeSlide(
                 children: [
                   const Gap(20),
                   Container(
