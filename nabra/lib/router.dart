@@ -4,6 +4,7 @@ import 'package:flutter_app/screens/home_screen.dart';
 import 'package:flutter_app/screens/splash_screen.dart';
 import 'package:flutter_app/screens/summary_page.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter/material.dart';
 
 final GoRouter router = GoRouter(
   initialLocation: "/splash",
@@ -31,10 +32,18 @@ final GoRouter router = GoRouter(
     GoRoute(
       path: "/text_to_speech",
       builder: (context, state) {
-        // هنا نستقبل الـ extra كخريطة
         final extra = state.extra as Map<String, dynamic>?;
+        final apiUrl = extra?['apiUrl'];
 
-        return Tts(apiUrl: extra?['apiUrl'] ?? '');
+        if (apiUrl == null || apiUrl.toString().trim().isEmpty) {
+          return const Scaffold(
+            body: Center(
+              child: Text("apiUrl غير موجود - تأكد أنك ترسله عبر extra"),
+            ),
+          );
+        }
+
+        return Tts(apiUrl: apiUrl);
       },
     ),
   ],
