@@ -4,8 +4,10 @@ import '../models/voice_model.dart';
 
 class TtsService {
   static Future<List<VoiceModel>> fetchVoices({required String apiUrl}) async {
-    final apiUrlVoices = apiUrl.replaceAll("transcribe", "tts/voices");
-    final response = await http.get(Uri.parse(apiUrlVoices));
+    // final apiUrlVoices = apiUrl.replaceAll("transcribe", "tts/voices");
+    final response = await http.get(
+      Uri.parse('http://127.0.0.1/Get/tts/voices'),
+    );
     //
     if (response.statusCode == 200) {
       final List data = json.decode(response.body);

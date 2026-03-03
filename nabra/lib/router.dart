@@ -33,17 +33,8 @@ final GoRouter router = GoRouter(
       path: "/text_to_speech",
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>?;
-        final apiUrl = extra?['apiUrl'];
 
-        if (apiUrl == null || apiUrl.toString().trim().isEmpty) {
-          return const Scaffold(
-            body: Center(
-              child: Text("apiUrl غير موجود - تأكد أنك ترسله عبر extra"),
-            ),
-          );
-        }
-
-        return Tts(apiUrl: apiUrl);
+        return Tts(apiUrl: extra?['apiUrl'] ?? '');
       },
     ),
   ],
