@@ -74,6 +74,24 @@ class _UvicornJobPollFilter(logging.Filter):
 _uvicorn_access_logger = logging.getLogger("uvicorn.access")
 _uvicorn_access_logger.addFilter(_UvicornJobPollFilter())
 
+
+class _AsyncioWindowsDisconnectFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+
+        suppressed_markers = (
+            "Exception in callback _ProactorBasePipeTransport._call_connection_lost",
+            "ConnectionResetError: [WinError 10054]",
+        )
+        return not any(marker in msg for marker in suppressed_markers)
+
+
+if sys.platform.startswith("win"):
+    logging.getLogger("asyncio").addFilter(_AsyncioWindowsDisconnectFilter())
+
 # ——— Request ID Context Variable ———
 
 

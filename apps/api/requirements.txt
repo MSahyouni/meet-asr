@@ -41,8 +41,7 @@ numba==0.57.1
 llvmlite==0.40.1
 scipy>=1.11.4,<1.14
 
-# ==== TTS (Kokoro-82M + MMS-TTS for Arabic) ====
-kokoro>=0.9.4
+# ==== TTS (MMS-TTS for Arabic + optional XTTS/Habibi) ====
 # Arabic: facebook/mms-tts-ara via transformers (offline, no extra deps)
 
 # ==== Utilities ====

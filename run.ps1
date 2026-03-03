@@ -3,7 +3,26 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path $PSScriptRoot
 Set-Location $root
 
-$venvDir = Join-Path $root ".venv"
+$preferredVenvDir = Join-Path $root ".venv"
+$legacyVenvDir = Join-Path $root "venv"
+$venvDir = $preferredVenvDir
+
+if ((-not (Test-Path (Join-Path $preferredVenvDir "Scripts\python.exe"))) -and
+    (Test-Path (Join-Path $legacyVenvDir "Scripts\python.exe")) -and
+    (-not (Test-Path $preferredVenvDir))) {
+    Write-Host "[run] ربط .venv بـ venv القديم للتوافق..." -ForegroundColor Yellow
+    New-Item -ItemType Junction -Path $preferredVenvDir -Target $legacyVenvDir | Out-Null
+}
+
+if (Test-Path (Join-Path $preferredVenvDir "Scripts\python.exe")) {
+    $venvDir = $preferredVenvDir
+    Write-Host "[run] استخدام البيئة الافتراضية: .venv" -ForegroundColor DarkGray
+} elseif (Test-Path (Join-Path $legacyVenvDir "Scripts\python.exe")) {
+    $venvDir = $legacyVenvDir
+    Write-Host "[run] تم اكتشاف venv (قديم) وسيتم استخدامه." -ForegroundColor Yellow
+    Write-Host "[run] للتوحيد لاحقًا: أعد إنشاء البيئة باسم .venv." -ForegroundColor DarkGray
+}
+
 $venvPython = Join-Path $venvDir "Scripts\python.exe"
 $apiDir = Join-Path $root "apps\api"
 $requirementsFile = Join-Path $apiDir "requirements.txt"
@@ -20,7 +39,10 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 
 if (-not (Test-Path $venvPython)) {
     Write-Host "[run] إنشاء البيئة الافتراضية .venv ..." -ForegroundColor Yellow
-    python -m venv .venv
+    python -m venv $preferredVenvDir
+    $venvDir = $preferredVenvDir
+    $venvPython = Join-Path $venvDir "Scripts\python.exe"
+    $requirementsStamp = Join-Path $venvDir ".requirements.sha256"
 }
 
 if (-not (Test-Path (Join-Path $apiDir "api.py"))) {
@@ -56,6 +78,7 @@ if ($currentReqHash -ne $installedReqHash) {
 }
 
 Write-Host "[run] سيتم فتح المتصفح تلقائياً عند جاهزية السيرفر..." -ForegroundColor Green
+Get-Job -Name "meetasr-open-browser" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
 Start-Job -Name "meetasr-open-browser" -ScriptBlock {
     param($Url, $HostName, $Port)
     for ($i = 0; $i -lt 90; $i++) {
@@ -78,3 +101,11 @@ Write-Host "[run] للإيقاف: Ctrl+C" -ForegroundColor DarkGray
 
 Set-Location $apiDir
 & $venvPython -m uvicorn api:app --host 0.0.0.0 --port 8000
+$uvicornExitCode = $LASTEXITCODE
+
+if (($uvicornExitCode -eq 0) -or ($uvicornExitCode -eq 130) -or ($uvicornExitCode -eq 3221225786)) {
+    Write-Host "[run] تم إيقاف السيرفر بشكل طبيعي." -ForegroundColor DarkGray
+    exit 0
+}
+
+throw "توقّف uvicorn بكود خروج غير متوقع: $uvicornExitCode"

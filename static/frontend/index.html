@@ -40,27 +40,21 @@
         <div class="col-input">
           <h3>المدخلات</h3>
           <div class="source-tabs">
-            <button class="src-btn active" data-src="file">رفع ملف</button>
+            <button class="src-btn active" data-src="file">رفع ملف/ملفات</button>
             <button class="src-btn" data-src="mic">تسجيل من الميكروفون</button>
-          </div>
-          <div id="file-zone" class="zone drop-zone">
-            <input type="file" id="fileIn" accept="audio/*,.m4a,.mp4,.webm,.3gp,.wav,.mp3,.ogg,.flac" class="hidden">
-            <div class="file-control-row">
-              <label id="fileInLabel" for="fileIn" class="file-label">اختر ملف صوتي واحد</label>
-              <button id="btnClearFileIn" type="button" class="btn btn-secondary file-clear-btn">إلغاء الملف</button>
-            </div>
-          </div>
-          <div id="mic-zone" class="zone hidden">
-            <button id="micBtn" class="btn btn-secondary">بدء التسجيل</button>
-            <span id="micStatus"></span>
           </div>
           <div id="files-zone" class="zone drop-zone">
             <div class="file-control-row">
-              <label id="filesInLabel">رفع عدة ملفات</label>
+              <label id="filesInLabel">اختر ملفًا صوتيًا أو أكثر</label>
               <button id="btnClearFilesIn" type="button" class="btn btn-secondary file-clear-btn">إلغاء الملفات</button>
             </div>
             <input type="file" id="filesIn" multiple accept="audio/*,.m4a,.mp4,.webm,.3gp,.wav,.mp3,.ogg,.flac" class="input">
+            <div class="hint">يمكنك اختيار ملف واحد أو عدة ملفات دفعة واحدة.</div>
             <div id="filesInStatus" class="hint hidden"></div>
+          </div>
+          <div id="mic-zone" class="zone hidden">
+            <button id="micBtn" class="btn btn-secondary">بدء التسجيل</button>
+            <span id="micStatus" class="hint">جاهز للتسجيل</span>
           </div>
           <details class="accordion">
             <summary>خيارات النموذج</summary>
@@ -76,8 +70,7 @@
             <label>الدقة <select id="computeSel"><option value="auto">auto</option><option value="int8">int8</option><option value="float16">float16</option><option value="float32">float32</option></select></label>
           </details>
           <div class="btn-row">
-            <button id="btnSend" class="btn btn-primary">إرسال ملف واحد</button>
-            <button id="btnBatch" class="btn btn-secondary">إرسال عدة ملفات</button>
+            <button id="btnSend" class="btn btn-primary">بدء التحويل</button>
           </div>
         </div>
         <div class="col-output">
@@ -139,7 +132,7 @@
     </div>
 
     <div id="tts-panel" class="panel">
-      <p class="hint">💬 عربي: ar_mms, ar_1–ar_4 | إنجليزي: af_heart وغيره | يدعم أكثر من 50 صوتاً</p>
+      <p class="hint">💬 محركات TTS المتاحة: auto / xtts_v2 / habibi / mms</p>
       <div class="grid">
         <div class="col-input">
           <h3>المدخلات</h3>
@@ -148,8 +141,8 @@
             <select id="ttsEngine" class="input">
               <option value="auto" selected>auto (الأقوى: XTTS v2 عند وجود بصمة، ثم fallback عربي)</option>
               <option value="xtts_v2">xtts_v2 (استنساخ بصمة المستخدم)</option>
+              <option value="habibi">habibi (لهجات عربية متعددة)</option>
               <option value="mms">mms (عربي)</option>
-              <option value="kokoro">kokoro (عام)</option>
             </select>
           </div>
           <div class="zone">
@@ -163,13 +156,33 @@
           <div class="zone">
             <label>الصوت</label>
             <select id="ttsVoice" class="input">
+              <option value="habibi_unified">habibi_unified</option>
+              <option value="habibi_specialized">habibi_specialized</option>
               <option value="ar_mms">ar_mms (عربي)</option>
-              <option value="ar_1">ar_1 (عربي)</option>
-              <option value="ar_2">ar_2 (عربي)</option>
-              <option value="ar_3">ar_3 (عربي)</option>
-              <option value="ar_4">ar_4 (عربي)</option>
-              <option value="af_heart">af_heart (إنجليزي)</option>
+              <option value="xtts_v2">xtts_v2</option>
             </select>
+          </div>
+          <div class="zone">
+            <label>لهجة Habibi (اختياري)</label>
+            <select id="ttsDialect" class="input">
+              <option value="UNK" selected>UNK (auto)</option>
+              <option value="MSA">MSA</option>
+              <option value="SAU">SAU</option>
+              <option value="UAE">UAE</option>
+              <option value="ALG">ALG</option>
+              <option value="IRQ">IRQ</option>
+              <option value="EGY">EGY</option>
+              <option value="MAR">MAR</option>
+              <option value="OMN">OMN</option>
+              <option value="TUN">TUN</option>
+              <option value="LEV">LEV</option>
+              <option value="SDN">SDN</option>
+              <option value="LBY">LBY</option>
+            </select>
+          </div>
+          <div class="zone">
+            <label>ref_text لـ Habibi (اختياري: يُستخدم إذا لم يكن محفوظًا مع البصمة)</label>
+            <textarea id="ttsRefText" rows="3" placeholder="اكتب النص المطابق للعينة الصوتية المرجعية..."></textarea>
           </div>
           <div class="zone">
             <label>السرعة: <span id="speedValue">1.0</span>x</label>
