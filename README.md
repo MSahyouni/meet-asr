@@ -39,7 +39,6 @@ meet-asr/
 │  │     ├─ routers/
 │  │     ├─ compat/
 │  │     └─ features/
-│  │  └─ tests/                # مرآة هيكلية للاختبارات (unit/integration)
 ├─ nabra/                     # Flutter app (اختياري)
 ├─ static/frontend/            # واجهة HTML/CSS/JS المدمجة
 ├─ data/
@@ -230,8 +229,6 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 ## 10) اختبارات سريعة
 
 المرجع التشغيلي الحالي للاختبارات: `tests/` في جذر المشروع.
-
-مرآة الهيكلية المعيارية موجودة في: `apps/api/tests/` (تنظيم فقط حاليًا).
 
 من داخل `apps/api`:
 ```powershell
