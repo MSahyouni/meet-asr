@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/services/tts_services.dart';
 import 'package:flutter_app/widgets/duildttsmodeldropdown.dart';
 import 'package:flutter_app/widgets/staggered_fade_slide.dart';
+import 'package:flutter_app/widgets/tts_audio_player.dart';
 import 'package:gap/gap.dart';
 
 class Tts extends StatefulWidget {
@@ -144,18 +145,18 @@ class _TtsState extends State<Tts> {
                             apiUrl: widget.apiUrl,
                           );
 
-                          print("Audio URL: $audioUrl");
-
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text("تم إنشاء الصوت بنجاح"),
                             ),
                           );
+                          Gap(20);
+                          if (audioUrl != null && audioUrl.isNotEmpty) {
+                            TtsAudioPlayer(audioUrl: audioUrl);
+                          }
                         } catch (e) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text("حدث خطأ أثناء التحويل"),
-                            ),
+                            SnackBar(content: Text("حدث خطأ أثناء التحويل:$e")),
                           );
                         }
                       },
