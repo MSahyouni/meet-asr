@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/widgets/get_drawer.dart';
 import 'package:gap/gap.dart';
 
 class Standerd extends StatelessWidget {
@@ -14,9 +15,19 @@ class Standerd extends StatelessWidget {
           'assets/images/image_5.png',
           fit: BoxFit.cover,
         ),
-        toolbarHeight: 140,
+        toolbarHeight: 120,
         title: Row(
           children: [
+            Gap(80),
+            Text(
+              "نبرة",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 30,
+                color: const Color.fromARGB(255, 214, 204, 204),
+              ),
+            ),
+            Gap(75),
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: Image.asset(
@@ -26,17 +37,10 @@ class Standerd extends StatelessWidget {
                 fit: BoxFit.contain,
               ),
             ),
-            Gap(45),
-            Text(
-              "الجمهورية العربية السورية  \n        وزارة الدفاع ",
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: const Color.fromARGB(255, 214, 204, 204),
-              ),
-            ),
           ],
         ),
       ),
+      drawer: get_Drawer(context),
       body: Stack(
         children: [
           Image.asset(
