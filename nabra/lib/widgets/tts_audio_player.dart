@@ -1,5 +1,6 @@
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/services/audio_download_service.dart';
 import 'package:gap/gap.dart';
 
 class TtsAudioPlayer extends StatefulWidget {
@@ -14,6 +15,7 @@ class TtsAudioPlayer extends StatefulWidget {
 class _TtsAudioPlayerState extends State<TtsAudioPlayer> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool isPlaying = false;
+  bool isDownloading = false;
 
   @override
   void initState() {
@@ -57,6 +59,32 @@ class _TtsAudioPlayerState extends State<TtsAudioPlayer> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text("فشل إيقاف الصوت: $e")));
+    }
+  }
+
+  Future<void> downloadAudio() async {
+    try {
+      setState(() {
+        isDownloading = true;
+      });
+
+      final savedPath = await AudioDownloadService.downloadAudioToDownloads(
+        audioUrl: widget.audioUrl,
+      );
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("تم حفظ الملف في:\n$savedPath")));
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("فشل حفظ الملف: $e")));
+    } finally {
+      if (mounted) {
+        setState(() {
+          isDownloading = false;
+        });
+      }
     }
   }
 
@@ -105,6 +133,21 @@ class _TtsAudioPlayerState extends State<TtsAudioPlayer> {
                 label: const Text("إيقاف"),
               ),
             ],
+          ),
+          const Gap(12),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.white24),
+            onPressed: isDownloading ? null : downloadAudio,
+            icon: isDownloading
+                ? const SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download),
+            label: Text(
+              isDownloading ? "جارٍ الحفظ..." : "حفظ في مجلد الصوتيات",
+            ),
           ),
           const Gap(10),
           Text(

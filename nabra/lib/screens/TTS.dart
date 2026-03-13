@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/services/tts_services.dart';
-import 'package:flutter_app/widgets/duildttsmodeldropdown.dart';
 import 'package:flutter_app/widgets/staggered_fade_slide.dart';
 import 'package:flutter_app/widgets/tts_audio_player.dart';
+import 'package:flutter_app/widgets/tts_convert_button.dart';
+import 'package:flutter_app/widgets/tts_input_section.dart';
+import 'package:flutter_app/widgets/tts_voices_dropdown.dart';
 import 'package:gap/gap.dart';
 
 class Tts extends StatefulWidget {
@@ -17,11 +19,55 @@ class Tts extends StatefulWidget {
 class _TtsState extends State<Tts> {
   final TextEditingController _textController = TextEditingController();
   String? selectedVoice;
+  String? audioUrl;
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleConvert() async {
+    if (_textController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("الرجاء إدخال نص")));
+      return;
+    }
+
+    if (selectedVoice == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("الرجاء اختيار صوت")));
+      return;
+    }
+
+    try {
+      final generateAudioUrl = await TtsService.convertTextToSpeech(
+        text: _textController.text.trim(),
+        voiceId: selectedVoice!,
+        apiUrl: widget.apiUrl,
+      );
+      setState(() {
+        audioUrl = generateAudioUrl;
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("تم إنشاء الصوت بنجاح")));
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("حدث خطأ أثناء التحويل:$e")));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
+
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -35,6 +81,7 @@ class _TtsState extends State<Tts> {
           ),
         ),
       ),
+
       body: Stack(
         children: [
           Positioned.fill(
@@ -47,52 +94,54 @@ class _TtsState extends State<Tts> {
               child: StaggeredFadeSlide(
                 children: [
                   const Gap(20),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Color(0xFF0C3A34),
-                          Color(0xFF125B4A),
-                          Color(0xFF1A7B6A),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Text(
-                      "هنا يمكنك إدخال النص الذي ترغب في تحويله إلى صوت. قم بكتابة النص في الحقل أدناه واضغط على زر التحويل للاستماع إلى النتيجة.",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        height: 1.5,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
+                  // Container(
+                  //   width: double.infinity,
+                  //   padding: const EdgeInsets.all(16),
+                  //   decoration: BoxDecoration(
+                  //     gradient: LinearGradient(
+                  //       colors: [
+                  //         Color(0xFF0C3A34),
+                  //         Color(0xFF125B4A),
+                  //         Color(0xFF1A7B6A),
+                  //       ],
+                  //       begin: Alignment.topLeft,
+                  //       end: Alignment.bottomRight,
+                  //     ),
+                  //     borderRadius: BorderRadius.circular(12),
+                  //   ),
+                  //   child: const Text(
+                  //     "هنا يمكنك إدخال النص الذي ترغب في تحويله إلى صوت. قم بكتابة النص في الحقل أدناه واضغط على زر التحويل للاستماع إلى النتيجة.",
+                  //     style: TextStyle(
+                  //       color: Colors.white,
+                  //       fontSize: 18,
+                  //       height: 1.5,
+                  //     ),
+                  //     textAlign: TextAlign.center,
+                  //   ),
+                  // ),
+                  TtsInputSection(controller: _textController),
+
                   const Gap(20),
-                  TextField(
-                    controller: _textController,
-                    style: TextStyle(
-                      color: const Color.fromARGB(255, 221, 217, 217),
-                      fontSize: 16,
-                    ),
-                    maxLines: 5,
-                    decoration: InputDecoration(
-                      hintText: "أدخل النص هنا...",
-                      hintStyle: TextStyle(
-                        color: const Color.fromARGB(255, 158, 156, 156),
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                    ),
-                  ),
-                  const Gap(20),
-                  TtsModelDropdown(
-                    selectedModel: selectedVoice,
+
+                  // TextField(
+                  //   controller: _textController,
+                  //   style: TextStyle(
+                  //     color: const Color.fromARGB(255, 221, 217, 217),
+                  //     fontSize: 16,
+                  //   ),
+                  //   maxLines: 5,
+                  //   decoration: InputDecoration(
+                  //     hintText: "أدخل النص هنا...",
+                  //     hintStyle: TextStyle(
+                  //       color: const Color.fromARGB(255, 158, 156, 156),
+                  //     ),
+                  //     border: OutlineInputBorder(
+                  //       borderRadius: BorderRadius.circular(15),
+                  //     ),
+                  //   ),
+                  // ),
+                  TtsVoiceDropdown(
+                    selectedVoice: selectedVoice,
                     apiUrl: widget.apiUrl,
                     onChanged: (value) {
                       setState(() {
@@ -100,72 +149,40 @@ class _TtsState extends State<Tts> {
                       });
                     },
                   ),
+
                   Gap(20),
 
-                  Container(
-                    width: 250,
-                    height: 45,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Color(0xFF0C3A34),
-                          Color(0xFF125B4A),
-                          Color(0xFF1A7B6A),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        elevation: 0,
-                        fixedSize: Size(200, 50),
-                      ),
-                      onPressed: () async {
-                        if (_textController.text.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("الرجاء إدخال نص")),
-                          );
-                          return;
-                        }
+                  // Container(
+                  //   width: 250,
+                  //   height: 45,
+                  //   decoration: BoxDecoration(
+                  //     gradient: LinearGradient(
+                  //       colors: [
+                  //         Color(0xFF0C3A34),
+                  //         Color(0xFF125B4A),
+                  //         Color(0xFF1A7B6A),
+                  //       ],
+                  //       begin: Alignment.topLeft,
+                  //       end: Alignment.bottomRight,
+                  //     ),
+                  //     borderRadius: BorderRadius.circular(20),
+                  //   ),
+                  //   child: ElevatedButton(
+                  //     style: ElevatedButton.styleFrom(
+                  //       backgroundColor: Colors.transparent,
+                  //       elevation: 0,
+                  //     )
+                  //     child: Text(
+                  //       'الاستماع إلى النص',
+                  //       style: TextStyle(color: Colors.white, fontSize: 16),
+                  //     ),
+                  //   ),
+                  // ),
+                  TtsConvertButton(onPressed: _handleConvert),
 
-                        if (selectedVoice == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("الرجاء اختيار صوت")),
-                          );
-                          return;
-                        }
-
-                        try {
-                          final audioUrl = await TtsService.convertTextToSpeech(
-                            text: _textController.text,
-                            voiceId: selectedVoice!,
-                            apiUrl: widget.apiUrl,
-                          );
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text("تم إنشاء الصوت بنجاح"),
-                            ),
-                          );
-                          Gap(20);
-                          if (audioUrl != null && audioUrl.isNotEmpty) {
-                            TtsAudioPlayer(audioUrl: audioUrl);
-                          }
-                        } catch (e) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text("حدث خطأ أثناء التحويل:$e")),
-                          );
-                        }
-                      },
-                      child: Text(
-                        'الاستماع إلى النص',
-                        style: TextStyle(color: Colors.white, fontSize: 16),
-                      ),
-                    ),
-                  ),
+                  Gap(20),
+                  if (audioUrl != null && audioUrl!.isNotEmpty)
+                    TtsAudioPlayer(audioUrl: audioUrl!),
                 ],
               ),
             ),
