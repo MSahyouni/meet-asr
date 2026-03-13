@@ -129,7 +129,8 @@ def test_list_voices_returns_non_empty():
     voices = list_voices()
     assert isinstance(voices, list)
     assert len(voices) > 0
-    assert "af_heart" in voices
+    assert "ar_mms" in voices
+    assert "xtts_v2" in voices
 
 
 def test_response_error_format_has_required_keys():

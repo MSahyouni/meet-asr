@@ -7,12 +7,6 @@ asr:
 
 # TTS Engines
 tts:
-  kokoro:
-    model_id: "kokoro"
-    voices:
-      - "af_heart"
-      - "af_sky"
-       
   mms:
     model_id: "facebook/mms-tts-ara"
     

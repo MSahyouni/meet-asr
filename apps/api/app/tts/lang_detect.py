@@ -1,4 +1,4 @@
-# tts/lang_detect.py — كشف اللغة للنص (لتفريق مسار Kokoro vs XTTS)
+# tts/lang_detect.py — كشف اللغة للنص (لتوجيه مسار TTS المناسب)
 """Lightweight language detection for TTS routing."""
 
 # نطاق الحروف العربية (بما فيها الأرقام العربية، التشكيل، علامات الترقيم العربية)

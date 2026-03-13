@@ -1,5 +1,6 @@
-# routers/tts.py — POST /tts (Kokoro TTS)
+# routers/tts.py — POST /tts (MMS / XTTS / Habibi)
 import asyncio
+import json
 import pathlib
 import uuid
 from typing import List, Optional
@@ -47,6 +48,7 @@ async def tts_voices(x_api_key: Optional[str] = Header(None, alias="X-API-Key"))
 async def upload_tts_voice_sample(
     request: Request,
     user_email: str = Form(...),
+    ref_text: str = Form(""),
     file: UploadFile = File(...),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
@@ -55,7 +57,7 @@ async def upload_tts_voice_sample(
     if auth_error:
         return auth_error
     try:
-        from app.tts.voice_profiles import save_user_speaker_sample, user_voice_dir
+        from app.tts.voice_profiles import save_user_speaker_sample, save_user_speaker_ref_text, user_voice_dir
 
         raw = await file.read()
         if not raw:
@@ -64,12 +66,16 @@ async def upload_tts_voice_sample(
             return response_error(400, "validation_error", f"audio sample too large (max {MAX_VOICE_SAMPLE_MB}MB)")
 
         saved = save_user_speaker_sample(user_email=user_email, content=raw, filename=file.filename or "voice.wav")
+        ref_text_value = (ref_text or "").strip()
+        if ref_text_value:
+            save_user_speaker_ref_text(user_email=user_email, speaker_ref=saved.name, ref_text=ref_text_value)
         directory = user_voice_dir(user_email)
         return JSONResponse(
             {
                 "ok": True,
                 "user_email": user_email,
                 "speaker_ref": saved.name,
+                "has_ref_text": bool(ref_text_value),
                 "voice_dir": directory.as_posix(),
                 "bytes": len(raw),
                 "message": "voice sample uploaded",
@@ -86,6 +92,8 @@ async def upload_tts_voice_sample(
 async def upload_tts_voice_samples(
     request: Request,
     user_email: str = Form(...),
+    ref_texts_json: str = Form(""),
+    default_ref_text: str = Form(""),
     files: List[UploadFile] = File(...),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
@@ -94,9 +102,26 @@ async def upload_tts_voice_samples(
     if auth_error:
         return auth_error
     try:
-        from app.tts.voice_profiles import save_user_speaker_sample, user_voice_dir
+        from app.tts.voice_profiles import save_user_speaker_ref_text, save_user_speaker_sample, user_voice_dir
+
+        ref_text_map = {}
+        if (ref_texts_json or "").strip():
+            try:
+                parsed = json.loads(ref_texts_json)
+            except Exception as e:
+                return response_error(400, "validation_error", f"invalid ref_texts_json: {e}")
+            if not isinstance(parsed, dict):
+                return response_error(400, "validation_error", "ref_texts_json must be a JSON object")
+            for key, value in parsed.items():
+                key_norm = pathlib.Path(str(key)).name
+                value_norm = (str(value) if value is not None else "").strip()
+                if key_norm and value_norm:
+                    ref_text_map[key_norm] = value_norm
+
+        default_ref_text_value = (default_ref_text or "").strip()
 
         saved_files = []
+        saved_file_details = []
         total_bytes = 0
         for uploaded in files:
             raw = await uploaded.read()
@@ -113,7 +138,29 @@ async def upload_tts_voice_samples(
                 content=raw,
                 filename=(uploaded.filename or "voice.wav"),
             )
+
+            candidate_keys = [
+                pathlib.Path(uploaded.filename or "").name,
+                saved.name,
+            ]
+            ref_text_value = ""
+            for key in candidate_keys:
+                if key in ref_text_map:
+                    ref_text_value = ref_text_map[key]
+                    break
+            if not ref_text_value:
+                ref_text_value = default_ref_text_value
+            if ref_text_value:
+                save_user_speaker_ref_text(user_email=user_email, speaker_ref=saved.name, ref_text=ref_text_value)
+
             saved_files.append(saved.name)
+            saved_file_details.append(
+                {
+                    "name": saved.name,
+                    "bytes": len(raw),
+                    "has_ref_text": bool(ref_text_value),
+                }
+            )
             total_bytes += len(raw)
 
         if not saved_files:
@@ -126,6 +173,7 @@ async def upload_tts_voice_samples(
                 "user_email": user_email,
                 "voice_dir": directory.as_posix(),
                 "files": saved_files,
+                "file_details": saved_file_details,
                 "count": len(saved_files),
                 "bytes": total_bytes,
                 "message": "voice samples uploaded",
@@ -147,22 +195,27 @@ def list_tts_voice_samples(
     if auth_error:
         return auth_error
     try:
-        from app.tts.voice_profiles import list_user_speaker_samples, user_voice_dir
+        from app.tts.voice_profiles import get_user_speaker_ref_text, list_user_speaker_samples, user_voice_dir
 
         files = list_user_speaker_samples(user_email)
         directory = user_voice_dir(user_email)
+        file_items = []
+        for f in files:
+            ref_text_value = get_user_speaker_ref_text(user_email, f.name)
+            file_items.append(
+                {
+                    "name": f.name,
+                    "size_bytes": f.stat().st_size,
+                    "has_ref_text": bool(ref_text_value),
+                    "ref_text": ref_text_value,
+                }
+            )
         return JSONResponse(
             {
                 "ok": True,
                 "user_email": user_email,
                 "voice_dir": directory.as_posix(),
-                "files": [
-                    {
-                        "name": f.name,
-                        "size_bytes": f.stat().st_size,
-                    }
-                    for f in files
-                ],
+                "files": file_items,
             }
         )
     except ValueError as e:
@@ -235,7 +288,7 @@ async def tts(
 ):
     """
     Synthesize speech from text. Returns WAV path and download URL.
-    Body (JSON): { "text", "voice" (optional), "speed" (optional), "seed" (optional), "engine" (auto|mms|kokoro|xtts_v2), "speaker_ref" (optional for xtts_v2), "format" (ignored; always wav) }
+    Body (JSON): { "text", "voice" (optional), "speed" (optional), "seed" (optional), "engine" (auto|mms|xtts_v2|habibi), "speaker_ref" (optional), "ref_text" (required for habibi), "dialect" (optional for habibi), "format" (ignored; always wav) }
     Max text length: 5000 chars. Rate: 12/minute per IP.
     """
     auth_error = check_api_key(x_api_key)
@@ -267,6 +320,8 @@ async def tts(
             seed = None
     engine = (body.get("engine") or "auto").strip().lower() or "auto"
     speaker_ref = (body.get("speaker_ref") or "").strip() or None
+    ref_text = (body.get("ref_text") or "").strip() or None
+    dialect = (body.get("dialect") or "").strip() or None
     # format is accepted but we only output wav
 
     # Generate unique path under outputs/tts/ (no user-controlled path → no path traversal)
@@ -290,6 +345,8 @@ async def tts(
             engine=engine,
             user_email=user_email,
             speaker_ref=speaker_ref,
+            ref_text=ref_text,
+            dialect=dialect,
         )
     except ValueError as e:
         return response_error(400, "validation_error", str(e))
@@ -325,6 +382,7 @@ async def tts(
                     "fallback_used": bool(result.get("fallback_used", False)),
                     "resolved_voice": result.get("resolved_voice"),
                     "speaker_ref": result.get("speaker_ref"),
+                    "dialect": result.get("dialect"),
                 },
             )
         except Exception:
@@ -337,10 +395,11 @@ async def tts(
         "download_url": download_url,
         "duration_sec": result["duration_sec"],
         "sample_rate": result["sample_rate"],
-        "engine_used": result.get("engine_used", "kokoro"),
+        "engine_used": result.get("engine_used", "mms_arabic"),
         "arabic_detected": bool(result.get("arabic_detected", False)),
         "fallback_used": bool(result.get("fallback_used", False)),
         "requested_voice": result.get("requested_voice", voice),
         "resolved_voice": result.get("resolved_voice", result.get("voice", voice)),
         "speaker_ref": result.get("speaker_ref"),
+        "dialect": result.get("dialect"),
     })

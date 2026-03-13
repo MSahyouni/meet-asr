@@ -4,7 +4,7 @@
 
 - ASR: تفريغ صوتي + تمييز متحدثين.
 - NLP: تلخيص + كلمات مفتاحية + NER.
-- TTS: MMS عربي + Kokoro + XTTS v2 (بصمات صوت لكل مستخدم).
+- TTS: MMS عربي + XTTS v2 + Habibi (لهجات عربية متعددة).
 - Auth + Users + Dashboard + Billing.
 - تشغيل محلي أو Docker، مع دعم CPU/GPU.
 
@@ -39,7 +39,6 @@ meet-asr/
 │  │     ├─ routers/
 │  │     ├─ compat/
 │  │     └─ features/
-│  │  └─ tests/                # مرآة هيكلية للاختبارات (unit/integration)
 ├─ nabra/                     # Flutter app (اختياري)
 ├─ static/frontend/            # واجهة HTML/CSS/JS المدمجة
 ├─ data/
@@ -82,7 +81,8 @@ run.bat
 ```
 
 ما يفعله `run.ps1`:
-- ينشئ `.venv` إن لم توجد.
+- يفضّل `.venv`، وإذا وجد `venv` القديم يستخدمه تلقائيًا.
+- ينشئ `.venv` عند عدم وجود أي بيئة افتراضية.
 - يشغّل `uvicorn` من `apps/api`.
 - يفتح المتصفح تلقائيًا عند جاهزية المنفذ `8000`.
 
@@ -121,7 +121,7 @@ Copy-Item apps/api/.env.example apps/api/.env
 - `ASR_ENV`, `ASR_ALLOWED_ORIGINS`
 - `JWT_SECRET`, `JWT_EXPIRES_SECONDS`, `JWT_ISSUER`, `JWT_AUDIENCE`, `ADMIN_EMAILS`
 - `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE`
-- `TTS_MMS_ENABLED`, `TTS_PREPROCESS_ENABLED`, `TTS_KOKORO_ALLOW_DOWNLOAD`
+- `TTS_MMS_ENABLED`, `TTS_PREPROCESS_ENABLED`
 - `RAG_ENABLE`, `RAG_EMB_MODEL`
 
 ملاحظات:
@@ -166,12 +166,14 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 ### ASR
 - `POST /transcribe` (legacy)
 - `POST /asr/transcribe` (feature route)
-- `POST /transcribe-batch` / `POST /asr/transcribe-batch`
+- `POST /transcribe-batch` / `POST /asr/transcribe-batch` (alias للتوافق الخلفي؛ نفس منطق ودالة `transcribe`)
+- نفس endpoint يدعم رفع `file` أو `audio` أو `files` (ملف واحد أو عدة ملفات).
 - دعم `enhance_mode` (`off`, `light`, `full`) و async jobs.
 
 ### NLP
 - `POST /summarize` / `POST /nlp/summarize`
 - `POST /ner` / `POST /nlp/ner`
+- التلخيص يعتمد دالة endpoint واحدة (`summarize_after`) وتُعرَض عبر المسارين للتوافق والتنظيم.
 - `summarize` يقبل FormData و JSON.
 - الوضع الافتراضي للتلخيص أصبح `ultra` لأعلى جودة عربية.
 - عند أول طلب `ultra` يتم تنزيل النموذج إلى `data/models/summarizers/ultra/` ثم الاعتماد عليه محليًا.
@@ -180,9 +182,14 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 - `POST /tts` (تحويل نص إلى WAV)
 - `GET /tts/voices`
 - وضع `engine=auto` يعطي أولوية لـ XTTS v2 عند وجود بصمة للمستخدم، ثم fallback تلقائي إلى TTS العربي.
+- **تجريبي/اختياري:** `engine=habibi` (Unified/Specialized لهجات عربية متعددة) ويتطلب:
+  - تثبيت اختياري: `pip install habibi-tts`
+  - `user_email` + عينة صوت مرفوعة مسبقًا
+  - `ref_text` (نص مطابق لعينة الصوت المرجعية) — يمكن حفظه مرة واحدة عند رفع العينة عبر `POST /tts/voice-sample`
+  - `dialect` اختياري (`UNK|MSA|SAU|UAE|ALG|IRQ|EGY|MAR|OMN|TUN|LEV|SDN|LBY`)
 - XTTS v2 بصمات لكل مستخدم:
   - `POST /tts/voice-sample`
-  - `POST /tts/voice-samples`
+  - `POST /tts/voice-samples` (يدعم أيضًا `ref_texts_json` كخريطة JSON: اسم_الملف -> ref_text، و`default_ref_text` احتياطي)
   - `GET /tts/voice-samples`
   - `GET /tts/voice-file`
   - `DELETE /tts/voice-sample`
@@ -223,8 +230,6 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 
 المرجع التشغيلي الحالي للاختبارات: `tests/` في جذر المشروع.
 
-مرآة الهيكلية المعيارية موجودة في: `apps/api/tests/` (تنظيم فقط حاليًا).
-
 من داخل `apps/api`:
 ```powershell
 pytest -q ../../tests/test_auth_security.py ../../tests/test_secure_endpoints.py
@@ -239,7 +244,7 @@ pytest -q ../../tests/test_api_units.py
 
 ## 11) ملاحظات تشغيل مهمة
 
-- التزم ببيئة Python واحدة فقط (`.venv`) وتجنب المزج مع `venv` القديم.
+- الأفضل توحيد البيئة على (`.venv`)؛ السكربت يدعم (`venv`) القديم للتوافق.
 - عند مشاكل CUDA/نماذج، افحص أولاً `/health`.
 - لتجربة الواجهة مباشرة استخدم `http://127.0.0.1:8000/`.
 

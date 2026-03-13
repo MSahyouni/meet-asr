@@ -57,6 +57,32 @@ def save_user_speaker_sample(user_email: str, content: bytes, filename: Optional
     return target
 
 
+def _speaker_ref_text_path(audio_path: pathlib.Path) -> pathlib.Path:
+    return audio_path.with_name(f"{audio_path.name}.ref.txt")
+
+
+def save_user_speaker_ref_text(user_email: str, speaker_ref: str, ref_text: str) -> pathlib.Path:
+    target_audio = resolve_user_speaker_path(user_email=user_email, speaker_ref=speaker_ref)
+    text_value = (ref_text or "").strip()
+    if not text_value:
+        raise ValueError("ref_text cannot be empty")
+    target_text = _speaker_ref_text_path(target_audio)
+    target_text.write_text(text_value, encoding="utf-8")
+    return target_text
+
+
+def get_user_speaker_ref_text(user_email: str, speaker_ref: str) -> Optional[str]:
+    target_audio = resolve_user_speaker_path(user_email=user_email, speaker_ref=speaker_ref)
+    target_text = _speaker_ref_text_path(target_audio)
+    if not target_text.exists() or not target_text.is_file():
+        return None
+    try:
+        value = target_text.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    return value or None
+
+
 def list_user_speaker_samples(user_email: str) -> list[pathlib.Path]:
     directory = user_voice_dir(user_email)
     files = [p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in _ALLOWED_AUDIO_EXT]
@@ -67,5 +93,11 @@ def delete_user_speaker_sample(user_email: str, speaker_ref: str) -> bool:
     path = resolve_user_speaker_path(user_email=user_email, speaker_ref=speaker_ref)
     if not path.exists() or not path.is_file():
         return False
+    sidecar = _speaker_ref_text_path(path)
+    if sidecar.exists() and sidecar.is_file():
+        try:
+            sidecar.unlink()
+        except Exception:
+            pass
     path.unlink()
     return True

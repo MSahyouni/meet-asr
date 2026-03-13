@@ -23,13 +23,18 @@
     qsa(".src-btn").forEach(function (x) { x.classList.remove("active"); });
     var srcBtn = qs('.src-btn[data-src="' + srcName + '"]');
     if (srcBtn) srcBtn.classList.add("active");
-    var fileZone = getId("file-zone"), micZone = getId("mic-zone");
+    var micZone = getId("mic-zone"), filesZone = getId("files-zone");
     if (srcName === "file") {
-      if (fileZone) fileZone.classList.remove("hidden");
+      if (filesZone) filesZone.classList.remove("hidden");
       if (micZone) micZone.classList.add("hidden");
     } else {
-      if (fileZone) fileZone.classList.add("hidden");
+      if (filesZone) filesZone.classList.add("hidden");
       if (micZone) micZone.classList.remove("hidden");
+      var filesIn = getId("filesIn");
+      if (filesIn) {
+        filesIn.value = "";
+        updateMultiFilesStatus();
+      }
     }
   }
 
@@ -56,7 +61,7 @@
       [
         "apiKey", "timeout", "whisperMode", "enhance", "enhanceLevel", "maxSpeakers", "enrollThreshold",
         "deviceSel", "computeSel", "summaryMode", "ttsEngine", "ttsUserEmail", "ttsText", "ttsVoice",
-        "ttsSpeed", "ttsSeed", "ttsVoiceFilesList", "spkName", "spkList", "spkFilesList",
+        "ttsSpeed", "ttsSeed", "ttsDialect", "ttsRefText", "ttsVoiceFilesList", "spkName", "spkList", "spkFilesList",
         "authEmail", "authFullName", "profileFullName", "profileBio", "profileAvatar"
       ].forEach(function (id) {
         var el = getId(id);
@@ -192,22 +197,6 @@
     if (document.visibilityState === "hidden") saveUIState();
   });
 
-  function updateSingleFileLabel() {
-    var fileInput = getId("fileIn");
-    var label = getId("fileInLabel");
-    var clearBtn = getId("btnClearFileIn");
-    if (!fileInput || !label) return;
-    if (fileInput.files && fileInput.files.length > 0) {
-      label.textContent = fileInput.files[0].name || "تم اختيار ملف صوتي";
-      label.classList.add("selected");
-      if (clearBtn) clearBtn.classList.remove("hidden");
-      return;
-    }
-    label.textContent = "اختر ملف صوتي واحد";
-    label.classList.remove("selected");
-    if (clearBtn) clearBtn.classList.add("hidden");
-  }
-
   function updateMultiFilesStatus() {
     var filesInput = getId("filesIn");
     var label = getId("filesInLabel");
@@ -218,38 +207,23 @@
     if (count > 0) {
       var first = filesInput.files[0] ? (filesInput.files[0].name || "") : "";
       if (label) {
-        label.textContent = count === 1 ? ("ملف مرفوع: " + first) : ("ملفات مرفوعة: " + count);
+        label.textContent = count === 1 ? ("تم اختيار ملف: " + first) : ("تم اختيار " + count + " ملفات");
       }
       if (status) {
-        status.textContent = count === 1 ? first : ("أول ملف: " + first + " — العدد: " + count);
+        status.textContent = count === 1 ? "جاهز للمعالجة" : ("أول ملف: " + first + " | العدد: " + count);
         status.classList.remove("hidden");
       }
       filesInput.classList.add("selected-files");
       if (clearBtn) clearBtn.classList.remove("hidden");
       return;
     }
-    if (label) label.textContent = "رفع عدة ملفات";
+    if (label) label.textContent = "اختر ملفًا صوتيًا أو أكثر";
     if (status) {
       status.textContent = "";
       status.classList.add("hidden");
     }
     filesInput.classList.remove("selected-files");
     if (clearBtn) clearBtn.classList.add("hidden");
-  }
-
-  var fileInEl = getId("fileIn");
-  if (fileInEl) {
-    fileInEl.addEventListener("change", updateSingleFileLabel);
-    updateSingleFileLabel();
-  }
-
-  var btnClearFileIn = getId("btnClearFileIn");
-  if (btnClearFileIn && fileInEl) {
-    btnClearFileIn.addEventListener("click", function () {
-      fileInEl.value = "";
-      updateSingleFileLabel();
-      queueUIStateSave();
-    });
   }
 
   var filesInEl = getId("filesIn");
@@ -423,11 +397,6 @@
     });
   }
 
-  setupDropZone("file-zone", "fileIn", function () {
-    updateSingleFileLabel();
-    queueUIStateSave();
-  });
-
   setupDropZone("files-zone", "filesIn", function () {
     updateMultiFilesStatus();
     queueUIStateSave();
@@ -511,6 +480,94 @@
     queueUIStateSave();
   }
 
+  var ASR_MESSAGES = {
+    processingBg: "المعالجة مستمرة...",
+    jobFailed: "فشل تنفيذ المهمة.",
+    errorPrefix: "خطأ: ",
+    restoreTranscribe: "تمت استعادة مهمة التحويل بعد التحديث...",
+    loadingDefault: "جاري التحويل...",
+    loadingMic: "جاري تحويل التسجيل...",
+    loadingFiles: "جاري تحويل الملفات...",
+    queuedTranscribe: "تم إرسال مهمة التحويل للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.",
+    errNeedMic: "يرجى تسجيل صوت أولًا.",
+    errNeedInput: "يرجى اختيار ملف/ملفات صوتية، أو التسجيل من الميكروفون.",
+    sending: "جاري الإرسال...",
+    micSaved: "تم حفظ التسجيل. اضغط 'بدء التحويل'.",
+    micUnsupported: "هذا المتصفح لا يدعم التسجيل من الميكروفون.",
+    micRecording: "جاري التسجيل... اضغط 'إيقاف التسجيل' عند الانتهاء.",
+    micAccessFailed: "فشل الوصول للميكروفون: "
+  };
+
+  var SUMMARY_MESSAGES = {
+    needText: "أدخل نصًا أولًا أو قم بالتحويل الصوتي.",
+    loading: "جاري التلخيص...",
+    busy: "جاري التلخيص...",
+    queued: "تم إرسال التلخيص للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.",
+    bgProcessing: "التلخيص مستمر...",
+    restore: "تمت استعادة مهمة التلخيص بعد التحديث...",
+    errorPrefix: "خطأ: "
+  };
+
+  function formatJobStatusLabel(status) {
+    var value = String(status || "").toLowerCase();
+    if (value === "queued") return "قيد الانتظار";
+    if (value === "running") return "قيد المعالجة";
+    if (value === "done") return "مكتمل";
+    if (value === "failed") return "فشل";
+    return value || "-";
+  }
+
+  var TTS_MESSAGES = {
+    needUserLogin: "أدخل بريد المستخدم أو سجّل الدخول أولاً.",
+    needUser: "أدخل بريد المستخدم أولًا.",
+    needVoiceFiles: "اختر ملفًا واحدًا أو أكثر.",
+    uploadingVoices: "جاري رفع البصمات...",
+    loadedVoicesPrefix: "تم تحميل ",
+    loadedVoicesSuffix: " بصمة.",
+    uploadedFilesPrefix: "تم رفع ",
+    uploadedFilesSuffix: " ملف.",
+    needVoiceSelection: "حدّد البريد وملف البصمة أولًا.",
+    deletedVoicePrefix: "تم حذف البصمة: ",
+    needTtsText: "أدخل نصًا أولًا.",
+    generating: "جاري توليد الصوت...",
+    errorPrefix: "خطأ: "
+  };
+
+  var SPEAKERS_MESSAGES = {
+    needName: "الرجاء إدخال اسم المتكلم.",
+    needAudioSample: "الرجاء رفع ملفات صوتية أو تسجيل مقطع.",
+    enrolling: "جاري التسجيل...",
+    enrollBusy: "جاري التسجيل...",
+    enrolled: "تم التسجيل.",
+    warningSuffix: " (تحذير)",
+    errorPrefix: "خطأ: ",
+    micStopped: "تم إيقاف التسجيل. يمكنك تسجيل البصمة.",
+    micUnsupported: "المتصفح لا يدعم الميكروفون.",
+    micRecording: "جاري التسجيل...",
+    micAccessFailed: "فشل الوصول للميكروفون: ",
+    needSelectedSpeaker: "الرجاء تحديد متحدث من القائمة.",
+    deleted: "تم الحذف."
+  };
+
+  var ACCOUNT_MESSAGES = {
+    needRegisterFields: "الرجاء إدخال البريد وكلمة المرور والاسم الكامل.",
+    registering: "جاري إنشاء الحساب...",
+    registerSuccess: "تم إنشاء الحساب بنجاح. يمكنك تسجيل الدخول الآن.",
+    needLoginFields: "الرجاء إدخال البريد وكلمة المرور.",
+    loggingIn: "جاري تسجيل الدخول...",
+    loginSuccess: "تم تسجيل الدخول بنجاح.",
+    noLoggedInUser: "لا يوجد مستخدم مسجل دخول.",
+    logoutSuccess: "تم تسجيل الخروج.",
+    needLoginFirst: "الرجاء تسجيل الدخول أولًا.",
+    profileLoading: "جاري تحميل الملف...",
+    profileLoaded: "تم تحميل الملف الشخصي.",
+    profileSaving: "جاري حفظ التعديلات...",
+    profileSaved: "تم حفظ الملف الشخصي.",
+    dashboardLoading: "جاري تحديث الإحصائيات...",
+    dashboardUpdated: "تم تحديث لوحة التحكم.",
+    errorPrefix: "خطأ: "
+  };
+
   function pollJob(kind, info) {
     if (!info || !info.job_id) return;
     if (pendingPollTimers[kind]) clearTimeout(pendingPollTimers[kind]);
@@ -529,9 +586,9 @@
           var status = (job && job.status) ? String(job.status).toLowerCase() : "";
           if (status === "queued" || status === "running") {
             if (kind === "transcribe") {
-              getId("outText").value = "المعالجة مستمرة في الخلفية... (" + status + ")";
+              getId("outText").value = ASR_MESSAGES.processingBg + " (" + formatJobStatusLabel(status) + ")";
             } else if (kind === "summary") {
-              getId("outSummary").value = "التلخيص مستمر في الخلفية... (" + status + ")";
+              getId("outSummary").value = SUMMARY_MESSAGES.bgProcessing + " (" + formatJobStatusLabel(status) + ")";
             }
             queueUIStateSave();
             pendingPollTimers[kind] = setTimeout(tick, 2000);
@@ -546,9 +603,9 @@
             return;
           }
 
-          var errMsg = (job && (job.error || job.detail)) || "فشل تنفيذ المهمة.";
-          if (kind === "transcribe") getId("outText").value = "خطأ: " + errMsg;
-          if (kind === "summary") getId("outSummary").value = "خطأ: " + errMsg;
+          var errMsg = (job && (job.error || job.detail)) || ASR_MESSAGES.jobFailed;
+          if (kind === "transcribe") getId("outText").value = ASR_MESSAGES.errorPrefix + errMsg;
+          if (kind === "summary") getId("outSummary").value = SUMMARY_MESSAGES.errorPrefix + errMsg;
           clearPendingJob(kind);
           queueUIStateSave();
         })
@@ -563,159 +620,117 @@
   function resumePendingJobs() {
     var jobs = getPendingJobs();
     if (jobs.transcribe && jobs.transcribe.job_id) {
-      getId("outText").value = "تم استعادة مهمة التحويل بعد التحديث...";
+      getId("outText").value = ASR_MESSAGES.restoreTranscribe;
       pollJob("transcribe", jobs.transcribe);
     }
     if (jobs.summary && jobs.summary.job_id) {
-      getId("outSummary").value = "تم استعادة مهمة التلخيص بعد التحديث...";
+      getId("outSummary").value = SUMMARY_MESSAGES.restore;
       pollJob("summary", jobs.summary);
     }
     queueUIStateSave();
   }
 
-  // إرسال ملف واحد
-  getId("btnSend").addEventListener("click", function () {
-    var btnSend = getId("btnSend");
+  function appendTranscribeOptions(fd) {
+    var whisperModeEl = getId("whisperMode");
+    var enhanceEl = getId("enhance");
+    var enhanceLevelEl = getId("enhanceLevel");
+    fd.append("model_name", "heavy");
+    fd.append("whisper_mode", whisperModeEl ? whisperModeEl.value : "normal");
+    fd.append("enhance", (enhanceEl && enhanceEl.value !== "off") ? "true" : "false");
+    fd.append("enhance_mode", enhanceEl ? (enhanceEl.value || "off") : "off");
+    fd.append("enhance_level", enhanceLevelEl ? enhanceLevelEl.value : "medium");
+    fd.append("diarize", getId("diarize").checked ? "true" : "false");
+    fd.append("auto_k", getId("autoK").checked ? "true" : "false");
+    fd.append("max_speakers", getId("maxSpeakers") ? getId("maxSpeakers").value : "2");
+    fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
+    fd.append("device_sel", getId("deviceSel") ? getId("deviceSel").value : "auto");
+    fd.append("compute_sel", getId("computeSel") ? getId("computeSel").value : "auto");
+    fd.append("async_mode", "true");
+    if (session.email) fd.append("user_email", session.email);
+  }
+
+  function sendTranscribeRequest(fd) {
+    var timeout = getId("timeout") ? getId("timeout").value : 300;
+    return fetchWithTimeout("/transcribe", {
+      method: "POST",
+      headers: getHeaders(),
+      body: fd,
+    }, timeout)
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
+        return r.json();
+      })
+      .then(function (data) {
+        if (data && data.job_id && (data.status === "queued" || data.status === "running")) {
+          setPendingJob("transcribe", {
+            job_id: data.job_id,
+            poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
+          });
+          getId("outText").value = ASR_MESSAGES.processingBg + " (" + formatJobStatusLabel(data.status) + ")";
+          queueUIStateSave();
+          pollJob("transcribe", getPendingJobs().transcribe);
+          return;
+        }
+        applyTranscribeResult(data || {});
+      })
+      .catch(function (e) {
+        getId("outText").value = ASR_MESSAGES.errorPrefix + (e.message || String(e));
+      });
+  }
+
+  function resetTranscribeOutput(loadingText) {
+    getId("outText").value = loadingText || ASR_MESSAGES.loadingDefault;
+    getId("outSummary").value = "";
+    getId("outKeywords").value = "";
+    getId("dlLinks").innerHTML = "";
+    getId("outSegments").textContent = "";
+  }
+
+  function buildTranscribeFormData() {
     var src = qs(".src-btn.active");
-    var fileIn = getId("fileIn"), micZone = getId("mic-zone");
+    var filesIn = getId("filesIn");
     var fd = new FormData();
-    var file = null;
+
     if (src && src.dataset.src === "mic") {
       var recBlob = window._lastRecordedBlob;
       if (!recBlob) {
-        getId("outText").value = "يرجى تسجيل صوت أولاً.";
-        return;
+        return { error: ASR_MESSAGES.errNeedMic };
       }
       fd.append("file", recBlob, "recording.webm");
-    } else if (fileIn && fileIn.files && fileIn.files[0]) {
-      var fileErr = validateAudioFilesList(fileIn.files, 1);
-      if (fileErr) {
-        getId("outText").value = fileErr;
-        return;
-      }
-      fd.append("file", fileIn.files[0]);
-    } else {
-      getId("outText").value = "يرجى اختيار ملف أو تسجيل صوت.";
+      appendTranscribeOptions(fd);
+      return {
+        formData: fd,
+        loadingText: ASR_MESSAGES.loadingMic,
+      };
+    }
+
+    var multiErr = validateAudioFilesList(filesIn && filesIn.files, 1);
+    if (!multiErr && filesIn && filesIn.files && filesIn.files.length > 0) {
+      for (var i = 0; i < filesIn.files.length; i++) fd.append("files", filesIn.files[i]);
+      appendTranscribeOptions(fd);
+      return {
+        formData: fd,
+        loadingText: ASR_MESSAGES.loadingFiles,
+      };
+    }
+
+    return { error: ASR_MESSAGES.errNeedInput };
+  }
+
+  // إرسال (ملف واحد / عدة ملفات / تسجيل)
+  getId("btnSend").addEventListener("click", function () {
+    var btnSend = getId("btnSend");
+    var build = buildTranscribeFormData();
+    if (build.error) {
+      getId("outText").value = build.error;
       return;
     }
-    var whisperModeEl = getId("whisperMode");
-    var enhanceEl = getId("enhance");
-    var enhanceLevelEl = getId("enhanceLevel");
-    fd.append("model_name", "heavy");
-    fd.append("whisper_mode", whisperModeEl ? whisperModeEl.value : "normal");
-    fd.append("enhance", (enhanceEl && enhanceEl.value !== "off") ? "true" : "false");
-    fd.append("enhance_mode", enhanceEl ? (enhanceEl.value || "off") : "off");
-    fd.append("enhance_level", enhanceLevelEl ? enhanceLevelEl.value : "medium");
-    fd.append("diarize", getId("diarize").checked ? "true" : "false");
-    fd.append("auto_k", getId("autoK").checked ? "true" : "false");
-    fd.append("max_speakers", getId("maxSpeakers") ? getId("maxSpeakers").value : "2");
-    fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
-    fd.append("device_sel", getId("deviceSel") ? getId("deviceSel").value : "auto");
-    fd.append("compute_sel", getId("computeSel") ? getId("computeSel").value : "auto");
-    fd.append("async_mode", "true");
-    if (session.email) fd.append("user_email", session.email);
+    resetTranscribeOutput(build.loadingText);
+    setButtonBusy(btnSend, true, ASR_MESSAGES.sending);
 
-    getId("outText").value = "جاري التحويل...";
-    getId("outSummary").value = "";
-    getId("outKeywords").value = "";
-    getId("dlLinks").innerHTML = "";
-    getId("outSegments").textContent = "";
-  setButtonBusy(btnSend, true, "جاري الإرسال...");
-
-    var timeout = getId("timeout") ? getId("timeout").value : 300;
-    fetchWithTimeout("/transcribe", {
-      method: "POST",
-      headers: getHeaders(),
-      body: fd,
-    }, timeout)
-      .then(function (r) {
-        if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
-        return r.json();
-      })
-      .then(function (data) {
-        if (data && data.job_id && (data.status === "queued" || data.status === "running")) {
-          setPendingJob("transcribe", {
-            job_id: data.job_id,
-            poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
-          });
-          getId("outText").value = "تم إرسال المهمة للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.";
-          queueUIStateSave();
-          pollJob("transcribe", getPendingJobs().transcribe);
-          return;
-        }
-        applyTranscribeResult(data || {});
-      })
-      .catch(function (e) {
-        getId("outText").value = "خطأ: " + (e.message || String(e));
-      })
+    sendTranscribeRequest(build.formData)
       .finally(function () {
         setButtonBusy(btnSend, false);
-      });
-  });
-
-  // إرسال عدة ملفات
-  getId("btnBatch").addEventListener("click", function () {
-    var btnBatch = getId("btnBatch");
-    var filesIn = getId("filesIn");
-    var batchErr = validateAudioFilesList(filesIn && filesIn.files, 1);
-    if (batchErr) {
-      getId("outText").value = "يرجى اختيار عدة ملفات صوتية صالحة.";
-      return;
-    }
-    var fd = new FormData();
-    for (var i = 0; i < filesIn.files.length; i++) fd.append("files", filesIn.files[i]);
-    var whisperModeEl = getId("whisperMode");
-    var enhanceEl = getId("enhance");
-    var enhanceLevelEl = getId("enhanceLevel");
-    fd.append("model_name", "heavy");
-    fd.append("whisper_mode", whisperModeEl ? whisperModeEl.value : "normal");
-    fd.append("enhance", (enhanceEl && enhanceEl.value !== "off") ? "true" : "false");
-    fd.append("enhance_mode", enhanceEl ? (enhanceEl.value || "off") : "off");
-    fd.append("enhance_level", enhanceLevelEl ? enhanceLevelEl.value : "medium");
-    fd.append("diarize", getId("diarize").checked ? "true" : "false");
-    fd.append("auto_k", getId("autoK").checked ? "true" : "false");
-    fd.append("max_speakers", getId("maxSpeakers") ? getId("maxSpeakers").value : "2");
-    fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
-    fd.append("device_sel", getId("deviceSel") ? getId("deviceSel").value : "auto");
-    fd.append("compute_sel", getId("computeSel") ? getId("computeSel").value : "auto");
-    fd.append("async_mode", "true");
-    if (session.email) fd.append("user_email", session.email);
-
-    getId("outText").value = "جاري تحويل عدة ملفات...";
-    getId("outSummary").value = "";
-    getId("outKeywords").value = "";
-    getId("dlLinks").innerHTML = "";
-    getId("outSegments").textContent = "";
-    setButtonBusy(btnBatch, true, "جاري إرسال الدفعة...");
-
-    var timeout = getId("timeout") ? getId("timeout").value : 300;
-    fetchWithTimeout("/transcribe-batch", {
-      method: "POST",
-      headers: getHeaders(),
-      body: fd,
-    }, timeout)
-      .then(function (r) {
-        if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
-        return r.json();
-      })
-      .then(function (data) {
-        if (data && data.job_id && (data.status === "queued" || data.status === "running")) {
-          setPendingJob("transcribe", {
-            job_id: data.job_id,
-            poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
-          });
-          getId("outText").value = "تم إرسال مهمة الدفعة للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.";
-          queueUIStateSave();
-          pollJob("transcribe", getPendingJobs().transcribe);
-          return;
-        }
-        applyTranscribeResult(data || {});
-      })
-      .catch(function (e) {
-        getId("outText").value = "خطأ: " + (e.message || String(e));
-      })
-      .finally(function () {
-        setButtonBusy(btnBatch, false);
       });
   });
 
@@ -724,7 +739,7 @@
     var btnSummary = getId("btnSummary");
     var text = (getId("outText") && getId("outText").value || "").trim();
     if (!text) {
-      getId("outSummary").value = "أدخل نصاً أولاً أو قم بالتحويل الصوتي.";
+      getId("outSummary").value = SUMMARY_MESSAGES.needText;
       return;
     }
     var mode = getId("summaryMode") ? getId("summaryMode").value : "ultra";
@@ -733,8 +748,8 @@
     fd.append("summary_mode", mode);
     fd.append("async_mode", "true");
     if (session.email) fd.append("user_email", session.email);
-    getId("outSummary").value = "جاري التلخيص...";
-    setButtonBusy(btnSummary, true, "جاري التلخيص...");
+    getId("outSummary").value = SUMMARY_MESSAGES.loading;
+    setButtonBusy(btnSummary, true, SUMMARY_MESSAGES.busy);
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     fetchWithTimeout("/summarize", { method: "POST", headers: getHeaders(), body: fd }, timeout)
       .then(function (r) {
@@ -747,7 +762,7 @@
             job_id: data.job_id,
             poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
           });
-          getId("outSummary").value = "تم إرسال التلخيص للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.";
+          getId("outSummary").value = SUMMARY_MESSAGES.queued;
           queueUIStateSave();
           pollJob("summary", getPendingJobs().summary);
           return;
@@ -755,7 +770,7 @@
         applySummaryResult(data || {});
       })
       .catch(function (e) {
-        getId("outSummary").value = "خطأ: " + (e.message || String(e));
+        getId("outSummary").value = SUMMARY_MESSAGES.errorPrefix + (e.message || String(e));
       })
       .finally(function () {
         setButtonBusy(btnSummary, false);
@@ -769,11 +784,11 @@
     if (mediaRecorder && mediaRecorder.state === "recording") {
       mediaRecorder.stop();
       btn.textContent = "بدء التسجيل";
-      status.textContent = "توقف. اضغط 'إرسال ملف واحد' لتحويل الصوت.";
+      status.textContent = ASR_MESSAGES.micSaved;
       return;
     }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      status.textContent = "المتصفح لا يدعم تسجيل الميكروفون.";
+      status.textContent = ASR_MESSAGES.micUnsupported;
       return;
     }
     navigator.mediaDevices.getUserMedia({ audio: true })
@@ -787,10 +802,10 @@
         };
         mediaRecorder.start();
         btn.textContent = "إيقاف التسجيل";
-        status.textContent = "جاري التسجيل...";
+        status.textContent = ASR_MESSAGES.micRecording;
       })
       .catch(function (e) {
-        status.textContent = "فشل الوصول للميكروفون: " + (e.message || String(e));
+        status.textContent = ASR_MESSAGES.micAccessFailed + (e.message || String(e));
       });
   });
 
@@ -816,7 +831,7 @@
     if (!listEl) return;
     listEl.innerHTML = '<option value="">— اختر ملف بصمة —</option>';
     if (!userEmail) {
-      if (statusEl) statusEl.textContent = "أدخل بريد المستخدم أو سجّل الدخول أولاً.";
+      if (statusEl) statusEl.textContent = TTS_MESSAGES.needUserLogin;
       return;
     }
     var timeout = getId("timeout") ? getId("timeout").value : 300;
@@ -837,13 +852,16 @@
           if (!name) return;
           var opt = document.createElement("option");
           opt.value = name;
-          opt.textContent = name + (item.size_bytes ? " (" + item.size_bytes + " bytes)" : "");
+          var info = [];
+          if (item.size_bytes) info.push(item.size_bytes + " bytes");
+          if (item.has_ref_text) info.push("ref_text");
+          opt.textContent = name + (info.length ? " (" + info.join(" · ") + ")" : "");
           listEl.appendChild(opt);
         });
-        if (statusEl) statusEl.textContent = "تم تحميل " + files.length + " بصمة.";
+        if (statusEl) statusEl.textContent = TTS_MESSAGES.loadedVoicesPrefix + files.length + TTS_MESSAGES.loadedVoicesSuffix;
       })
       .catch(function (e) {
-        if (statusEl) statusEl.textContent = "خطأ: " + (e.message || String(e));
+        if (statusEl) statusEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
       });
   }
 
@@ -859,17 +877,20 @@
       var filesEl = getId("ttsVoiceFiles");
       var userEmail = getTtsUserEmail();
       if (!userEmail) {
-        if (statusEl) statusEl.textContent = "أدخل بريد المستخدم أولاً.";
+        if (statusEl) statusEl.textContent = TTS_MESSAGES.needUser;
         return;
       }
       if (!filesEl || !filesEl.files || filesEl.files.length === 0) {
-        if (statusEl) statusEl.textContent = "اختر ملفًا واحدًا أو أكثر.";
+        if (statusEl) statusEl.textContent = TTS_MESSAGES.needVoiceFiles;
         return;
       }
+      var refTextEl = getId("ttsRefText");
+      var refTextValue = (refTextEl && refTextEl.value || "").trim();
       var fd = new FormData();
       fd.append("user_email", userEmail);
+      if (refTextValue) fd.append("default_ref_text", refTextValue);
       for (var i = 0; i < filesEl.files.length; i++) fd.append("files", filesEl.files[i]);
-      if (statusEl) statusEl.textContent = "جاري رفع البصمات...";
+      if (statusEl) statusEl.textContent = TTS_MESSAGES.uploadingVoices;
       var timeout = getId("timeout") ? getId("timeout").value : 300;
       fetchWithTimeout("/tts/voice-samples", {
         method: "POST",
@@ -883,12 +904,12 @@
           });
         })
         .then(function (data) {
-          if (statusEl) statusEl.textContent = "تم رفع " + (data.count || 0) + " ملف.";
+          if (statusEl) statusEl.textContent = TTS_MESSAGES.uploadedFilesPrefix + (data.count || 0) + TTS_MESSAGES.uploadedFilesSuffix;
           refreshTtsVoiceSamples();
           filesEl.value = "";
         })
         .catch(function (e) {
-          if (statusEl) statusEl.textContent = "خطأ: " + (e.message || String(e));
+          if (statusEl) statusEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
         });
     });
   }
@@ -900,7 +921,7 @@
       var userEmail = getTtsUserEmail();
       var selectedFile = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
       if (!userEmail || !selectedFile) {
-        if (statusEl) statusEl.textContent = "حدّد البريد وملف البصمة أولاً.";
+        if (statusEl) statusEl.textContent = TTS_MESSAGES.needVoiceSelection;
         return;
       }
       var timeout = getId("timeout") ? getId("timeout").value : 300;
@@ -916,13 +937,13 @@
           });
         })
         .then(function () {
-          if (statusEl) statusEl.textContent = "تم حذف البصمة: " + selectedFile;
+          if (statusEl) statusEl.textContent = TTS_MESSAGES.deletedVoicePrefix + selectedFile;
           refreshTtsVoiceSamples();
           var voiceAudio = getId("ttsVoiceAudio");
           if (voiceAudio) voiceAudio.removeAttribute("src");
         })
         .catch(function (e) {
-          if (statusEl) statusEl.textContent = "خطأ: " + (e.message || String(e));
+          if (statusEl) statusEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
         });
     });
   }
@@ -964,7 +985,7 @@
     var textEl = getId("ttsText"), text = (textEl && textEl.value || "").trim();
     if (!text) {
       var errEl = getId("ttsError");
-      errEl.textContent = "أدخل نصاً أولاً.";
+      errEl.textContent = TTS_MESSAGES.needTtsText;
       errEl.classList.remove("hidden");
       return;
     }
@@ -973,6 +994,8 @@
     var speed = parseFloat(getId("ttsSpeed").value) || 1;
     var seedEl = getId("ttsSeed");
     var seed = seedEl && seedEl.value ? parseInt(seedEl.value, 10) : undefined;
+    var dialect = (getId("ttsDialect") && getId("ttsDialect").value || "UNK").trim().toUpperCase();
+    var refText = (getId("ttsRefText") && getId("ttsRefText").value || "").trim();
     var speakerRef = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
     var userEmailForTts = getTtsUserEmail();
     if (isNaN(seed)) seed = undefined;
@@ -986,15 +1009,20 @@
     if (metaEl) metaEl.textContent = "";
 
     var body = { text: text, voice: voice, speed: speed, engine: engine || "auto" };
+    if (engine === "habibi" && !refText) {
+      refText = text;
+    }
     if (userEmailForTts) body.user_email = userEmailForTts;
     if (seed != null) body.seed = seed;
     if (speakerRef) body.speaker_ref = speakerRef;
+    if (dialect) body.dialect = dialect;
+    if (refText) body.ref_text = refText;
 
     var h = getHeaders();
     h["Content-Type"] = "application/json";
 
     var timeout = getId("timeout") ? getId("timeout").value : 300;
-    setButtonBusy(btnTts, true, "جاري توليد الصوت...");
+    setButtonBusy(btnTts, true, TTS_MESSAGES.generating);
     fetchWithTimeout("/tts", { method: "POST", headers: h, body: JSON.stringify(body) }, timeout)
       .then(function (r) {
         if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
@@ -1011,6 +1039,7 @@
             "requested_voice: " + (data.requested_voice || "-"),
             "resolved_voice: " + (data.resolved_voice || "-"),
             "speaker_ref: " + (data.speaker_ref || "-"),
+            "dialect: " + (data.dialect || "-"),
             "fallback_used: " + (data.fallback_used ? "yes" : "no"),
             "arabic_detected: " + (data.arabic_detected ? "yes" : "no")
           ].join("\n");
@@ -1018,7 +1047,7 @@
         }
       })
       .catch(function (e) {
-        errEl.textContent = "خطأ: " + (e.message || String(e));
+        errEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
         errEl.classList.remove("hidden");
       })
       .finally(function () {
@@ -1053,7 +1082,7 @@
     var btnEnroll = getId("btnEnroll");
     var name = (getId("spkName") && getId("spkName").value || "").trim();
     if (!name) {
-      getId("enrollOut").textContent = "الرجاء إدخال اسم المتكلم.";
+      getId("enrollOut").textContent = SPEAKERS_MESSAGES.needName;
       return;
     }
     var fd = new FormData();
@@ -1071,7 +1100,7 @@
       hasFile = true;
     }
     if (!hasFile) {
-      getId("enrollOut").textContent = "الرجاء رفع ملفات صوتية أو تسجيل مقطع.";
+      getId("enrollOut").textContent = SPEAKERS_MESSAGES.needAudioSample;
       return;
     }
     if (filesIn && filesIn.files && filesIn.files.length) {
@@ -1081,8 +1110,8 @@
         return;
       }
     }
-    getId("enrollOut").textContent = "جاري التسجيل...";
-    setButtonBusy(btnEnroll, true, "جاري التسجيل...");
+    getId("enrollOut").textContent = SPEAKERS_MESSAGES.enrolling;
+    setButtonBusy(btnEnroll, true, SPEAKERS_MESSAGES.enrollBusy);
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     fetchWithTimeout("/enroll-speaker", { method: "POST", headers: getHeaders(), body: fd }, timeout)
       .then(function (r) {
@@ -1090,11 +1119,11 @@
         return r.json();
       })
       .then(function (data) {
-        getId("enrollOut").textContent = (data.message || "تم التسجيل.") + (data.success ? "" : " (تحذير)");
+        getId("enrollOut").textContent = (data.message || SPEAKERS_MESSAGES.enrolled) + (data.success ? "" : SPEAKERS_MESSAGES.warningSuffix);
         refreshSpeakersList();
       })
       .catch(function (e) {
-        getId("enrollOut").textContent = "خطأ: " + (e.message || String(e));
+        getId("enrollOut").textContent = SPEAKERS_MESSAGES.errorPrefix + (e.message || String(e));
       })
       .finally(function () {
         setButtonBusy(btnEnroll, false);
@@ -1106,11 +1135,11 @@
     if (spkMediaRecorder && spkMediaRecorder.state === "recording") {
       spkMediaRecorder.stop();
       btn.textContent = "تسجيل مقطع من الميكروفون";
-      status.textContent = "توقف. يمكنك تسجيل البصمة.";
+      status.textContent = SPEAKERS_MESSAGES.micStopped;
       return;
     }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      status.textContent = "المتصفح لا يدعم الميكروفون.";
+      status.textContent = SPEAKERS_MESSAGES.micUnsupported;
       return;
     }
     navigator.mediaDevices.getUserMedia({ audio: true })
@@ -1124,10 +1153,10 @@
         };
         spkMediaRecorder.start();
         btn.textContent = "إيقاف التسجيل";
-        status.textContent = "جاري التسجيل...";
+        status.textContent = SPEAKERS_MESSAGES.micRecording;
       })
       .catch(function (e) {
-        status.textContent = "فشل الوصول للميكروفون: " + (e.message || String(e));
+        status.textContent = SPEAKERS_MESSAGES.micAccessFailed + (e.message || String(e));
       });
   });
 
@@ -1136,7 +1165,7 @@
   getId("btnDeleteSpeaker").addEventListener("click", function () {
     var name = (getId("spkList") && getId("spkList").value || "").trim();
     if (!name) {
-      getId("enrollOut").textContent = "الرجاء تحديد متحدث من القائمة.";
+      getId("enrollOut").textContent = SPEAKERS_MESSAGES.needSelectedSpeaker;
       return;
     }
     var timeout = getId("timeout") ? getId("timeout").value : 300;
@@ -1146,13 +1175,13 @@
         return r.json();
       })
       .then(function (data) {
-        getId("enrollOut").textContent = data.message || "تم الحذف.";
+        getId("enrollOut").textContent = data.message || SPEAKERS_MESSAGES.deleted;
         refreshSpeakersList();
         getId("spkFilesList").innerHTML = "<option value=\"\">— اختر —</option>";
         getId("spkAudio").removeAttribute("src");
       })
       .catch(function (e) {
-        getId("enrollOut").textContent = "خطأ: " + (e.message || String(e));
+        getId("enrollOut").textContent = SPEAKERS_MESSAGES.errorPrefix + (e.message || String(e));
       });
   });
 
@@ -1237,18 +1266,18 @@
       var password = (getId("authPassword") && getId("authPassword").value || "").trim();
       var fullName = (getId("authFullName") && getId("authFullName").value || "").trim();
       if (!email || !password || !fullName) {
-        setText("authStatus", "الرجاء إدخال البريد وكلمة المرور والاسم الكامل.");
+        setText("authStatus", ACCOUNT_MESSAGES.needRegisterFields);
         return;
       }
-      setText("authStatus", "جاري إنشاء الحساب...");
+      setText("authStatus", ACCOUNT_MESSAGES.registering);
       jsonRequest("/auth/register", "POST", {
         email: email,
         password: password,
         full_name: fullName,
       }).then(function () {
-        setText("authStatus", "تم إنشاء الحساب بنجاح. يمكنك تسجيل الدخول الآن.");
+        setText("authStatus", ACCOUNT_MESSAGES.registerSuccess);
       }).catch(function (e) {
-        setText("authStatus", "خطأ: " + (e.message || String(e)));
+        setText("authStatus", ACCOUNT_MESSAGES.errorPrefix + (e.message || String(e)));
       });
     });
   }
@@ -1258,22 +1287,22 @@
       var email = (getId("authEmail") && getId("authEmail").value || "").trim();
       var password = (getId("authPassword") && getId("authPassword").value || "").trim();
       if (!email || !password) {
-        setText("authStatus", "الرجاء إدخال البريد وكلمة المرور.");
+        setText("authStatus", ACCOUNT_MESSAGES.needLoginFields);
         return;
       }
-      setText("authStatus", "جاري تسجيل الدخول...");
+      setText("authStatus", ACCOUNT_MESSAGES.loggingIn);
       jsonRequest("/auth/login", "POST", {
         email: email,
         password: password,
       }).then(function (data) {
         var userEmail = data.email || email;
         setSession(userEmail, data.access_token || "");
-        setText("authStatus", "تم تسجيل الدخول بنجاح.");
+        setText("authStatus", ACCOUNT_MESSAGES.loginSuccess);
         if (getId("authFullName") && data.full_name) {
           getId("authFullName").value = data.full_name;
         }
       }).catch(function (e) {
-        setText("authStatus", "خطأ: " + (e.message || String(e)));
+        setText("authStatus", ACCOUNT_MESSAGES.errorPrefix + (e.message || String(e)));
       });
     });
   }
@@ -1281,7 +1310,7 @@
   if (btnLogout) {
     btnLogout.addEventListener("click", function () {
       if (!session.email) {
-        setText("authStatus", "لا يوجد مستخدم مسجل دخول.");
+        setText("authStatus", ACCOUNT_MESSAGES.noLoggedInUser);
         return;
       }
       fetchWithTimeout("/auth/logout", {
@@ -1290,12 +1319,12 @@
       }, getId("timeout") ? getId("timeout").value : 300)
         .then(function () {
           setSession("", "");
-          setText("authStatus", "تم تسجيل الخروج.");
+          setText("authStatus", ACCOUNT_MESSAGES.logoutSuccess);
           setText("profileStatus", "");
           setText("dashStatus", "");
         })
         .catch(function (e) {
-          setText("authStatus", "خطأ: " + (e.message || String(e)));
+          setText("authStatus", ACCOUNT_MESSAGES.errorPrefix + (e.message || String(e)));
         });
     });
   }
@@ -1306,10 +1335,10 @@
 
   function loadProfile() {
     if (!session.email) {
-      setText("profileStatus", "الرجاء تسجيل الدخول أولاً.");
+      setText("profileStatus", ACCOUNT_MESSAGES.needLoginFirst);
       return;
     }
-    setText("profileStatus", "جاري تحميل الملف...");
+    setText("profileStatus", ACCOUNT_MESSAGES.profileLoading);
     fetchWithTimeout("/users/me", {
       method: "GET",
       headers: getHeaders(),
@@ -1324,10 +1353,10 @@
         if (getId("profileFullName")) getId("profileFullName").value = data.full_name || "";
         if (getId("profileBio")) getId("profileBio").value = data.bio || "";
         if (getId("profileAvatar")) getId("profileAvatar").value = data.avatar_url || "";
-        setText("profileStatus", "تم تحميل الملف الشخصي.");
+        setText("profileStatus", ACCOUNT_MESSAGES.profileLoaded);
       })
       .catch(function (e) {
-        setText("profileStatus", "خطأ: " + (e.message || String(e)));
+        setText("profileStatus", ACCOUNT_MESSAGES.errorPrefix + (e.message || String(e)));
       });
   }
 
@@ -1338,18 +1367,18 @@
   if (btnSaveProfile) {
     btnSaveProfile.addEventListener("click", function () {
       if (!session.email) {
-        setText("profileStatus", "الرجاء تسجيل الدخول أولاً.");
+        setText("profileStatus", ACCOUNT_MESSAGES.needLoginFirst);
         return;
       }
-      setText("profileStatus", "جاري حفظ التعديلات...");
+      setText("profileStatus", ACCOUNT_MESSAGES.profileSaving);
       jsonRequest("/users/me", "PUT", {
         full_name: (getId("profileFullName") && getId("profileFullName").value || "").trim(),
         bio: (getId("profileBio") && getId("profileBio").value || "").trim(),
         avatar_url: (getId("profileAvatar") && getId("profileAvatar").value || "").trim(),
       }).then(function () {
-        setText("profileStatus", "تم حفظ الملف الشخصي.");
+        setText("profileStatus", ACCOUNT_MESSAGES.profileSaved);
       }).catch(function (e) {
-        setText("profileStatus", "خطأ: " + (e.message || String(e)));
+        setText("profileStatus", ACCOUNT_MESSAGES.errorPrefix + (e.message || String(e)));
       });
     });
   }
@@ -1359,10 +1388,10 @@
 
   function refreshDashboard() {
     if (!session.email) {
-      setText("dashStatus", "الرجاء تسجيل الدخول أولاً.");
+      setText("dashStatus", ACCOUNT_MESSAGES.needLoginFirst);
       return;
     }
-    setText("dashStatus", "جاري تحديث الإحصائيات...");
+    setText("dashStatus", ACCOUNT_MESSAGES.dashboardLoading);
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     Promise.all([
       fetchWithTimeout("/dashboard/my-summary", { method: "GET", headers: getHeaders() }, timeout)
@@ -1393,9 +1422,9 @@
       ].join("\n");
       if (getId("dashSummary")) getId("dashSummary").textContent = summaryText;
       if (getId("dashOverview")) getId("dashOverview").textContent = overviewText;
-      setText("dashStatus", "تم تحديث لوحة التحكم.");
+      setText("dashStatus", ACCOUNT_MESSAGES.dashboardUpdated);
     }).catch(function (e) {
-      setText("dashStatus", "خطأ: " + (e.message || String(e)));
+      setText("dashStatus", ACCOUNT_MESSAGES.errorPrefix + (e.message || String(e)));
     });
   }
 
