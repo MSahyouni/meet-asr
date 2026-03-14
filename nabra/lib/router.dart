@@ -38,11 +38,11 @@ final GoRouter router = GoRouter(
         return Tts(apiUrl: extra?['apiUrl'] ?? '');
       },
     ),
-    GoRoute(
-      path: "/login",
-      builder: (context, state) {
-        return LoginScreen();
-      },
-    ),
+    // GoRoute(
+    //   path: "/login",
+    //   builder: (context, state) {
+    //     return LoginScreen();
+    //   },
+    // ),
   ],
 );
