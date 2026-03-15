@@ -18,16 +18,7 @@ class Standerd extends StatelessWidget {
         toolbarHeight: 120,
         title: Row(
           children: [
-            Gap(80),
-            Text(
-              "نبرة",
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 30,
-                color: const Color.fromARGB(255, 214, 204, 204),
-              ),
-            ),
-            Gap(75),
+            Gap(130),
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: Image.asset(
