@@ -82,12 +82,12 @@ class TtsService {
     final response = await http.post(
       Uri.parse(apiUrlTTs),
       headers: {"Content-Type": "application/json"},
-      body: jsonEncode({"text": text, "voice_id": voiceId}),
+      body: jsonEncode({"text": text, "voice": voiceId}),
     );
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      return data["audio_url"];
+      return data["download_url"];
     } else {
       throw Exception("TTS conversion failed: ${response.statusCode}");
     }

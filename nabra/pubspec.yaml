@@ -48,6 +48,8 @@ flutter:
     - assets/images/image_1.png
     - assets/images/image_2.png
     - assets/images/image_3.png
+    - assets/images/logo.png
+    - assets/images/icon_file.png
 
 icons_launcher:
   image_path: 'assets/images/logo.png'
