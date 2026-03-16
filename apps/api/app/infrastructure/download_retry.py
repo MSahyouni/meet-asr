@@ -15,7 +15,7 @@ def _as_bool(value: str, default: bool = True) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-def run_with_download_retry(operation: Callable[[], T], label: str) -> T:
+def run_with_download_retry(operation: Callable[[], T], label: str, max_attempts: int = 0) -> T:
     """
     Execute a model download/load operation with retry policy.
 
@@ -25,9 +25,15 @@ def run_with_download_retry(operation: Callable[[], T], label: str) -> T:
       - DOWNLOAD_MAX_RETRIES (default: 0 -> unlimited when not forever)
       - DOWNLOAD_RETRY_BASE_SEC (default: 5)
       - DOWNLOAD_RETRY_MAX_SEC (default: 60)
+      - max_attempts (function arg): overrides env if > 0
     """
     forever = _as_bool(os.getenv("DOWNLOAD_RETRY_FOREVER", "1"), default=True)
-    max_retries = max(0, int(os.getenv("DOWNLOAD_MAX_RETRIES", "0") or "0"))
+    env_max_retries = max(0, int(os.getenv("DOWNLOAD_MAX_RETRIES", "0") or "0"))
+    if max_attempts > 0:
+        max_retries = max_attempts
+        forever = False
+    else:
+        max_retries = env_max_retries
     base_wait = max(1, int(os.getenv("DOWNLOAD_RETRY_BASE_SEC", "5") or "5"))
     max_wait = max(base_wait, int(os.getenv("DOWNLOAD_RETRY_MAX_SEC", "60") or "60"))
 

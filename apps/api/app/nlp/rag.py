@@ -7,7 +7,7 @@ import numpy as np
 from ..config import settings
 
 try:
-    import faiss
+    # import faiss  # Disabled temporarily for diarization compatibility
     _FAISS_OK = True
 except ImportError:
     faiss = None
