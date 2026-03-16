@@ -29,7 +29,6 @@ class LoginCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const textSub = Color(0xFFB7C2C8);
     const accent = Color(0xFF2BB39D);
 
     return Container(
@@ -57,7 +56,7 @@ class LoginCard extends StatelessWidget {
         children: [
           const Gap(2),
           Text(
-            'Login',
+            "تسجيل الدخول",
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white,
@@ -67,7 +66,7 @@ class LoginCard extends StatelessWidget {
           ),
           const Gap(20),
           Text(
-            'Enter your credentials to access your account',
+            "ادخل بياناتك للوصول إلى حسابك",
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white,
@@ -78,11 +77,11 @@ class LoginCard extends StatelessWidget {
           ),
           const Gap(25),
 
-          FieldLabel(text: 'Email Address'),
+          FieldLabel(text: "عنوان البريد الإلكتروني"),
           const Gap(15),
           AnimatedLiftTextField(
             controller: emailCtrl,
-            hint: 'Enter your email...',
+            hint: '... أدخل بريدك الإلكتروني',
             prefix: Icons.mail_outline,
             keyboardType: TextInputType.emailAddress,
             // الأيقونة يمين/يسار حسب RTL
@@ -94,11 +93,11 @@ class LoginCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              FieldLabel(text: 'Password'),
+              FieldLabel(text: "كلمة المرور"),
               InkWell(
                 onTap: onForgot,
                 child: Text(
-                  'Forgot password?',
+                  "هل نسيت كلمة المرور؟",
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 11,
@@ -112,7 +111,7 @@ class LoginCard extends StatelessWidget {
 
           AnimatedLiftTextField(
             controller: passCtrl,
-            hint: 'Enter your password...',
+            hint: '...أدخل كلمة المرور',
             prefix: Icons.lock_outline,
             keyboardType: TextInputType.text,
             obscureText: obscure,
@@ -125,7 +124,7 @@ class LoginCard extends StatelessWidget {
 
           const Gap(40),
 
-          LoginButton(text: 'Login', isRTL: isRTL, onPressed: onLogin),
+          LoginButton(text: "تسجيل الدخول", isRTL: isRTL, onPressed: onLogin),
 
           const Gap(25),
 
@@ -137,7 +136,7 @@ class LoginCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                "Don't have an account?",
+                "ليس لديك حساب؟",
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 13,
@@ -148,7 +147,7 @@ class LoginCard extends StatelessWidget {
               InkWell(
                 onTap: onCreateAccount,
                 child: Text(
-                  'Create a new account',
+                  "انشاء حساب جديد",
                   style: TextStyle(
                     color: accent,
                     fontSize: 13,

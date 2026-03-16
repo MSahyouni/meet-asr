@@ -31,7 +31,7 @@ class Standerd extends StatelessWidget {
           ],
         ),
       ),
-      // drawer: get_Drawer(context),
+      drawer: get_Drawer(context),
       body: Stack(
         children: [
           Image.asset(

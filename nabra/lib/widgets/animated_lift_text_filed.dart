@@ -54,7 +54,7 @@ class _AnimatedLiftTextFieldState extends State<AnimatedLiftTextField> {
     const accent = Color(0xFF2BB39D);
 
     final isRTL = Directionality.of(context) == TextDirection.rtl;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
@@ -84,6 +84,7 @@ class _AnimatedLiftTextFieldState extends State<AnimatedLiftTextField> {
         ],
       ),
       child: TextField(
+        textAlign: TextAlign.right,
         focusNode: _focusNode,
         controller: widget.controller,
         keyboardType: widget.keyboardType,
@@ -107,7 +108,7 @@ class _AnimatedLiftTextFieldState extends State<AnimatedLiftTextField> {
             fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
-          prefixIcon: Transform(
+          suffixIcon: Transform(
             alignment: Alignment.center,
             transform: (isRTL && widget.mirrorPrefixWhenRTL)
                 ? Matrix4.diagonal3Values(-1.0, 1.0, 1.0)
@@ -115,7 +116,7 @@ class _AnimatedLiftTextFieldState extends State<AnimatedLiftTextField> {
             child: Icon(widget.prefix, size: 18, color: iconColor),
           ),
 
-          suffixIcon: widget.suffix == null
+          prefixIcon: widget.suffix == null
               ? null
               : InkWell(
                   onTap: widget.onSuffixTap,

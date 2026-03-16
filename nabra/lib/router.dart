@@ -1,5 +1,6 @@
 import 'package:flutter_app/screens/TTS.dart';
 import 'package:flutter_app/screens/analysis_audio.dart';
+import 'package:flutter_app/screens/create_account.dart';
 import 'package:flutter_app/screens/home_screen.dart';
 import 'package:flutter_app/screens/log_in_screen.dart';
 import 'package:flutter_app/screens/splash_screen.dart';
@@ -38,11 +39,17 @@ final GoRouter router = GoRouter(
         return Tts(apiUrl: extra?['apiUrl'] ?? '');
       },
     ),
-    // GoRoute(
-    //   path: "/login",
-    //   builder: (context, state) {
-    //     return LoginScreen();
-    //   },
-    // ),
+    GoRoute(
+      path: "/login",
+      builder: (context, state) {
+        return LoginScreen();
+      },
+    ),
+    GoRoute(
+      path: "/create_account",
+      builder: (context, state) {
+        return CreateAccountScreen();
+      },
+    ),
   ],
 );

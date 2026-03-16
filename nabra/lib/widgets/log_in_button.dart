@@ -33,10 +33,7 @@ class LoginButton extends StatelessWidget {
             gradient: const LinearGradient(
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
-              colors: [
-                Color.fromARGB(125, 58, 174, 122),
-                Color.fromARGB(237, 31, 180, 96),
-              ],
+              colors: [Color(0xFF0C3A34), Color(0xFF125B4A), Color(0xFF1A7B6A)],
             ),
             borderRadius: BorderRadius.circular(10),
             boxShadow: [

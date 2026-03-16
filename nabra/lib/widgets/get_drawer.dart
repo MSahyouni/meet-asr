@@ -56,11 +56,30 @@ Widget get_Drawer(BuildContext context) {
               ],
             ),
           ),
-          Gap(20),
+          Gap(5),
           Padding(
-            padding: const EdgeInsets.all(10.0),
+            padding: const EdgeInsets.all(15.0),
             child: Column(
               children: [
+                Row(
+                  children: [
+                    Gap(175),
+                    Text(
+                      "الوصف",
+                      style: TextStyle(
+                        fontSize: 20,
+                        color: const Color.fromARGB(179, 190, 183, 183),
+                      ),
+                    ),
+                  ],
+                ),
+                Gap(5),
+                Text(
+                  "تطبيق ذكي يعتمد على تقنيات الذكاء الاصطناعي لتحويل الصوت إلى نص بدقة عالية، وتحويل النص إلى صوت طبيعي. يتيح تحليل التسجيلات الصوتية وتلخيصها بسهولة لتحسين الإنتاجية وإدارة المحتوى الصوتي.",
+                  style: TextStyle(fontSize: 20, color: Colors.white70),
+                  textDirection: TextDirection.rtl,
+                ),
+                Gap(220),
                 SizedBox(
                   width: double.infinity,
                   height: 40,
@@ -116,7 +135,7 @@ Widget get_Drawer(BuildContext context) {
                       ),
                     ),
                     onPressed: () {
-                      context.push('/login');
+                      context.push('/create_account');
                     },
                     child: Ink(
                       decoration: BoxDecoration(
