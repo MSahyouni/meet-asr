@@ -36,8 +36,11 @@ def _load_pyannote_pipeline():
     try:
         import torch
         import logging
+        import os
         log = logging.getLogger("asr.diarization")
         log.info("Loading diarization pipeline...")
+        # المسار المحلي للنموذج إذا كان متوفراً
+        # استخدم النموذج speaker-diarization-3.1 دائماً
         pipeline = run_with_download_retry(
             lambda: Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=_HF_TOKEN),
             "asr:pyannote-diarization",
@@ -55,18 +58,22 @@ def _load_pyannote_pipeline():
 
 
 def diarize_with_pyannote(wav_path: str, num_speakers: int = 0) -> List[Dict]:
+    print(f"[PYANNOTE] بدء تنفيذ diarize_with_pyannote على الملف: {wav_path}")
     pipeline = _load_pyannote_pipeline()
     if not pipeline:
+        print("[PYANNOTE] Pipeline not loaded: تحقق من التوكن أو الاتصال أو تثبيت pyannote.audio.")
         return []
     try:
         params = {}
         if num_speakers > 0:
             params["num_speakers"] = num_speakers
         diarization = pipeline(wav_path, **params)
-        return [
+        results = [
             {"start": turn.start, "end": turn.end, "speaker": speaker}
             for turn, _, speaker in diarization.itertracks(yield_label=True)
         ]
+        print(f"[PYANNOTE] عدد النتائج المستخرجة: {len(results)}")
+        return results
     except Exception as e:
         print(f"[PYANNOTE] Diarization failed: {e}")
         return []
@@ -88,3 +95,6 @@ def map_speakers_to_segments(whisper_segments: List[Dict], speaker_turns: List[D
         ar_label = max(overlap, key=overlap.get) if overlap else speaker_label(0)
         seg["speaker"] = to_ar_speaker(ar_label)
     return whisper_segments
+
+
+
