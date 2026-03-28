@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/services/tts_services.dart';
 import 'package:flutter_app/widgets/staggered_fade_slide.dart';
-import 'package:flutter_app/widgets/tts_audio_player.dart';
+import 'package:flutter_app/widgets/tts_audio_download.dart';
 
 import 'package:flutter_app/widgets/tts_convert_button.dart';
 import 'package:flutter_app/widgets/tts_input_section.dart';

@@ -161,8 +161,118 @@
 //   }
 // }
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// import 'package:flutter/material.dart';
+// import 'package:flutter_app/services/audio_download_service.dart';
+// import 'package:gap/gap.dart';
+
+// class TtsDownloadButton extends StatefulWidget {
+//   final String audioUrl;
+
+//   const TtsDownloadButton({super.key, required this.audioUrl});
+
+//   @override
+//   State<TtsDownloadButton> createState() => _TtsDownloadButtonState();
+// }
+
+// class _TtsDownloadButtonState extends State<TtsDownloadButton> {
+//   bool isDownloading = false;
+
+//   Future<void> downloadAudio() async {
+//     try {
+//       setState(() {
+//         isDownloading = true;
+//       });
+
+//       final savedPath = await AudioDownloadService.downloadAudio(
+//         audioUrl: widget.audioUrl,
+//       );
+
+//       ScaffoldMessenger.of(context).showSnackBar(
+//         SnackBar(
+//           content: Text("تم حفظ الملف في:\n$savedPath"),
+//           backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+//           behavior: SnackBarBehavior.floating,
+//           shape: RoundedRectangleBorder(
+//             borderRadius: BorderRadius.circular(10),
+//           ),
+//           margin: EdgeInsets.all(16),
+//         ),
+//       );
+//     } catch (e) {
+//       ScaffoldMessenger.of(context).showSnackBar(
+//         SnackBar(
+//           content: Text("فشل حفظ الملف: $e"),
+//           backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+//           behavior: SnackBarBehavior.floating,
+//           shape: RoundedRectangleBorder(
+//             borderRadius: BorderRadius.circular(10),
+//           ),
+//           margin: EdgeInsets.all(16),
+//         ),
+//       );
+//     } finally {
+//       if (mounted) {
+//         setState(() {
+//           isDownloading = false;
+//         });
+//       }
+//     }
+//   }
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Container(
+//       width: double.infinity,
+//       padding: const EdgeInsets.all(16),
+//       decoration: BoxDecoration(
+//         gradient: const LinearGradient(
+//           colors: [Color(0xFF0C3A34), Color(0xFF125B4A), Color(0xFF1A7B6A)],
+//           begin: Alignment.topLeft,
+//           end: Alignment.bottomRight,
+//         ),
+//         borderRadius: BorderRadius.circular(16),
+//       ),
+//       child: Column(
+//         children: [
+//           const Text(
+//             "تم إنشاء الملف الصوتي",
+//             style: TextStyle(
+//               color: Colors.white,
+//               fontSize: 18,
+//               fontWeight: FontWeight.bold,
+//             ),
+//           ),
+
+//           const Gap(20),
+
+//           ElevatedButton.icon(
+//             style: ElevatedButton.styleFrom(backgroundColor: Colors.white24),
+//             onPressed: isDownloading ? null : downloadAudio,
+//             icon: isDownloading
+//                 ? const SizedBox(
+//                     height: 18,
+//                     width: 18,
+//                     child: CircularProgressIndicator(strokeWidth: 2),
+//                   )
+//                 : const Icon(Icons.download),
+//             label: Text(isDownloading ? "جارٍ الحفظ..." : "تحميل الملف الصوتي"),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+// }
+
+//////////////////////////////////////////////////////////////////////////
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/services/audio_download_service.dart';
+import 'package:flutter_app/widgets/tts_audio_slide.dart';
+import 'package:flutter_app/widgets/tts_play_button.dart';
+import 'package:flutter_app/widgets/tts_stop_button.dart';
 import 'package:gap/gap.dart';
 
 class TtsDownloadButton extends StatefulWidget {
@@ -176,20 +286,68 @@ class TtsDownloadButton extends StatefulWidget {
 
 class _TtsDownloadButtonState extends State<TtsDownloadButton> {
   bool isDownloading = false;
+  bool isPlaying = false;
+  Duration totalDuration = Duration.zero;
+  Duration currentPosition = Duration.zero;
 
+  final AudioPlayer _audioPlayer = AudioPlayer();
+
+  String? savedPath;
+
+  @override
+  @override
+  void initState() {
+    super.initState();
+
+    _audioPlayer.onPlayerComplete.listen((event) {
+      if (mounted) {
+        setState(() {
+          isPlaying = false;
+          currentPosition = Duration.zero;
+        });
+      }
+    });
+
+    _audioPlayer.onDurationChanged.listen((duration) {
+      setState(() {
+        totalDuration = duration;
+      });
+    });
+
+    _audioPlayer.onPositionChanged.listen((position) {
+      setState(() {
+        currentPosition = position;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  // 🔽 تحميل الصوت
   Future<void> downloadAudio() async {
     try {
       setState(() {
         isDownloading = true;
       });
 
-      final savedPath = await AudioDownloadService.downloadAudio(
+      final path = await AudioDownloadService.downloadAudio(
         audioUrl: widget.audioUrl,
       );
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("تم حفظ الملف في:\n$savedPath")));
+      setState(() {
+        savedPath = path;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("تم حفظ الملف في:\n$path"),
+          backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+        ),
+      );
     } catch (e) {
       ScaffoldMessenger.of(
         context,
@@ -203,6 +361,26 @@ class _TtsDownloadButtonState extends State<TtsDownloadButton> {
     }
   }
 
+  // ▶️ تشغيل
+  Future<void> playAudio() async {
+    if (savedPath == null) return;
+
+    await _audioPlayer.play(DeviceFileSource(savedPath!));
+
+    setState(() {
+      isPlaying = true;
+    });
+  }
+
+  // ⏹️ إيقاف
+  Future<void> stopAudio() async {
+    await _audioPlayer.stop();
+
+    setState(() {
+      isPlaying = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -211,8 +389,6 @@ class _TtsDownloadButtonState extends State<TtsDownloadButton> {
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF0C3A34), Color(0xFF125B4A), Color(0xFF1A7B6A)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
       ),
@@ -229,6 +405,7 @@ class _TtsDownloadButtonState extends State<TtsDownloadButton> {
 
           const Gap(20),
 
+          // زر التحميل
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.white24),
             onPressed: isDownloading ? null : downloadAudio,
@@ -241,6 +418,32 @@ class _TtsDownloadButtonState extends State<TtsDownloadButton> {
                 : const Icon(Icons.download),
             label: Text(isDownloading ? "جارٍ الحفظ..." : "تحميل الملف الصوتي"),
           ),
+
+          const Gap(20),
+
+          // أزرار التشغيل والإيقاف تظهر بعد التحميل
+          if (savedPath != null) ...[
+            //  Slider
+            TtsAudioSlider(
+              currentPosition: currentPosition,
+              totalDuration: totalDuration,
+              onSeek: (duration) async {
+                await _audioPlayer.seek(duration);
+              },
+            ),
+
+            const Gap(10),
+
+            // ▶️ ⏹️ الأزرار
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TtsPlayButton(onPressed: playAudio, isPlaying: isPlaying),
+                const Gap(12),
+                TtsStopButton(onPressed: stopAudio, isPlaying: isPlaying),
+              ],
+            ),
+          ],
         ],
       ),
     );
