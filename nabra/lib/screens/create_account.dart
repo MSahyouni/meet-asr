@@ -156,6 +156,22 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                             icon: Icons.check_circle_outline,
                             onPressed: () {
                               // TODO: create account
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text("Hello"),
+                                  backgroundColor: const Color.fromARGB(
+                                    255,
+                                    75,
+                                    151,
+                                    78,
+                                  ),
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  margin: EdgeInsets.all(16),
+                                ),
+                              );
                             },
                           ),
                         ),

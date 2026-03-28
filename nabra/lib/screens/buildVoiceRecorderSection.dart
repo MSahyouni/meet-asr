@@ -46,7 +46,15 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
         final hasPerm = await _audioRecorder.hasPermission();
         if (!hasPerm) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Microphone permission required')),
+            SnackBar(
+              content: Text('Microphone permission required'),
+              backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              margin: EdgeInsets.all(16),
+            ),
           );
           return;
         }
@@ -59,9 +67,17 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
         await _audioRecorder.start(const RecordConfig(), path: tempPath);
 
         setState(() => isRecording = true);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('بدأ التسجيل...')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('بدأ التسجيل...'),
+            backgroundColor: Color.fromARGB(255, 75, 151, 78),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            margin: EdgeInsets.all(16),
+          ),
+        );
       } else {
         // إيقاف التسجيل
         final path = await _audioRecorder.stop(); // يعيد المسار أو null
@@ -80,19 +96,43 @@ class _VoiceRecorderSectionState extends State<VoiceRecorderSection> {
           }
 
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('تم حفظ التسجيل في ${savedFile.path}')),
+            SnackBar(
+              content: Text('تم حفظ التسجيل في ${savedFile.path}'),
+              backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              margin: EdgeInsets.all(16),
+            ),
           );
         } else {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('لم يتم تسجيل ملف')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('لم يتم تسجيل ملف'),
+              backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              margin: EdgeInsets.all(16),
+            ),
+          );
         }
       }
     } catch (e) {
       setState(() => isRecording = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('خطأ أثناء التسجيل: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('خطأ أثناء التسجيل: $e'),
+          backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          margin: EdgeInsets.all(16),
+        ),
+      );
     }
   }
 

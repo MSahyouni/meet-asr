@@ -184,7 +184,20 @@ class _HomeScreen extends State<HomeScreen> {
 
                     if (apiUrl.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("الرجاء ادخال رابط api")),
+                        SnackBar(
+                          content: Text("الرجاء ادخال رابط api"),
+                          backgroundColor: const Color.fromARGB(
+                            255,
+                            75,
+                            151,
+                            78,
+                          ),
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          margin: EdgeInsets.all(16),
+                        ),
                       );
                       return;
                     }
@@ -326,8 +339,19 @@ class _HomeScreen extends State<HomeScreen> {
                         final apiUrl = _controller.text.trim();
                         if (apiUrl.isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
+                            SnackBar(
                               content: Text('الرجاء كتابة الرابط'),
+                              backgroundColor: const Color.fromARGB(
+                                255,
+                                75,
+                                151,
+                                78,
+                              ),
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              margin: EdgeInsets.all(16),
                             ),
                           );
                         }
@@ -341,8 +365,19 @@ class _HomeScreen extends State<HomeScreen> {
                           );
                         } else if (recordedFile == null) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
+                            SnackBar(
                               content: Text('الرجاء تسجيل صوت أولاً'),
+                              backgroundColor: const Color.fromARGB(
+                                255,
+                                75,
+                                151,
+                                78,
+                              ),
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              margin: EdgeInsets.all(16),
                             ),
                           );
                         }
@@ -417,8 +452,19 @@ class _HomeScreen extends State<HomeScreen> {
 
                       if (apiUrl.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
+                          SnackBar(
                             content: Text("الرجاء إدخال رابط api"),
+                            backgroundColor: const Color.fromARGB(
+                              255,
+                              75,
+                              151,
+                              78,
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            margin: EdgeInsets.all(16),
                           ),
                         );
                         return;

@@ -53,13 +53,29 @@ class _TtsState extends State<Tts> {
         audioUrl = generateAudioUrl;
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("تم إنشاء الصوت بنجاح")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("تم إنشاء الصوت بنجاح"),
+          backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          margin: EdgeInsets.all(16),
+        ),
+      );
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("حدث خطأ أثناء التحويل:$e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("حدث خطأ أثناء التحويل:$e"),
+          backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          margin: EdgeInsets.all(16),
+        ),
+      );
     }
   }
 

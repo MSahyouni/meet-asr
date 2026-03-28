@@ -52,14 +52,30 @@ class _SummaryScreenState extends State<SummaryScreen> {
           currentKeywords = data['keywords'] ?? currentKeywords;
         });
       } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("فشل التلخيص")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("فشل التلخيص"),
+            backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            margin: EdgeInsets.all(16),
+          ),
+        );
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("حدث خطأ: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("حدث خطأ: $e"),
+          backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          margin: EdgeInsets.all(16),
+        ),
+      );
     } finally {
       setState(() {
         isLoading = false;
