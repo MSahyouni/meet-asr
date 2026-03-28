@@ -82,17 +82,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
                         Row(
                           children: [
-                            Expanded(
-                              child: AuthLabeledField(
-                                text: "اسم العائلة",
-                                requiredStar: true,
-                                child: AuthSoftTextField(
-                                  controller: lastNameCtrl,
-                                  hint: '... اسم العائلة ',
-                                  prefix: Icons.person_outline,
-                                ),
-                              ),
-                            ),
                             const Gap(12),
                             Expanded(
                               child: AuthLabeledField(
