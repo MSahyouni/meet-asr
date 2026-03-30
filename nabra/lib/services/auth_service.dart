@@ -1,0 +1,53 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+class AuthService {
+  //create account
+  static Future<Map<String, dynamic>> register({
+    required String apiUrl,
+    required String firstName,
+    required String email,
+    required String password,
+    required String confirmPassword,
+  }) async {
+    final response = await http.post(
+      Uri.parse(apiUrl),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "first_name": firstName,
+        "email": email,
+        "password": password,
+        "confirm_password": confirmPassword,
+      }),
+    );
+
+    final data = jsonDecode(response.body);
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return data;
+    } else {
+      throw Exception(data["message"] ?? "فشل إنشاء الحساب");
+    }
+  }
+
+  //login
+  static Future<Map<String, dynamic>> login({
+    required String apiUrl,
+    required String email,
+    required String password,
+  }) async {
+    final response = await http.post(
+      Uri.parse(apiUrl),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({"email": email, "password": password}),
+    );
+
+    final data = jsonDecode(response.body);
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return data;
+    } else {
+      throw Exception(data["message"] ?? "فشل تسجيل الدخول");
+    }
+  }
+}

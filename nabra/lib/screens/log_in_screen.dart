@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/controllers/auth_controller.dart';
 import 'package:flutter_app/widgets/log_in_card.dart';
 import 'package:go_router/go_router.dart';
 
@@ -51,10 +52,17 @@ class _LoginScreenState extends State<LoginScreen> {
                   obscure: obscure,
                   onToggleObscure: () => setState(() => obscure = !obscure),
                   onLogin: () {
-                    // TODO: login action
+                    AuthController.handleLogin(
+                      context: context,
+                      email: emailCtrl.text.trim(),
+                      password: passCtrl.text.trim(),
+                      apiUrl: "",
+                    );
                   },
                   onForgot: () {
-                    // TODO: forgot password
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text('قريباً...')));
                   },
 
                   onCreateAccount: () {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/controllers/auth_controller.dart';
 import 'package:flutter_app/widgets/auth_card.dart';
 import 'package:flutter_app/widgets/auth_gradientbutton.dart';
 import 'package:flutter_app/widgets/labeled_filed.dart';
@@ -14,7 +15,7 @@ class CreateAccountScreen extends StatefulWidget {
 
 class _CreateAccountScreenState extends State<CreateAccountScreen> {
   final firstNameCtrl = TextEditingController();
-  final lastNameCtrl = TextEditingController();
+
   final emailCtrl = TextEditingController();
   final passCtrl = TextEditingController();
   final confirmCtrl = TextEditingController();
@@ -25,7 +26,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   @override
   void dispose() {
     firstNameCtrl.dispose();
-    lastNameCtrl.dispose();
+
     emailCtrl.dispose();
     passCtrl.dispose();
     confirmCtrl.dispose();
@@ -155,22 +156,13 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                             text: "انشاء حساب جديد",
                             icon: Icons.check_circle_outline,
                             onPressed: () {
-                              // TODO: create account
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text("Hello"),
-                                  backgroundColor: const Color.fromARGB(
-                                    255,
-                                    75,
-                                    151,
-                                    78,
-                                  ),
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  margin: EdgeInsets.all(16),
-                                ),
+                              AuthController.handleRegister(
+                                context: context,
+                                firstName: firstNameCtrl.text.trim(),
+                                email: emailCtrl.text.trim(),
+                                password: passCtrl.text.trim(),
+                                confirmPassword: confirmCtrl.text.trim(),
+                                apiUrl: "",
                               );
                             },
                           ),

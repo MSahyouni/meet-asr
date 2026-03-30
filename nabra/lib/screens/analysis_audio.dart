@@ -413,7 +413,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
-// ✅ استيراد الأنيميشن اللي عندك
+//  استيراد الأنيميشن اللي عندك
 import 'package:flutter_app/widgets/staggered_fade_slide.dart';
 
 class AnalysisAudioScreen extends StatefulWidget {
@@ -483,7 +483,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
     final apiUrl = extra?["apiUrl"] as String? ?? '';
 
     if (files.isEmpty) {
-      return const Scaffold(body: Center(child: Text('لا يوجد ملف صوتي')));
+      return Scaffold(body: Center(child: Text('لا يوجد ملف صوتي')));
     }
 
     return Scaffold(
@@ -509,7 +509,15 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
               if (value == 'save_txt') {
                 if (transcriptionSegments.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('لا يوجد نص محلل للحفظ')),
+                    SnackBar(
+                      content: Text('لا يوجد نص محلل للحفظ'),
+                      backgroundColor: Colors.red,
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      margin: EdgeInsets.all(16),
+                    ),
                   );
                   return;
                 }
@@ -553,7 +561,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
             padding: const EdgeInsets.fromLTRB(20, 140, 20, 20),
             child: Column(
               children: [
-                // ✅ أنيميشن للعناصر العلوية فقط (بدون تخريب Expanded)
+                //  أنيميشن للعناصر العلوية فقط
                 StaggeredFadeSlide(
                   children: [
                     buildMainButton(
@@ -616,7 +624,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                   ],
                 ),
 
-                // ✅ نحافظ على التصميم
+                //  نحافظ على التصميم
                 if (isLoading)
                   const Expanded(
                     child: Center(child: CircularProgressIndicator()),
@@ -630,7 +638,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                         final speaker = segment['speaker'] ?? '';
                         final text = segment['text'] ?? '';
 
-                        // ✅ أنيميشن لكل عنصر ListView
+                        //  أنيميشن لكل عنصر ListView
                         return AnimatedListItem(
                           index: index > 25
                               ? 25
