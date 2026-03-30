@@ -11,6 +11,7 @@ class Standerd extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        iconTheme: IconThemeData(color: Colors.white),
         flexibleSpace: Image.asset(
           'assets/images/image_5.png',
           fit: BoxFit.cover,
