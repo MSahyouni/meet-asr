@@ -79,27 +79,18 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const Gap(20),
 
-                        Row(
-                          children: [
-                            const Gap(12),
-                            Expanded(
-                              child: AuthLabeledField(
-                                text: "الاسم الأول",
-                                requiredStar: true,
-                                child: AuthSoftTextField(
-                                  controller: firstNameCtrl,
-                                  hint: '... الاسم الأول',
-                                  prefix: Icons.person_outline,
-                                ),
-                              ),
-                            ),
-                          ],
+                        const Gap(25),
+                        AuthLabeledField(
+                          text: "الاسم الأول",
+                          requiredStar: true,
+                          child: AuthSoftTextField(
+                            controller: firstNameCtrl,
+                            hint: '... الاسم الأول',
+                            prefix: Icons.person_outline,
+                          ),
                         ),
-
                         const Gap(20),
-
                         AuthLabeledField(
                           text: "البريد الإلكتروني",
                           requiredStar: true,

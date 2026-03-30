@@ -2,8 +2,6 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/screens/buildVoiceRecorderSection.dart';
-import 'package:flutter_app/screens/loading_files.dart';
-import 'package:flutter_app/widgets/get_drawer.dart';
 import 'package:flutter_app/widgets/staggered_fade_slide.dart';
 import 'package:flutter_app/widgets/standerd.dart';
 import 'package:gap/gap.dart';
@@ -343,9 +341,9 @@ class _HomeScreen extends State<HomeScreen> {
                               content: Text('الرجاء كتابة الرابط'),
                               backgroundColor: const Color.fromARGB(
                                 255,
+                                158,
                                 75,
-                                151,
-                                78,
+                                69,
                               ),
                               behavior: SnackBarBehavior.floating,
                               shape: RoundedRectangleBorder(
@@ -354,6 +352,7 @@ class _HomeScreen extends State<HomeScreen> {
                               margin: EdgeInsets.all(16),
                             ),
                           );
+                          return;
                         }
                         if (recordedFile != null) {
                           context.push(
@@ -367,11 +366,12 @@ class _HomeScreen extends State<HomeScreen> {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text('الرجاء تسجيل صوت أولاً'),
+
                               backgroundColor: const Color.fromARGB(
                                 255,
+                                158,
                                 75,
-                                151,
-                                78,
+                                69,
                               ),
                               behavior: SnackBarBehavior.floating,
                               shape: RoundedRectangleBorder(
@@ -454,11 +454,12 @@ class _HomeScreen extends State<HomeScreen> {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text("الرجاء إدخال رابط api"),
+
                             backgroundColor: const Color.fromARGB(
                               255,
+                              158,
                               75,
-                              151,
-                              78,
+                              69,
                             ),
                             behavior: SnackBarBehavior.floating,
                             shape: RoundedRectangleBorder(

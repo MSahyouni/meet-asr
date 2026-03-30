@@ -30,16 +30,34 @@ class _TtsState extends State<Tts> {
 
   Future<void> _handleConvert() async {
     if (_textController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("الرجاء إدخال نص")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("الرجاء إدخال نص"),
+
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          margin: EdgeInsets.all(16),
+        ),
+      );
       return;
     }
 
     if (selectedVoice == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("الرجاء اختيار صوت")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("الرجاء اختيار صوت"),
+
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          margin: EdgeInsets.all(16),
+        ),
+      );
       return;
     }
 
@@ -68,7 +86,8 @@ class _TtsState extends State<Tts> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("حدث خطأ أثناء التحويل:$e"),
-          backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),

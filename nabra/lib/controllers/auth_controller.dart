@@ -18,7 +18,7 @@ class AuthController {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("يرجى ملء جميع الحقول"),
-          backgroundColor: Colors.red,
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
@@ -34,7 +34,7 @@ class AuthController {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("كلمة المرور وتأكيدها غير متطابقين"),
-          backgroundColor: Colors.red,
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
@@ -68,7 +68,7 @@ class AuthController {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("فشل إنشاء الحساب: $e"),
-          backgroundColor: Colors.red,
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
@@ -91,7 +91,7 @@ class AuthController {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("يرجى ملء جميع الحقول"),
-          backgroundColor: Colors.red,
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
@@ -124,7 +124,7 @@ class AuthController {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("فشل تسجيل الدخول: $e"),
-          backgroundColor: Colors.red,
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),

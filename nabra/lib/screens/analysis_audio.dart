@@ -590,7 +590,21 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                           }
                         } catch (e) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('حدث خطأ: $e')),
+                            SnackBar(
+                              content: Text('حدث خطأ: $e'),
+
+                              backgroundColor: const Color.fromARGB(
+                                255,
+                                158,
+                                75,
+                                69,
+                              ),
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              margin: EdgeInsets.all(16),
+                            ),
                           );
                         } finally {
                           setState(() {
