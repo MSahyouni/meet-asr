@@ -5,6 +5,7 @@ import 'package:flutter_app/widgets/auth_gradientbutton.dart';
 import 'package:flutter_app/widgets/labeled_filed.dart';
 import 'package:flutter_app/widgets/soft_text_filed.dart';
 import 'package:gap/gap.dart';
+import 'package:go_router/go_router.dart';
 
 class CreateAccountScreen extends StatefulWidget {
   const CreateAccountScreen({super.key});
@@ -154,6 +155,9 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                                 password: passCtrl.text.trim(),
                                 confirmPassword: confirmCtrl.text.trim(),
                                 apiUrl: "",
+                                onSuccess: () {
+                                  context.push("/login");
+                                },
                               );
                             },
                           ),

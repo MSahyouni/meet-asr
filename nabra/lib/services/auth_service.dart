@@ -50,4 +50,20 @@ class AuthService {
       throw Exception(data["message"] ?? "فشل تسجيل الدخول");
     }
   }
+
+  //logout
+  static Future<Map<String, dynamic>> logout({required String apiUrl}) async {
+    final response = await http.post(
+      Uri.parse(apiUrl),
+      headers: {"Content-Type": "application/json"},
+    );
+
+    final data = jsonDecode(response.body);
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return data;
+    } else {
+      throw Exception(data["message"] ?? "فشل تسجيل الخروج");
+    }
+  }
 }

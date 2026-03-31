@@ -10,6 +10,7 @@ class AuthController {
     required String password,
     required String confirmPassword,
     required String apiUrl,
+    VoidCallback? onSuccess,
   }) async {
     if (firstName.isEmpty ||
         email.isEmpty ||
@@ -64,6 +65,10 @@ class AuthController {
           margin: EdgeInsets.all(16),
         ),
       );
+
+      if (onSuccess != null) {
+        onSuccess();
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -86,6 +91,7 @@ class AuthController {
     required String email,
     required String password,
     required String apiUrl,
+    VoidCallback? onSuccess,
   }) async {
     if (email.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -120,10 +126,54 @@ class AuthController {
           margin: EdgeInsets.all(16),
         ),
       );
+
+      if (onSuccess != null) {
+        onSuccess();
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("فشل تسجيل الدخول: $e"),
+          backgroundColor: const Color.fromARGB(255, 158, 75, 69),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          margin: EdgeInsets.all(16),
+        ),
+      );
+    }
+  }
+
+  //   //logout handler
+
+  static Future<void> handleLogout({
+    required BuildContext context,
+    required String apiUrl,
+    VoidCallback? onSuccess,
+  }) async {
+    try {
+      final result = await AuthService.logout(apiUrl: apiUrl);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result["message"] ?? "تم تسجيل الخروج بنجاح"),
+          backgroundColor: const Color.fromARGB(255, 75, 151, 78),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          margin: EdgeInsets.all(16),
+        ),
+      );
+
+      if (onSuccess != null) {
+        onSuccess();
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("فشل تسجيل الخروج: $e"),
           backgroundColor: const Color.fromARGB(255, 158, 75, 69),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(

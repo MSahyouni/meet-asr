@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/controllers/auth_controller.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 
@@ -79,7 +80,7 @@ Widget get_Drawer(BuildContext context) {
                   style: TextStyle(fontSize: 20, color: Colors.white70),
                   textDirection: TextDirection.rtl,
                 ),
-                Gap(220),
+                Gap(150),
                 SizedBox(
                   width: double.infinity,
                   height: 40,
@@ -110,9 +111,20 @@ Widget get_Drawer(BuildContext context) {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Center(
-                        child: Text(
-                          'تسجيل الدخول ',
-                          style: TextStyle(color: Colors.white),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            Gap(35),
+                            Text(
+                              'تسجيل الدخول ',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
+                            ),
+                            Gap(10),
+                            Icon(Icons.login, color: Colors.white),
+                          ],
                         ),
                       ),
                     ),
@@ -151,9 +163,77 @@ Widget get_Drawer(BuildContext context) {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Center(
-                        child: Text(
-                          'انشاء حساب جديد',
-                          style: TextStyle(color: Colors.white),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            Gap(35),
+                            Text(
+                              'إنشاء حساب جديد',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
+                            ),
+                            Gap(10),
+                            Icon(Icons.person_add, color: Colors.white),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Gap(20),
+
+                SizedBox(
+                  width: double.infinity,
+                  height: 40,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size.fromHeight(50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () {
+                      AuthController.handleLogout(
+                        context: context,
+                        apiUrl: "",
+                        onSuccess: () {
+                          context.push('/login');
+                        },
+                      );
+                    },
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Color.fromARGB(255, 15, 71, 64),
+                            Color.fromARGB(255, 18, 91, 74),
+                            Color.fromARGB(255, 26, 123, 106),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Center(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            Gap(50),
+                            Text(
+                              'تسجيل خروج',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
+                            ),
+                            Gap(10),
+                            const Icon(Icons.logout, color: Colors.white),
+                          ],
                         ),
                       ),
                     ),

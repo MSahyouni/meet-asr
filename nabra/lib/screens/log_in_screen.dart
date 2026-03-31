@@ -57,6 +57,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       email: emailCtrl.text.trim(),
                       password: passCtrl.text.trim(),
                       apiUrl: "",
+                      onSuccess: () {
+                        context.push('/');
+                      },
                     );
                   },
                   onForgot: () {
