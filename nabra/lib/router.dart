@@ -13,7 +13,13 @@ final GoRouter router = GoRouter(
 
   routes: [
     GoRoute(path: "/splash", builder: (context, state) => SplashScreen()),
-    GoRoute(path: "/", builder: (context, state) => HomeScreen()),
+    GoRoute(
+      path: "/",
+      builder: (context, state) {
+        return LoginScreen();
+      },
+    ),
+    GoRoute(path: "/home", builder: (context, state) => HomeScreen()),
     GoRoute(
       path: "/analysis_audio",
       builder: (context, state) => AnalysisAudioScreen(),
@@ -39,12 +45,12 @@ final GoRouter router = GoRouter(
         return Tts(apiUrl: extra?['apiUrl'] ?? '');
       },
     ),
-    GoRoute(
-      path: "/login",
-      builder: (context, state) {
-        return LoginScreen();
-      },
-    ),
+    // GoRoute(
+    //   path: "/login",
+    //   builder: (context, state) {
+    //     return LoginScreen();
+    //   },
+    // ),
     GoRoute(
       path: "/create_account",
       builder: (context, state) {

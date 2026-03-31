@@ -31,9 +31,9 @@ Widget get_Drawer(BuildContext context) {
                 Row(
                   children: [
                     Image.asset(
-                      'assets/images/logo.png',
-                      width: 50,
-                      height: 50,
+                      'assets/images/logo_gradient.png',
+                      width: 60,
+                      height: 60,
                     ),
                     const SizedBox(width: 20),
                     const Expanded(

@@ -58,7 +58,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       password: passCtrl.text.trim(),
                       apiUrl: "",
                       onSuccess: () {
-                        context.push('/');
+                        context.push('/home');
                       },
                     );
                   },
