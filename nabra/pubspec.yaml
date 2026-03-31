@@ -50,6 +50,7 @@ flutter:
     - assets/images/image_3.png
     - assets/images/logo.png
     - assets/images/icon_file.png
+    - assets/images/logo_gradient.png
 
 icons_launcher:
   image_path: 'assets/images/logo.png'
