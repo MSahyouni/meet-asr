@@ -5,14 +5,14 @@ class AuthController {
   //create account handler
   static Future<void> handleRegister({
     required BuildContext context,
-    required String firstName,
+    required String fullName,
     required String email,
     required String password,
     required String confirmPassword,
     required String apiUrl,
     VoidCallback? onSuccess,
   }) async {
-    if (firstName.isEmpty ||
+    if (fullName.isEmpty ||
         email.isEmpty ||
         password.isEmpty ||
         confirmPassword.isEmpty) {
@@ -48,8 +48,7 @@ class AuthController {
 
     try {
       final result = await AuthService.register(
-        apiUrl: apiUrl,
-        firstName: firstName,
+        fullName: fullName,
         email: email,
         password: password,
         confirmPassword: confirmPassword,
@@ -109,11 +108,7 @@ class AuthController {
     }
 
     try {
-      final result = await AuthService.login(
-        apiUrl: apiUrl,
-        email: email,
-        password: password,
-      );
+      final result = await AuthService.login(email: email, password: password);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
