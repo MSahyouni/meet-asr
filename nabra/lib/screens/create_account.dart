@@ -15,7 +15,7 @@ class CreateAccountScreen extends StatefulWidget {
 }
 
 class _CreateAccountScreenState extends State<CreateAccountScreen> {
-  final firstNameCtrl = TextEditingController();
+  final fullNameCtrl = TextEditingController();
 
   final emailCtrl = TextEditingController();
   final passCtrl = TextEditingController();
@@ -26,7 +26,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
   @override
   void dispose() {
-    firstNameCtrl.dispose();
+    fullNameCtrl.dispose();
 
     emailCtrl.dispose();
     passCtrl.dispose();
@@ -83,11 +83,11 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
                         const Gap(25),
                         AuthLabeledField(
-                          text: "الاسم الأول",
+                          text: "الاسم الكامل",
                           requiredStar: true,
                           child: AuthSoftTextField(
-                            controller: firstNameCtrl,
-                            hint: '... الاسم الأول',
+                            controller: fullNameCtrl,
+                            hint: '... الاسم الكامل',
                             prefix: Icons.person_outline,
                           ),
                         ),
@@ -150,7 +150,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                             onPressed: () {
                               AuthController.handleRegister(
                                 context: context,
-                                firstName: firstNameCtrl.text.trim(),
+                                fullName: fullNameCtrl.text.trim(),
                                 email: emailCtrl.text.trim(),
                                 password: passCtrl.text.trim(),
                                 confirmPassword: confirmCtrl.text.trim(),
