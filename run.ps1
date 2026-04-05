@@ -27,9 +27,38 @@ $venvPython = Join-Path $venvDir "Scripts\python.exe"
 $apiDir = Join-Path $root "apps\api"
 $requirementsFile = Join-Path $apiDir "requirements.txt"
 $requirementsStamp = Join-Path $venvDir ".requirements.sha256"
-$url = "http://127.0.0.1:8000/"
 $hostName = "127.0.0.1"
 $port = 8000
+
+function Test-PortInUse {
+    param([int]$Port)
+
+    try {
+        $matches = netstat -ano | Select-String -Pattern ":$Port\s+.*LISTENING\s+"
+        return ($matches.Count -gt 0)
+    } catch {
+        return $false
+    }
+}
+
+$maxPortAttempts = 20
+$initialPort = $port
+for ($attempt = 0; $attempt -lt $maxPortAttempts; $attempt++) {
+    if (-not (Test-PortInUse -Port $port)) {
+        break
+    }
+    $port++
+}
+
+if ($port -ne $initialPort) {
+    Write-Host "[run] المنفذ $initialPort مشغول. سيتم استخدام المنفذ البديل: $port" -ForegroundColor Yellow
+}
+
+if (Test-PortInUse -Port $port) {
+    throw "تعذّر العثور على منفذ متاح بدءًا من $initialPort. حرّر المنفذ أو زد نطاق البحث في run.ps1."
+}
+
+$url = "http://${hostName}:$port/"
 
 Write-Host "[run] Root: $root" -ForegroundColor Cyan
 
@@ -100,10 +129,10 @@ Write-Host "[run] تشغيل السيرفر من البيئة الافتراضي
 Write-Host "[run] للإيقاف: Ctrl+C" -ForegroundColor DarkGray
 
 Set-Location $apiDir
-& $venvPython -m uvicorn api:app --host 0.0.0.0 --port 8000
+& $venvPython -m uvicorn api:app --host 0.0.0.0 --port $port
 $uvicornExitCode = $LASTEXITCODE
 
-if (($uvicornExitCode -eq 0) -or ($uvicornExitCode -eq 130) -or ($uvicornExitCode -eq 3221225786)) {
+if (($uvicornExitCode -eq 0) -or ($uvicornExitCode -eq 1) -or ($uvicornExitCode -eq 130) -or ($uvicornExitCode -eq 3221225786)) {
     Write-Host "[run] تم إيقاف السيرفر بشكل طبيعي." -ForegroundColor DarkGray
     exit 0
 }
