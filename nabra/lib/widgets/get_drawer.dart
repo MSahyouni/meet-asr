@@ -95,7 +95,7 @@ Widget get_Drawer(BuildContext context) {
                       ),
                     ),
                     onPressed: () {
-                      context.push('/login');
+                      context.push('/');
                     },
                     child: Ink(
                       decoration: BoxDecoration(
