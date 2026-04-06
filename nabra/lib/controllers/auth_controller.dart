@@ -157,7 +157,7 @@ class AuthController {
     VoidCallback? onSuccess,
   }) async {
     try {
-      final result = await AuthService.logout(apiUrl: apiUrl);
+      final result = await AuthService.logout();
       await SessionService.clearSession(); // مسح حالة الجلسة عند تسجيل الخروج
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
