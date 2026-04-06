@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/services/auth_service.dart';
+import 'package:flutter_app/services/session_service.dart';
 
 class AuthController {
   //create account handler
@@ -96,13 +97,13 @@ class AuthController {
     if (email.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("يرجى ملء جميع الحقول"),
+          content: const Text("يرجى ملء جميع الحقول"),
           backgroundColor: const Color.fromARGB(255, 158, 75, 69),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
-          margin: EdgeInsets.all(16),
+          margin: const EdgeInsets.all(16),
         ),
       );
       return;
@@ -115,6 +116,9 @@ class AuthController {
         apiUrl: apiUrl_login,
       );
 
+      //  حفظ حالة تسجيل الدخول
+      await SessionService.saveLoginStatus(true);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result["message"] ?? "تم تسجيل الدخول بنجاح"),
@@ -123,7 +127,7 @@ class AuthController {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
-          margin: EdgeInsets.all(16),
+          margin: const EdgeInsets.all(16),
         ),
       );
 
@@ -139,7 +143,7 @@ class AuthController {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
-          margin: EdgeInsets.all(16),
+          margin: const EdgeInsets.all(16),
         ),
       );
     }
@@ -154,7 +158,7 @@ class AuthController {
   }) async {
     try {
       final result = await AuthService.logout(apiUrl: apiUrl);
-
+      await SessionService.clearSession(); // مسح حالة الجلسة عند تسجيل الخروج
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result["message"] ?? "تم تسجيل الخروج بنجاح"),

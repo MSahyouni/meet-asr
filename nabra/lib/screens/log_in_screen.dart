@@ -14,20 +14,21 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final emailCtrl = TextEditingController();
   final passCtrl = TextEditingController();
-
+  final apiCtrl = TextEditingController();
   bool obscure = true;
 
   @override
   void dispose() {
     emailCtrl.dispose();
     passCtrl.dispose();
+    apiCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final isRTL = Directionality.of(context) == TextDirection.rtl;
-    final TextEditingController _controller = TextEditingController();
+
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -42,7 +43,6 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         child: Column(
           children: [
-            Gap(100),
             SafeArea(
               child: Center(
                 child: SingleChildScrollView(
@@ -63,9 +63,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           context: context,
                           email: emailCtrl.text.trim(),
                           password: passCtrl.text.trim(),
-                          apiUrl_login: _controller.text.trim(),
+                          apiUrl_login: apiCtrl.text.trim(),
                           onSuccess: () {
-                            context.push('/home');
+                            context.go('/home');
                           },
                         );
                       },
@@ -97,7 +97,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
             TextField(
-              controller: _controller,
+              controller: apiCtrl,
               decoration: InputDecoration(
                 border: OutlineInputBorder(),
 

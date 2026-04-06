@@ -52,10 +52,11 @@ class AuthService {
   }
 
   //logout
-  static Future<Map<String, dynamic>> logout({required String apiUrl}) async {
-    final apiUrl_logout = apiUrl.replaceAll("register", "logout");
+  static Future<Map<String, dynamic>> logout() async {
+    final apiUrl =
+        'http://127.0.0.1:8000'; // Replace with your actual logout endpoint
     final response = await http.post(
-      Uri.parse(apiUrl_logout),
+      Uri.parse('${apiUrl}/auth/logout'),
       headers: {"Content-Type": "application/json"},
     );
 

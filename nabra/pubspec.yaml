@@ -25,6 +25,7 @@ dependencies:
   just_audio: ^0.10.5
   icons_launcher: ^3.0.0
   audioplayers: ^6.5.1
+  shared_preferences: ^2.5.3
 
 
 
