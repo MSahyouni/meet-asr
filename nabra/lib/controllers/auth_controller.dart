@@ -52,6 +52,7 @@ class AuthController {
         email: email,
         password: password,
         confirmPassword: confirmPassword,
+        apiUrl: apiUrl,
       );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -89,7 +90,7 @@ class AuthController {
     required BuildContext context,
     required String email,
     required String password,
-    required String apiUrl,
+    required String apiUrl_login,
     VoidCallback? onSuccess,
   }) async {
     if (email.isEmpty || password.isEmpty) {
@@ -108,7 +109,11 @@ class AuthController {
     }
 
     try {
-      final result = await AuthService.login(email: email, password: password);
+      final result = await AuthService.login(
+        email: email,
+        password: password,
+        apiUrl: apiUrl_login,
+      );
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

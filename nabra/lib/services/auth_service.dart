@@ -2,16 +2,16 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class AuthService {
-  static const String baseUrl = 'http://127.0.0.1:8000';
   //create account
   static Future<Map<String, dynamic>> register({
     required String fullName,
     required String email,
     required String password,
     required String confirmPassword,
+    required String apiUrl,
   }) async {
     final response = await http.post(
-      Uri.parse('${AuthService.baseUrl}/auth/register'),
+      Uri.parse(apiUrl),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({
         "full_name": fullName,
@@ -34,9 +34,10 @@ class AuthService {
   static Future<Map<String, dynamic>> login({
     required String email,
     required String password,
+    required String apiUrl,
   }) async {
     final response = await http.post(
-      Uri.parse('${AuthService.baseUrl}/auth/login'),
+      Uri.parse(apiUrl),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({"email": email, "password": password}),
     );
@@ -52,8 +53,9 @@ class AuthService {
 
   //logout
   static Future<Map<String, dynamic>> logout({required String apiUrl}) async {
+    final apiUrl_logout = apiUrl.replaceAll("register", "logout");
     final response = await http.post(
-      Uri.parse('${AuthService.baseUrl}/auth/logout'),
+      Uri.parse(apiUrl_logout),
       headers: {"Content-Type": "application/json"},
     );
 

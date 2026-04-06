@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/controllers/auth_controller.dart';
 import 'package:flutter_app/widgets/log_in_card.dart';
+import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -26,7 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final isRTL = Directionality.of(context) == TextDirection.rtl;
-
+    final TextEditingController _controller = TextEditingController();
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -39,50 +40,72 @@ class _LoginScreenState extends State<LoginScreen> {
             end: Alignment.centerLeft,
           ),
         ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: LoginCard(
-                  isRTL: isRTL,
-                  emailCtrl: emailCtrl,
-                  passCtrl: passCtrl,
-                  obscure: obscure,
-                  onToggleObscure: () => setState(() => obscure = !obscure),
-                  onLogin: () {
-                    AuthController.handleLogin(
-                      context: context,
-                      email: emailCtrl.text.trim(),
-                      password: passCtrl.text.trim(),
-                      apiUrl: "",
-                      onSuccess: () {
-                        context.push('/home');
+        child: Column(
+          children: [
+            Gap(100),
+            SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 18,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: LoginCard(
+                      isRTL: isRTL,
+                      emailCtrl: emailCtrl,
+                      passCtrl: passCtrl,
+                      obscure: obscure,
+                      onToggleObscure: () => setState(() => obscure = !obscure),
+                      onLogin: () {
+                        AuthController.handleLogin(
+                          context: context,
+                          email: emailCtrl.text.trim(),
+                          password: passCtrl.text.trim(),
+                          apiUrl_login: _controller.text.trim(),
+                          onSuccess: () {
+                            context.push('/home');
+                          },
+                        );
                       },
-                    );
-                  },
-                  onForgot: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Center(child: Text('قريباً...')),
-                        backgroundColor: const Color.fromARGB(255, 75, 151, 78),
-                        behavior: SnackBarBehavior.floating,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        margin: EdgeInsets.all(16),
-                      ),
-                    );
-                  },
+                      onForgot: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Center(child: Text('قريباً...')),
+                            backgroundColor: const Color.fromARGB(
+                              255,
+                              75,
+                              151,
+                              78,
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            margin: EdgeInsets.all(16),
+                          ),
+                        );
+                      },
 
-                  onCreateAccount: () {
-                    context.push('/create_account');
-                  },
+                      onCreateAccount: () {
+                        context.push('/create_account');
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
+            TextField(
+              controller: _controller,
+              decoration: InputDecoration(
+                border: OutlineInputBorder(),
+
+                hintText: 'ادخل رابطapi_create_login هنا ',
+                hintStyle: TextStyle(color: Colors.white70, fontSize: 16),
+              ),
+            ),
+          ],
         ),
       ),
     );

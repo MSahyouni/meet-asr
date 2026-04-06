@@ -20,7 +20,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   final emailCtrl = TextEditingController();
   final passCtrl = TextEditingController();
   final confirmCtrl = TextEditingController();
-
+  final TextEditingController _controller = TextEditingController();
   bool obscurePass = true;
   bool obscureConfirm = true;
 
@@ -140,7 +140,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                           ),
                         ),
 
-                        const Gap(50),
+                        const Gap(30),
 
                         SizedBox(
                           height: 46,
@@ -154,7 +154,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                                 email: emailCtrl.text.trim(),
                                 password: passCtrl.text.trim(),
                                 confirmPassword: confirmCtrl.text.trim(),
-                                apiUrl: "",
+                                apiUrl: _controller.text.trim(),
                                 onSuccess: () {
                                   context.push("/login");
                                 },
@@ -162,8 +162,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                             },
                           ),
                         ),
-
-                        const Gap(30),
 
                         Text(
                           "بإنشاء حساب، فإنك توافق على شروط الاستخدام وسياسة الخصوصية الخاصة بنا",
@@ -173,6 +171,15 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                             fontWeight: FontWeight.w600,
                             fontSize: 12,
                             height: 1.5,
+                          ),
+                        ),
+                        Gap(10),
+                        TextField(
+                          controller: _controller,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(),
+
+                            hintText: 'ادخل رابطapi_create_account هنا ',
                           ),
                         ),
                       ],
