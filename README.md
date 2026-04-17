@@ -86,7 +86,25 @@ run.bat
 - يشغّل `uvicorn` من `apps/api`.
 - يفتح المتصفح تلقائيًا عند جاهزية المنفذ `8000`.
 
-> السكربت لا يثبّت المتطلبات تلقائيًا.
+> السكربت يثبّت المتطلبات تلقائيًا عند تغيّر `requirements.txt`.
+
+### Linux
+```bash
+chmod +x ./run.sh
+./run.sh
+```
+
+مع تخصيص المنفذ أو المضيف:
+```bash
+PORT=9000 HOST=0.0.0.0 ./run.sh
+```
+
+ما يفعله `run.sh`:
+- يستخدم `.venv` إن وجدت، وإلا يستخدم `venv` القديم.
+- ينشئ `.venv` تلقائيًا عند عدم وجود بيئة افتراضية.
+- يثبت المتطلبات من `apps/api/requirements.txt` عند تغيرها.
+- يشغّل `uvicorn` باستخدام Python من داخل البيئة الافتراضية.
+- يدعم `PORT` و `HOST` من متغيرات البيئة مع القيم الافتراضية `8000` و `127.0.0.1`.
 
 ### التشغيل اليدوي
 ```powershell
@@ -95,6 +113,22 @@ python -m venv .venv
 pip install -U pip
 pip install -r apps/api/requirements.txt
 
+cd apps/api
+python -m uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+### التشغيل اليدوي على Linux
+```bash
+cd /path/to/meet-asr
+source venv/bin/activate
+cd apps/api
+python -m uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+إذا كانت البيئة الافتراضية باسم `.venv`:
+```bash
+cd /path/to/meet-asr
+source .venv/bin/activate
 cd apps/api
 python -m uvicorn api:app --host 0.0.0.0 --port 8000
 ```

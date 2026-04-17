@@ -13,8 +13,8 @@ faster-whisper==1.2.0
 # ==== Diarization (Pyannote & SpeechBrain for Enrollment) ====
 pyannote.audio==3.1.1
 speechbrain==1.0.0
-torch==2.1.0
-torchaudio==2.1.0
+torch==2.4.0
+torchaudio==2.4.0
 pytorch-lightning==2.1.0 # Dependency for Pyannote
 
 # ==== Summarization & NLP (Transformers) ====
@@ -37,8 +37,9 @@ noisereduce==3.0.3
 librosa==0.11.0
 # NumPy 2.x breaks torch, faiss, numba — keep 1.x
 numpy>=1.24.4,<2
-numba==0.57.1
-llvmlite==0.40.1
+# Python 3.12 support requires a newer numba/llvmlite pair
+numba==0.60.0
+llvmlite==0.43.0
 scipy>=1.11.4,<1.14
 
 # ==== TTS (MMS-TTS for Arabic + optional XTTS/Habibi) ====

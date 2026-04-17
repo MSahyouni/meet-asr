@@ -16,6 +16,8 @@ def setup_env(torch_module):
     os.environ["SPEECHBRAIN_LOCAL_FILE_STRATEGY"] = "copy"
     os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    # Prefer standard resumable HTTP downloads over Xet for large local model pulls.
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
     os.environ["HF_HOME"] = str(settings.HF_DIR)
     os.environ.pop("TRANSFORMERS_CACHE", None)
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
