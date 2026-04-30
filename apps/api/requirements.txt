@@ -13,7 +13,7 @@ faster-whisper==1.2.0
 # ==== Diarization (Pyannote & SpeechBrain for Enrollment) ====
 pyannote.audio==3.1.1
 speechbrain==1.0.0
---index-url https://download.pytorch.org/whl/cu124
+--extra-index-url https://download.pytorch.org/whl/cu124
 torch==2.4.0
 torchaudio==2.4.0
 pytorch-lightning==2.4.0 # Dependency for Pyannote
