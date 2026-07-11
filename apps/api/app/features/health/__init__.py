@@ -1,10 +1,6 @@
 # features/health/__init__.py
-"""Health check feature."""
+"""Health check feature — detailed diagnostics from canonical router."""
 
-from fastapi import APIRouter
+from app.routers.health import router
 
-router = APIRouter()
-
-@router.get("/health", tags=["Health"])
-async def health_check():
-    return {"status": "ok"}
+__all__ = ["router"]

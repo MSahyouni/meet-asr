@@ -17,7 +17,7 @@ def test_tts_returns_ok_and_downloadable():
     client = TestClient(app)
     resp = client.post(
         "/tts",
-        json={"text": "Test.", "voice": "af_heart", "speed": 1.0, "format": "wav"},
+        json={"text": "Test.", "voice": "ar_mms", "speed": 1.0, "format": "wav"},
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()

@@ -91,23 +91,23 @@ def test_tts_validation_text_empty_raises():
     from app.tts_core import TTSCore
     core = TTSCore()
     with pytest.raises(ValueError, match="cannot be empty"):
-        core.synthesize("", voice="af_heart", speed=1.0, out_path="")
+        core.synthesize("", voice="ar_mms", speed=1.0, out_path="")
 
 
 def test_tts_validation_text_too_long_raises():
     from app.tts_core import TTSCore, TTS_TEXT_MAX_LEN
     core = TTSCore()
     with pytest.raises(ValueError, match="exceeds maximum"):
-        core.synthesize("x" * (TTS_TEXT_MAX_LEN + 1), voice="af_heart", speed=1.0, out_path="")
+        core.synthesize("x" * (TTS_TEXT_MAX_LEN + 1), voice="ar_mms", speed=1.0, out_path="")
 
 
 def test_tts_validation_speed_out_of_range_raises():
     from app.tts_core import TTSCore
     core = TTSCore()
     with pytest.raises(ValueError, match="Speed must be"):
-        core.synthesize("hello", voice="af_heart", speed=3.0, out_path="")
+        core.synthesize("hello", voice="ar_mms", speed=3.0, out_path="")
     with pytest.raises(ValueError, match="Speed must be"):
-        core.synthesize("hello", voice="af_heart", speed=0.1, out_path="")
+        core.synthesize("hello", voice="ar_mms", speed=0.1, out_path="")
 
 
 def test_tts_validation_speed_valid_not_value_error():
@@ -116,11 +116,76 @@ def test_tts_validation_speed_valid_not_value_error():
     # Speed 0.5 and 2.0 are in range; must not raise ValueError for speed (may raise RuntimeError if model not loaded)
     for speed in (0.5, 1.0, 2.0):
         try:
-            core.synthesize("x", voice="af_heart", speed=speed, out_path="")
+            core.synthesize("x", voice="ar_mms", speed=speed, out_path="")
         except ValueError as e:
             assert "Speed must be" not in str(e), f"speed={speed} should be valid"
         except RuntimeError:
             pass  # model not loaded is ok in unit test
+
+
+def test_omnivoice_ready_when_snapshot_exists_despite_stale_incomplete(tmp_path, monkeypatch):
+    from app.config import settings
+    from app.infrastructure import omnivoice_download as ov_dl
+    from app.tts import tts_omnivoice as ov
+
+    monkeypatch.setattr(settings, "HF_DIR", tmp_path)
+    monkeypatch.setattr(ov_dl, "OMNIVOICE_MODEL_MIN_BYTES", 100)
+
+    legacy = tmp_path / "models--k2-fsa--OmniVoice"
+    snap = legacy / "snapshots" / "abc123"
+    snap.mkdir(parents=True)
+    (snap / "model.safetensors").write_bytes(b"x" * 200)
+
+    stale_hub = tmp_path / "hub" / "models--k2-fsa--OmniVoice" / "blobs"
+    stale_hub.mkdir(parents=True)
+    stale_blob = stale_hub / "orphan.incomplete"
+    stale_blob.write_bytes(b"y" * 50)
+
+    ready, status = ov._omnivoice_download_status()
+    assert ready is True
+    assert status == "جاهز"
+    assert not stale_blob.exists()
+
+
+def test_cleanup_omnivoice_stale_incomplete(tmp_path, monkeypatch):
+    from app.config import settings
+    from app.infrastructure import omnivoice_download as ov_dl
+
+    monkeypatch.setattr(settings, "HF_DIR", tmp_path)
+    monkeypatch.setattr(ov_dl, "OMNIVOICE_MODEL_MIN_BYTES", 100)
+
+    legacy = tmp_path / "models--k2-fsa--OmniVoice"
+    snap = legacy / "snapshots" / "abc123"
+    snap.mkdir(parents=True)
+    (snap / "model.safetensors").write_bytes(b"x" * 200)
+
+    blobs = tmp_path / "hub" / "models--k2-fsa--OmniVoice" / "blobs"
+    blobs.mkdir(parents=True)
+    stale = blobs / "old.incomplete"
+    stale.write_bytes(b"z" * 20)
+
+    removed = ov_dl.cleanup_omnivoice_stale_incomplete()
+    assert removed == 1
+    assert not stale.exists()
+
+
+def test_maybe_diacritize_disabled_by_default():
+    from app.tts_core import maybe_diacritize
+
+    text = "ذهب الطالب الى المدرسة"
+    assert maybe_diacritize(text) == text
+
+
+def test_maybe_diacritize_uses_backend_when_enabled(monkeypatch):
+    from app.config import settings
+    from app.tts_core import maybe_diacritize
+
+    monkeypatch.setattr(settings, "TTS_DIACRITIZE", True)
+    monkeypatch.setattr(
+        "app.tts.diacritize.add_diacritics",
+        lambda text: text + "_tashkeel",
+    )
+    assert maybe_diacritize("نص") == "نص_tashkeel"
 
 
 def test_list_voices_returns_non_empty():
@@ -130,7 +195,8 @@ def test_list_voices_returns_non_empty():
     assert isinstance(voices, list)
     assert len(voices) > 0
     assert "ar_mms" in voices
-    assert "xtts_v2" in voices
+    assert "habibi_unified" in voices
+    assert "omnivoice" in voices
 
 
 def test_response_error_format_has_required_keys():
@@ -153,12 +219,20 @@ def test_upload_uses_chunked_read():
     assert UPLOAD_CHUNK_SIZE <= 8 * 1024 * 1024  # max 8MB per chunk
 
 
-@pytest.mark.skip(reason="integration test - run explicitly if needed")
-def test_download_path_traversal_integration():
-    """Integration: /download must reject path traversal. Run with: pytest -k test_download_path_traversal_integration --run-skip."""
+@pytest.mark.integration
+def test_download_path_traversal_integration(monkeypatch):
+    """Integration: /asr/download must reject path traversal."""
     from fastapi.testclient import TestClient
     from apps.api import api as api_mod
+    from app.features.auth import security as auth_security
+    from app.routers import export as export_router
+
+    monkeypatch.setattr(auth_security, "resolve_email_from_authorization", lambda _: "user@example.com")
+    monkeypatch.setattr(export_router, "check_api_key", lambda _: None)
 
     client = TestClient(api_mod.app)
-    resp = client.get("/download?path=asr/../../etc/passwd")
+    resp = client.get(
+        "/asr/download?path=asr/../../etc/passwd",
+        headers={"Authorization": "Bearer test-token"},
+    )
     assert resp.status_code == 403

@@ -4,7 +4,6 @@ from typing import Optional
 from urllib.parse import quote
 from fastapi.responses import JSONResponse
 
-from ..config import settings
 from .. import nlp_core
 
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("rid", default="")
@@ -20,10 +19,10 @@ def response_ok(
     srt_path: Optional[str] = None,
     vtt_path: Optional[str] = None,
     segments_path: Optional[str] = None,
+    wav_path: Optional[str] = None,
     job_id: Optional[str] = None,
     timings_ms: Optional[dict] = None,
 ) -> JSONResponse:
-    base_url = settings.BASE_URL.rstrip("/")
     data = {
         "text": text or "",
         "summary": summary or "",
@@ -37,18 +36,20 @@ def response_ok(
         "srt_path": srt_path,
         "vtt_path": vtt_path,
         "segments_path": segments_path,
+        "wav_path": wav_path,
     }
     if timings_ms is not None:
         data["timings_ms"] = timings_ms
-    if base_url and (txt_path or srt_path or vtt_path or summary_path or segments_path):
+    if txt_path or srt_path or vtt_path or summary_path or segments_path or wav_path:
         def _u(p):
-            return f"{base_url}/download?path={quote(p)}" if p else None
+            return f"/asr/download?path={quote(p)}" if p else None
         data["download_urls"] = {
             "txt": _u(txt_path),
             "srt": _u(srt_path),
             "vtt": _u(vtt_path),
             "summary": _u(summary_path),
             "segments": _u(segments_path),
+            "wav": _u(wav_path),
         }
     return JSONResponse(data)
 
@@ -68,6 +69,6 @@ def response_error(code: int, err: str, detail: Optional[str] = None) -> JSONRes
         "srt_path": None,
         "vtt_path": None,
         "segments_path": None,
-        "download_urls": {"txt": None, "srt": None, "vtt": None, "summary": None},
+        "download_urls": {"txt": None, "srt": None, "vtt": None, "summary": None, "wav": None},
     }
     return JSONResponse(payload, status_code=code)

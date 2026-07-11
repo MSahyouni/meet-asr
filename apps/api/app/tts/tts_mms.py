@@ -15,16 +15,7 @@ _MMS_MODEL = None
 _MMS_TOKENIZER = None
 
 
-def _apply_speed_numpy(waveform, speed: float):
-    import numpy as np
-    speed_f = float(speed or 1.0)
-    speed_f = max(0.5, min(2.0, speed_f))
-    if abs(speed_f - 1.0) < 1e-6 or waveform.size == 0:
-        return waveform
-    src_idx = np.arange(waveform.shape[0], dtype=np.float32)
-    target_len = max(1, int(round(waveform.shape[0] / speed_f)))
-    dst_idx = np.linspace(0.0, waveform.shape[0] - 1, num=target_len, dtype=np.float32)
-    return np.interp(dst_idx, src_idx, waveform).astype(np.float32)
+from app.tts.audio_speed import apply_speed_numpy
 
 
 def _get_mms():
@@ -134,7 +125,7 @@ def synthesize_mms(
     else:
         waveform = np.zeros(1, dtype=np.float32)
 
-    waveform = _apply_speed_numpy(waveform, speed)
+    waveform = apply_speed_numpy(waveform, speed)
     sample_rate = model.config.sampling_rate
 
     import soundfile as sf

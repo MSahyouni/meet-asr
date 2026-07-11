@@ -59,6 +59,52 @@ def init_db() -> None:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_user_time ON activities(user_email, timestamp DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_user_type ON activities(user_email, activity_type)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_type_time ON activities(activity_type, timestamp)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                user_email TEXT PRIMARY KEY,
+                plan_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                billing_cycle TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT,
+                auto_renew INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_email) REFERENCES users(email)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS invoices (
+                invoice_id TEXT PRIMARY KEY,
+                user_email TEXT NOT NULL,
+                plan_type TEXT NOT NULL,
+                amount REAL NOT NULL,
+                currency TEXT NOT NULL,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_email) REFERENCES users(email)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS payment_methods (
+                payment_id TEXT PRIMARY KEY,
+                user_email TEXT NOT NULL,
+                payment_type TEXT NOT NULL,
+                last_four TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_email) REFERENCES users(email)
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_user ON invoices(user_email)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_payment_methods_user ON payment_methods(user_email)")
         connection.commit()
 
 
@@ -313,6 +359,194 @@ def count_new_users_this_month() -> int:
             """
         ).fetchone()
         return int(row["cnt"] if row else 0)
+
+
+def _parse_dt(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    return datetime.fromisoformat(value)
+
+
+def upsert_subscription(payload: Dict[str, Any]) -> None:
+    with _conn() as connection:
+        connection.execute(
+            """
+            INSERT INTO subscriptions (
+                user_email, plan_type, status, billing_cycle,
+                start_date, end_date, auto_renew, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_email) DO UPDATE SET
+                plan_type = excluded.plan_type,
+                status = excluded.status,
+                billing_cycle = excluded.billing_cycle,
+                start_date = excluded.start_date,
+                end_date = excluded.end_date,
+                auto_renew = excluded.auto_renew
+            """,
+            (
+                payload["user_email"],
+                payload["plan_type"],
+                payload["status"],
+                payload["billing_cycle"],
+                payload["start_date"],
+                payload.get("end_date"),
+                1 if payload.get("auto_renew", True) else 0,
+                payload.get("created_at") or datetime.utcnow().isoformat(),
+            ),
+        )
+        connection.commit()
+
+
+def get_subscription(user_email: str) -> Optional[Dict[str, Any]]:
+    with _conn() as connection:
+        row = connection.execute(
+            """
+            SELECT user_email, plan_type, status, billing_cycle,
+                   start_date, end_date, auto_renew, created_at
+            FROM subscriptions
+            WHERE user_email = ?
+            """,
+            (user_email,),
+        ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["auto_renew"] = bool(data.get("auto_renew", 1))
+        data["start_date"] = _parse_dt(data["start_date"])
+        data["end_date"] = _parse_dt(data.get("end_date"))
+        data["created_at"] = _parse_dt(data.get("created_at"))
+        return data
+
+
+def create_invoice(payload: Dict[str, Any]) -> None:
+    with _conn() as connection:
+        connection.execute(
+            """
+            INSERT INTO invoices (
+                invoice_id, user_email, plan_type, amount, currency,
+                period_start, period_end, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload["invoice_id"],
+                payload["user_email"],
+                payload["plan_type"],
+                float(payload["amount"]),
+                payload.get("currency") or "USD",
+                payload["period_start"],
+                payload["period_end"],
+                payload["status"],
+                payload.get("created_at") or datetime.utcnow().isoformat(),
+            ),
+        )
+        connection.commit()
+
+
+def get_invoices_for_user(user_email: str) -> List[Dict[str, Any]]:
+    with _conn() as connection:
+        rows = connection.execute(
+            """
+            SELECT invoice_id, user_email, plan_type, amount, currency,
+                   period_start, period_end, status, created_at
+            FROM invoices
+            WHERE user_email = ?
+            ORDER BY created_at DESC
+            """,
+            (user_email,),
+        ).fetchall()
+        invoices: List[Dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["period_start"] = _parse_dt(data["period_start"])
+            data["period_end"] = _parse_dt(data["period_end"])
+            data["created_at"] = _parse_dt(data.get("created_at"))
+            invoices.append(data)
+        return invoices
+
+
+def get_invoice(invoice_id: str) -> Optional[Dict[str, Any]]:
+    with _conn() as connection:
+        row = connection.execute(
+            """
+            SELECT invoice_id, user_email, plan_type, amount, currency,
+                   period_start, period_end, status, created_at
+            FROM invoices
+            WHERE invoice_id = ?
+            """,
+            (invoice_id,),
+        ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["period_start"] = _parse_dt(data["period_start"])
+        data["period_end"] = _parse_dt(data["period_end"])
+        data["created_at"] = _parse_dt(data.get("created_at"))
+        return data
+
+
+def update_invoice_status(invoice_id: str, status: str) -> bool:
+    with _conn() as connection:
+        cursor = connection.execute(
+            "UPDATE invoices SET status = ? WHERE invoice_id = ?",
+            (status, invoice_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+
+
+def add_payment_method(payload: Dict[str, Any]) -> None:
+    with _conn() as connection:
+        if payload.get("is_default"):
+            connection.execute(
+                "UPDATE payment_methods SET is_default = 0 WHERE user_email = ?",
+                (payload["user_email"],),
+            )
+        connection.execute(
+            """
+            INSERT INTO payment_methods (
+                payment_id, user_email, payment_type, last_four, is_default, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload["payment_id"],
+                payload["user_email"],
+                payload["payment_type"],
+                payload.get("last_four"),
+                1 if payload.get("is_default") else 0,
+                payload.get("created_at") or datetime.utcnow().isoformat(),
+            ),
+        )
+        connection.commit()
+
+
+def get_payment_methods(user_email: str) -> List[Dict[str, Any]]:
+    with _conn() as connection:
+        rows = connection.execute(
+            """
+            SELECT payment_id, user_email, payment_type, last_four, is_default, created_at
+            FROM payment_methods
+            WHERE user_email = ?
+            ORDER BY is_default DESC, created_at DESC
+            """,
+            (user_email,),
+        ).fetchall()
+        methods: List[Dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["is_default"] = bool(data.get("is_default", 0))
+            data["created_at"] = _parse_dt(data.get("created_at"))
+            methods.append(data)
+        return methods
+
+
+def delete_payment_method(payment_id: str) -> bool:
+    with _conn() as connection:
+        cursor = connection.execute(
+            "DELETE FROM payment_methods WHERE payment_id = ?",
+            (payment_id,),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
 
 
 init_db()

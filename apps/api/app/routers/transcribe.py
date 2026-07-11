@@ -7,8 +7,9 @@ import secrets
 import shutil
 import tempfile
 import traceback
-import uuid
 from typing import List, Optional
+
+from app.storage.naming import new_timestamped_id
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -31,17 +32,20 @@ from app.server.deps import (
     limiter,
     check_api_key,
 )
+from app.features.auth.deps import require_logged_in_user
 
 router = APIRouter()
 logger = logging.getLogger("api.transcribe")
 
 
 def _resolve_enhance_mode(enhance_mode: str, enhance: bool) -> str:
-    """Resolve effective enhance_mode. Backward compat: enhance=True -> full, enhance=False -> use enhance_mode (default off)."""
-    if enhance:
-        return "full"
+    """Resolve effective enhance_mode. Honor light/full from UI; legacy enhance=True without mode -> full."""
     effective_mode = (enhance_mode or "off").strip().lower()
-    return effective_mode if effective_mode in ("off", "light", "full") else "off"
+    if effective_mode in ("light", "full"):
+        return effective_mode
+    if effective_mode == "off" and enhance:
+        return "full"
+    return "off"
 
 
 async def _upload_file_to_temp(upload_file: UploadFile, max_size_mb: float) -> tuple[pathlib.Path, Optional[JSONResponse]]:
@@ -153,8 +157,9 @@ def _queued_response(request: Request, job_id: str) -> JSONResponse:
         {
             "job_id": job_id,
             "status": "queued",
-            "poll_url": f"{base}/job/{job_id}",
-            "result_url": f"{base}/job/{job_id}/download",
+            # Use a relative poll URL so the browser keeps the same host (127.0.0.1 vs localhost).
+            "poll_url": f"/asr/job/{job_id}",
+            "result_url": f"{base}/asr/job/{job_id}/download",
         },
         status_code=202,
     )
@@ -184,7 +189,12 @@ async def _transcribe_common(
     compute_sel: str,
     summary_mode: str,
     user_email: Optional[str],
+    authorization: Optional[str] = None,
 ):
+    resolved_email, login_error = require_logged_in_user(user_email, authorization)
+    if login_error:
+        return login_error
+    user_email = resolved_email
     core = get_core()
     nlp_core.set_summary_source("local")
     is_batch = len(upload_files) > 1
@@ -197,7 +207,7 @@ async def _transcribe_common(
 
         if not async_mode:
             try:
-                sync_job_id = str(uuid.uuid4())
+                sync_job_id = new_timestamped_id("asr")
                 result = await asyncio.to_thread(
                     core.process,
                     str(temp_file_path),
@@ -215,6 +225,7 @@ async def _transcribe_common(
                     summary_mode="off",
                     punctuate=punctuate,
                     job_id=sync_job_id,
+                    user_email=user_email,
                 )
                 if user_email:
                     try:
@@ -240,6 +251,7 @@ async def _transcribe_common(
                     result.get("srt_path"),
                     result.get("vtt_path"),
                     segments_path,
+                    wav_path=result.get("wav_path"),
                     job_id=result.get("job_id", sync_job_id),
                     timings_ms=result.get("timings_ms"),
                 )
@@ -249,12 +261,17 @@ async def _transcribe_common(
                 except OSError as cleanup_error:
                     logger.warning("Failed to cleanup temp dir: %s", cleanup_error)
 
-        job_id = str(uuid.uuid4())
+        job_id = new_timestamped_id("asr")
         max_queued = getattr(settings, "TRANSCRIBE_MAX_QUEUED", 20)
         if _active_transcribe_jobs_count() >= max_queued:
             return response_error(429, "rate_limited", f"too many queued or running transcribe jobs (max {max_queued})")
 
-        JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
+        JOBS[job_id] = {
+            "status": "queued",
+            "result_path": None,
+            "error": None,
+            "user_email": user_email,
+        }
         job_kwargs = dict(
             model_name=model_name or settings.WHISPER_MODEL,
             enhance=enhance,
@@ -270,6 +287,7 @@ async def _transcribe_common(
             summary_mode="off",
             punctuate=punctuate,
             job_id=job_id,
+            user_email=user_email,
         )
         asyncio.create_task(run_transcribe_job_impl(job_id, temp_file_path, job_kwargs, get_core))
         if user_email:
@@ -292,12 +310,17 @@ async def _transcribe_common(
     try:
         saved_str = [str(path) for path in (saved_files or [])]
         if async_mode:
-            job_id = str(uuid.uuid4())
+            job_id = new_timestamped_id("asr")
             max_queued = getattr(settings, "TRANSCRIBE_MAX_QUEUED", 20)
             if _active_transcribe_jobs_count() >= max_queued:
                 return response_error(429, "rate_limited", f"too many queued or running transcribe jobs (max {max_queued})")
 
-            JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
+            JOBS[job_id] = {
+                "status": "queued",
+                "result_path": None,
+                "error": None,
+                "user_email": user_email,
+            }
             job_kwargs = dict(
                 model_name=model_name or settings.WHISPER_MODEL,
                 enhance=enhance,
@@ -313,6 +336,7 @@ async def _transcribe_common(
                 summary_mode=summary_mode,
                 punctuate=punctuate,
                 job_id=job_id,
+                user_email=user_email,
             )
             cleanup_tmpdir = False
             asyncio.create_task(
@@ -335,7 +359,7 @@ async def _transcribe_common(
                     pass
             return _queued_response(request, job_id)
 
-        batch_job_id = str(uuid.uuid4())
+        batch_job_id = new_timestamped_id("asr_batch")
         result = await asyncio.to_thread(
             core.process_many,
             saved_str,
@@ -353,6 +377,7 @@ async def _transcribe_common(
             summary_mode="off",
             punctuate=punctuate,
             job_id=batch_job_id,
+            user_email=user_email,
         )
 
         if not isinstance(result, dict):
@@ -407,6 +432,7 @@ async def _transcribe_common(
             srt_path,
             vtt_path,
             seg_path,
+            wav_path=result.get("wav_path"),
             job_id=result.get("job_id", batch_job_id),
             timings_ms=result.get("timings_ms"),
         )
@@ -445,6 +471,7 @@ async def transcribe(
     compute_sel: str = Form("auto"),
     summary_mode: str = Form("off"),
     user_email: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     auth_error = check_api_key(x_api_key)
@@ -475,4 +502,5 @@ async def transcribe(
         compute_sel=compute_sel,
         summary_mode=summary_mode,
         user_email=user_email,
+        authorization=authorization,
     )

@@ -34,7 +34,7 @@ if [[ -x "$preferred_venv_dir/bin/python" ]]; then
     log "استخدام البيئة الافتراضية: .venv"
 elif [[ -x "$legacy_venv_dir/bin/python" ]]; then
     venv_dir="$legacy_venv_dir"
-    log "استخدام البيئة الافتراضية القديمة: venv"
+    log "استخدام البيئة الافتراضية القديمة: venv (يُفضَّل الترحيل: ./scripts/migrate_to_dot_venv.sh)"
 else
     base_python="$(pick_python)" || {
         echo "Python غير موجود في PATH. ثبّت python3 ثم أعد المحاولة." >&2

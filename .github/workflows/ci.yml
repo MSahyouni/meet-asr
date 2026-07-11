@@ -1,4 +1,4 @@
-name: Security Tests
+name: CI
 
 on:
   workflow_dispatch:
@@ -8,14 +8,19 @@ on:
     branches: [nabra, main, master]
 
 concurrency:
-  group: security-tests-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  secure-endpoints:
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
+    env:
+      JWT_SECRET: ci-local-secret
+      JWT_EXPIRES_SECONDS: 86400
+      JWT_ISSUER: meet-asr
+      JWT_AUDIENCE: meet-asr-api
+      ADMIN_EMAILS: admin@local
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,13 +30,16 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-security-${{ hashFiles('apps/api/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('apps/api/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-security-
+            ${{ runner.os }}-pip-
 
       - name: Install dependencies
         run: |
@@ -39,12 +47,9 @@ jobs:
           pip install -r apps/api/requirements.txt
           pip install pytest
 
-      - name: Run security-focused tests
+      - name: Run tests
+        working-directory: apps/api
         env:
-          JWT_SECRET: ci-local-secret
-          JWT_EXPIRES_SECONDS: 86400
-          JWT_ISSUER: meet-asr
-          JWT_AUDIENCE: meet-asr-api
-          ADMIN_EMAILS: admin@local
+          PYTHONPATH: .
         run: |
-          pytest -q tests/test_auth_security.py tests/test_secure_endpoints.py
+          pytest -q ../../tests/ --ignore=scripts/test_tts_asr_live.py

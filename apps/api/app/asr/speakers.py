@@ -1,11 +1,14 @@
 # asr/speakers.py — SpeechBrain تسجيل المتكلمين وربط البصمات
+import logging
 import os
 import shutil
 import pathlib
-from typing import List, Dict
+from typing import List, Dict, Optional
 from collections import defaultdict
 
 import numpy as np
+
+_log = logging.getLogger("asr.speakers")
 
 try:
     from speechbrain.inference import SpeakerRecognition
@@ -18,8 +21,9 @@ from huggingface_hub import snapshot_download
 
 from app.config import settings
 from app.infrastructure.download_retry import run_with_download_retry
-from .common import speaker_label, to_ar_speaker
-from .audio import wav_read_mono
+from app.storage.user_paths import speaker_enrollment_dir, user_speakers_root
+from .common import speaker_label, to_ar_speaker, safe_filename
+from .audio import wav_read_mono, to_wav16k
 
 MODELS_DIR = None
 SPK_DIR = None
@@ -105,27 +109,89 @@ def _embed_audio_chunk(chunk: np.ndarray) -> np.ndarray:
         return np.zeros(192, dtype=np.float32)
 
 
-def load_enrolled() -> List[str]:
+_AUDIO_SAMPLE_EXT = {
+    ".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".flac", ".webm", ".aac", ".3gp", ".opus",
+}
+
+
+def _is_audio_sample_file(path: pathlib.Path) -> bool:
+    return path.is_file() and path.suffix.lower() in _AUDIO_SAMPLE_EXT
+
+
+def _list_audio_samples(speaker_dir: pathlib.Path) -> List[pathlib.Path]:
+    if not speaker_dir.exists():
+        return []
+    return sorted(p for p in speaker_dir.iterdir() if _is_audio_sample_file(p))
+
+
+def _unique_sample_path(speaker_dir: pathlib.Path, src_name: str) -> pathlib.Path:
+    import uuid
+    from datetime import datetime
+
+    raw = pathlib.Path(src_name or "sample.wav")
+    stem = safe_filename(raw.stem) or "sample"
+    ext = raw.suffix.lower() if raw.suffix else ".wav"
+    if ext not in _AUDIO_SAMPLE_EXT:
+        ext = ".wav"
+    speaker_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_id = uuid.uuid4().hex[:8]
+    return speaker_dir / f"{stem}_{ts}_{short_id}{ext}"
+
+
+def _embedding_from_audio_path(audio_path: pathlib.Path) -> Optional[np.ndarray]:
+    try:
+        wav16 = to_wav16k(audio_path)
+        try:
+            y, sr = wav_read_mono(wav16, 16000)
+        finally:
+            try:
+                os.unlink(wav16)
+            except OSError:
+                pass
+        emb = _embed_audio_chunk(y)
+        if emb is not None and np.any(emb):
+            return emb
+    except Exception as e:
+        print(f"[ENROLL_FILE] {e}")
+    return None
+
+
+def _rebuild_speaker_embedding(speaker_dir: pathlib.Path) -> tuple[int, Optional[np.ndarray]]:
+    embs = []
+    for sample in _list_audio_samples(speaker_dir):
+        emb = _embedding_from_audio_path(sample)
+        if emb is not None:
+            embs.append(emb)
+    if not embs:
+        return 0, None
+    mean_emb = np.mean(np.stack(embs, axis=0), axis=0)
+    np.save(speaker_dir / "embedding.npy", mean_emb)
+    return len(embs), mean_emb
+
+
+def load_enrolled(user_email: Optional[str] = None) -> List[str]:
     global _ENROLLED
     try:
         _ENROLLED.clear()
-        for p in SPK_DIR.iterdir():
-            if p.is_dir():
-                emb_path = p / "embedding.npy"
-                if emb_path.exists():
-                    _ENROLLED[p.name] = np.load(emb_path)
+        if not (user_email or "").strip():
+            return []
+        root = user_speakers_root(user_email)
+        for p in root.iterdir():
+            if p.is_dir() and (p / "embedding.npy").exists():
+                _ENROLLED[p.name] = np.load(p / "embedding.npy")
         return list(_ENROLLED.keys())
     except Exception as e:
         print(f"[ENROLL_LOAD] {e}")
         return []
 
 
-def get_speaker_files(name: str) -> List[str]:
+def get_speaker_files(name: str, user_email: Optional[str] = None) -> List[str]:
     try:
         name = (name or "").strip()
-        if not name:
+        if not name or not (user_email or "").strip():
             return []
-        p = SPK_DIR / name
+        p = speaker_enrollment_dir(user_email, name)
         if not p.exists() or not p.is_dir():
             return []
         return [
@@ -138,13 +204,15 @@ def get_speaker_files(name: str) -> List[str]:
         return []
 
 
-def delete_speaker(name: str):
+def delete_speaker(name: str, user_email: Optional[str] = None):
     global _ENROLLED
     try:
         name = (name or "").strip()
         if not name:
             return False, "اسم فارغ."
-        p = SPK_DIR / name
+        if not (user_email or "").strip():
+            return False, "يلزم تسجيل الدخول."
+        p = speaker_enrollment_dir(user_email, name)
         if not p.exists():
             return False, "غير موجود."
         shutil.rmtree(p, ignore_errors=True)
@@ -154,43 +222,48 @@ def delete_speaker(name: str):
         return False, f"فشل الحذف: {e}"
 
 
-def enroll_voice(name: str, files: List[str]):
+def enroll_voice(name: str, files: List[str], user_email: Optional[str] = None):
     global _ENROLLED
     try:
         name = (name or "").strip()
         if not name or not files:
             return False, "أدخل اسمًا وملفات صوتية."
-        user_dir = SPK_DIR / name
-        if user_dir.exists():
-            shutil.rmtree(user_dir)
+        if not (user_email or "").strip():
+            return False, "يلزم تسجيل الدخول لحفظ بصمة المتكلم."
+        user_dir = speaker_enrollment_dir(user_email, name)
         user_dir.mkdir(parents=True, exist_ok=True)
-        embs = []
+        added = 0
         for fpath in files:
-            try:
-                if not os.path.exists(fpath):
-                    continue
-                dst = user_dir / pathlib.Path(fpath).name
-                shutil.copyfile(fpath, dst)
-                wav, sr = wav_read_mono(dst)
-                emb = _embed_audio_chunk(wav)
-                if emb is not None and np.any(emb):
-                    embs.append(emb)
-            except Exception as e:
-                print(f"[ENROLL_FILE] {e}")
-        if not embs:
+            if not os.path.exists(fpath):
+                continue
+            dst = _unique_sample_path(user_dir, pathlib.Path(fpath).name)
+            shutil.copyfile(fpath, dst)
+            added += 1
+        if added == 0:
             return False, "لم يتم العثور على ملفات صوتية صالحة."
-        mean_emb = np.mean(np.stack(embs, axis=0), axis=0)
-        np.save(user_dir / "embedding.npy", mean_emb)
+        total, mean_emb = _rebuild_speaker_embedding(user_dir)
+        if mean_emb is None:
+            return False, "فشل استخراج بصمة من الملفات الصوتية."
         _ENROLLED[name] = mean_emb
-        return True, f"تم تسجيل {name} ({len(embs)} ملف)."
+        return True, f"تم حفظ {added} مقطع جديد لـ {name} (المجموع {total} مقطع)."
     except Exception as e:
         return False, f"خطأ في التسجيل: {e}"
 
 
-def map_generic_to_enrolled_speakers(wav_path: str, seg_rows: List[Dict], threshold: float) -> List[Dict]:
-    if not seg_rows or not _ENROLLED:
-        load_enrolled()
-    if get_spkrec() is None or not _ENROLLED:
+def map_generic_to_enrolled_speakers(
+    wav_path: str,
+    seg_rows: List[Dict],
+    threshold: float,
+    user_email: Optional[str] = None,
+) -> List[Dict]:
+    load_enrolled(user_email)
+    if not seg_rows:
+        return seg_rows
+    if get_spkrec() is None:
+        _log.warning("speaker mapping skipped: ECAPA model unavailable")
+        return seg_rows
+    if not _ENROLLED:
+        _log.info("speaker mapping skipped: no enrolled speakers")
         return seg_rows
     try:
         y, sr = wav_read_mono(wav_path, 16000)
@@ -201,13 +274,19 @@ def map_generic_to_enrolled_speakers(wav_path: str, seg_rows: List[Dict], thresh
             speaker_audio_chunks[seg["speaker"]].append(y[start_sample:end_sample])
         speaker_mapping = {}
         used_enrolled_names = set()
+        single_speaker_audio = len(speaker_audio_chunks) == 1
+        single_enrolled = len(_ENROLLED) == 1
         for generic_speaker, chunks in speaker_audio_chunks.items():
             if not chunks:
                 continue
             full_chunk = np.concatenate(chunks)
-            if len(full_chunk) < sr * 1.0:
+            if len(full_chunk) < sr * 0.8:
+                _log.info("skip speaker %s: audio too short (%.2fs)", generic_speaker, len(full_chunk) / sr)
                 continue
             embedding = _embed_audio_chunk(full_chunk)
+            if embedding is None or not np.any(embedding):
+                _log.warning("skip speaker %s: empty embedding", generic_speaker)
+                continue
             best_sim, best_name = -1.0, None
             for enrolled_name, enrolled_emb in _ENROLLED.items():
                 if enrolled_name in used_enrolled_names:
@@ -215,23 +294,32 @@ def map_generic_to_enrolled_speakers(wav_path: str, seg_rows: List[Dict], thresh
                 sim = _cosine(embedding, enrolled_emb)
                 if sim > best_sim:
                     best_sim, best_name = sim, enrolled_name
-            if best_name and best_sim >= threshold:
+            effective_threshold = threshold
+            if single_speaker_audio and single_enrolled:
+                effective_threshold = min(threshold, 0.52)
+            if best_name and best_sim >= effective_threshold:
                 speaker_mapping[generic_speaker] = best_name
                 used_enrolled_names.add(best_name)
-        final_seg_rows = []
-        unmapped_counter = 1
-        unmapped_map = {}
+                _log.info(
+                    "mapped %s -> %s (similarity=%.3f, threshold=%.2f)",
+                    generic_speaker,
+                    best_name,
+                    best_sim,
+                    effective_threshold,
+                )
+            else:
+                _log.info(
+                    "no match for %s (best=%s, similarity=%.3f, threshold=%.2f)",
+                    generic_speaker,
+                    best_name or "-",
+                    best_sim,
+                    effective_threshold,
+                )
         for seg in seg_rows:
             g = seg["speaker"]
             if g in speaker_mapping:
                 seg["speaker"] = speaker_mapping[g]
-            else:
-                if g not in unmapped_map:
-                    unmapped_map[g] = speaker_label(unmapped_counter)
-                    unmapped_counter += 1
-                seg["speaker"] = unmapped_map[g]
-            final_seg_rows.append(seg)
-        return final_seg_rows
+        return seg_rows
     except Exception as e:
-        print(f"[MAP_ENROLLED] Failed to map speakers: {e}")
+        _log.exception("failed to map enrolled speakers: %s", e)
         return seg_rows

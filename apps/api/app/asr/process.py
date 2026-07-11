@@ -3,8 +3,8 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
-import uuid
 from datetime import datetime, timezone
 import atexit
 import pathlib
@@ -15,8 +15,10 @@ from typing import Optional, List, Dict
 from app import nlp_core
 
 from app.config import settings
+from app.storage.asr_layout import resolve_asr_storage, write_job_manifest
+from app.storage.naming import new_timestamped_id
 from .common import err, safe_filename, to_ar_speaker, OUTPUTS_DIR, DEFAULT_MODEL
-from .audio import to_wav16k_enhanced
+from .audio import to_wav16k, to_wav16k_enhanced
 from .whisper import get_model, run_asr
 from .diarization import diarize_with_pyannote, map_speakers_to_segments
 from . import diarization as diarization_mod
@@ -27,15 +29,57 @@ from .subtitles import segments_to_srt, segments_to_vtt
 def _clean_utterance(t: str) -> str:
     if not t:
         return ""
-    _FILLERS = {"يعني", "تمام", "طيب", "هيك", "مم", "اها", "اه", "آه", "بس"}
     t = re.sub(r"\s+", " ", t).strip()
     t = re.sub(r"([.!؟?،,:;])\1+", r"\1", t)
     t = t.replace("?", "؟")
     t = re.sub(r"\b(\w+)(?:\s+\1){2,}\b", r"\1 \1", t)
-    words = [w for w in t.split() if w.lower() not in _FILLERS]
-    cleaned = " ".join(words)
-    cleaned = re.sub(r"\s*([،,:;.!؟])\s*", r"\1 ", cleaned).strip()
-    return cleaned
+    return re.sub(r"\s*([،,:;.!؟])\s*", r"\1 ", t).strip()
+
+
+def _persist_source_wav(source_path: str, dest_path: pathlib.Path) -> Optional[str]:
+    """Convert uploaded/recording audio to 16kHz mono WAV and persist under job output dir."""
+    _log = logging.getLogger("asr")
+    try:
+        tmp_wav = to_wav16k(source_path)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(tmp_wav, dest_path)
+        try:
+            os.unlink(tmp_wav)
+        except OSError:
+            pass
+        return str(dest_path)
+    except Exception as exc:
+        _log.warning("failed to persist source wav: %s", exc)
+        return None
+
+
+def _persist_source_copy(source_path: str, dest_path: pathlib.Path) -> Optional[str]:
+    """Keep the original uploaded/recording file at dest_path (file, not directory)."""
+    _log = logging.getLogger("asr")
+    try:
+        src = pathlib.Path(source_path)
+        if not src.exists() or not src.is_file():
+            return None
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest_path)
+        return str(dest_path)
+    except Exception as exc:
+        _log.warning("failed to persist source copy: %s", exc)
+        return None
+
+
+def _ensure_recording_wav(wav_temp_path: str, dest_path: pathlib.Path) -> Optional[str]:
+    """Fallback: persist the decoded WAV used for ASR when direct conversion failed."""
+    _log = logging.getLogger("asr")
+    try:
+        if not wav_temp_path or not os.path.exists(wav_temp_path):
+            return None
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(wav_temp_path, dest_path)
+        return str(dest_path)
+    except Exception as exc:
+        _log.warning("failed to backup recording wav: %s", exc)
+        return None
 
 
 def _renumber_speakers(text: str) -> str:
@@ -69,6 +113,7 @@ def process(
     punctuate: bool = False,
     summary_mode: str = "best",
     job_id: Optional[str] = None,
+    user_email: Optional[str] = None,
 ):
     """
     Pipeline: AudioAdapter (decode/resample + optional enhance) → ASR → Diarization (optional)
@@ -85,6 +130,12 @@ def process(
     _log = logging.getLogger("asr")
     stage_ms: Dict[str, float] = {}
     t0_total = time.perf_counter()
+    jid = job_id or new_timestamped_id("asr")
+    layout = resolve_asr_storage(user_email, jid)
+    job_dir = layout.job_dir
+    source_name = pathlib.Path(file_path).name or "recording.bin"
+    wav_path = _persist_source_wav(file_path, layout.wav_path)
+    source_copy_path = _persist_source_copy(file_path, layout.source_path_for(source_name))
 
     try:
         t0 = time.perf_counter()
@@ -95,11 +146,20 @@ def process(
             whisper_mode=whisper_mode,
             enhance_level=enhance_level,
         )
+        if not wav_path or not pathlib.Path(wav_path).exists():
+            wav_path = _ensure_recording_wav(wav, layout.wav_path)
+        if wav_path:
+            _log.info("saved recording wav: %s", wav_path)
         stage_ms["decode_resample"] = (time.perf_counter() - t0) * 1000
 
         t0 = time.perf_counter()
         model = get_model(model_name or DEFAULT_MODEL, device_sel, compute_sel)
-        header_txt, whisper_segments = run_asr(wav, model, whisper_mode=whisper_mode)
+        header_txt, whisper_segments = run_asr(
+            wav,
+            model,
+            whisper_mode=whisper_mode,
+            multi_speaker=diarize,
+        )
         stage_ms["whisper"] = (time.perf_counter() - t0) * 1000
 
         t0 = time.perf_counter()
@@ -107,9 +167,16 @@ def process(
             num_spk = max_speakers if not auto_k else 0
             speaker_turns = diarize_with_pyannote(wav, num_speakers=num_spk)
             seg_rows = map_speakers_to_segments(whisper_segments, speaker_turns)
-            seg_rows = map_generic_to_enrolled_speakers(wav, seg_rows, enroll_threshold)
         else:
             seg_rows = map_speakers_to_segments(whisper_segments, [])
+        # ربط البصمات على الصوت الخام (recording.wav) وليس المُحسَّن — التحسين القوي يشوّه البصمة.
+        wav_for_speakers = wav_path if wav_path and os.path.exists(wav_path) else wav
+        seg_rows = map_generic_to_enrolled_speakers(
+            wav_for_speakers,
+            seg_rows,
+            enroll_threshold,
+            user_email=user_email,
+        )
         stage_ms["diarization"] = (time.perf_counter() - t0) * 1000
 
         t0 = time.perf_counter()
@@ -140,10 +207,6 @@ def process(
         raw_text_for_keywords = "\n".join([s.get("text", "") for s in seg_rows])
         keywords = nlp_core.extract_keywords(raw_text_for_keywords)
 
-        jid = job_id or str(uuid.uuid4())
-        job_dir = pathlib.Path(OUTPUTS_DIR) / "asr" / jid
-        job_dir.mkdir(parents=True, exist_ok=True)
-
         out_path = str(job_dir / "transcript.txt")
         pathlib.Path(out_path).write_text(full_txt, encoding="utf-8")
 
@@ -154,6 +217,7 @@ def process(
         seg_path = str(job_dir / "segments.json")
         segments_payload = {
             "job_id": jid,
+            "user_email": layout.user_email,
             "language": "ar",
             "options": {
                 "enhance_mode": effective_mode,
@@ -172,6 +236,12 @@ def process(
         _log.debug("job_id=%s stage_ms=%s total_ms=%.0f", jid, stage_ms, total_ms)
 
         numbered_text = _renumber_speakers(full_txt)
+        manifest_path = write_job_manifest(
+            layout,
+            wav_path=wav_path,
+            source_path=source_copy_path,
+            extra={"storage_scope": "user" if layout.is_user_scoped() else "global"},
+        )
 
         return {
             "text": numbered_text,
@@ -183,13 +253,23 @@ def process(
             "srt_path": srt_path,
             "vtt_path": vtt_path,
             "segments_path": seg_path,
+            "wav_path": wav_path,
+            "source_path": source_copy_path,
+            "manifest_path": manifest_path,
+            "user_email": layout.user_email,
             "job_id": jid,
             "timings_ms": {**stage_ms, "total": total_ms},
         }
     except Exception as e:
         msg = f"Error during processing: {e}"
         logging.getLogger("asr").exception("process failed: %s", msg)
-        return err(msg)
+        payload = err(msg)
+        if wav_path:
+            payload["wav_path"] = wav_path
+        if source_copy_path:
+            payload["source_path"] = source_copy_path
+        payload["job_id"] = jid
+        return payload
 
 
 def process_many(file_paths: List[str], **kwargs):
@@ -197,7 +277,7 @@ def process_many(file_paths: List[str], **kwargs):
         return err("الرجاء رفع ملفات.")
     merge_outputs = kwargs.pop("merge_outputs", True)
     tag_sources = kwargs.pop("tag_sources", True)
-    job_id = kwargs.pop("job_id", None) or str(uuid.uuid4())
+    job_id = kwargs.pop("job_id", None) or new_timestamped_id("asr")
     per_file_results: List[Dict] = []
     all_text_blocks: List[str] = []
     all_raw_text: List[str] = []
@@ -224,11 +304,23 @@ def process_many(file_paths: List[str], **kwargs):
                 cumulative_offset += max(float(s["end"]) for s in segs)
 
     merged_text = "\n\n".join(all_text_blocks).strip()
-    job_dir = pathlib.Path(OUTPUTS_DIR) / "asr" / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
+    user_email = kwargs.get("user_email")
+    layout = resolve_asr_storage(user_email, job_id)
+    job_dir = layout.job_dir
 
     merged_txt_path = str(job_dir / "transcript.txt")
     pathlib.Path(merged_txt_path).write_text(merged_text, encoding="utf-8")
+    saved_wavs: List[str] = []
+    for fp, res in zip(file_paths, per_file_results):
+        stem = safe_filename(pathlib.Path(fp).stem) or f"recording_{len(saved_wavs)}"
+        if layout.is_user_scoped():
+            saved = _persist_source_wav(fp, layout.recordings_dir / f"{job_id}_{stem}.wav")
+        else:
+            saved = _persist_source_wav(fp, job_dir / f"{stem}.wav")
+        if not saved and isinstance(res, dict) and res.get("wav_path"):
+            saved = str(res.get("wav_path"))
+        if saved:
+            saved_wavs.append(saved)
     merged_keywords = nlp_core.extract_keywords("\n".join(all_raw_text))
     merged_text = _renumber_speakers(merged_text)
     merged_srt_path = None
@@ -241,6 +333,7 @@ def process_many(file_paths: List[str], **kwargs):
         em = kwargs.get("enhance_mode", "off")
         segments_payload = {
             "job_id": job_id,
+            "user_email": layout.user_email,
             "language": "ar",
             "options": {
                 "enhance_mode": em,
@@ -256,6 +349,16 @@ def process_many(file_paths: List[str], **kwargs):
     else:
         merged_seg_path = None
 
+    manifest_path = write_job_manifest(
+        layout,
+        wav_path=saved_wavs[0] if len(saved_wavs) == 1 else None,
+        extra={
+            "storage_scope": "user" if layout.is_user_scoped() else "global",
+            "wav_paths": saved_wavs,
+            "batch": True,
+        },
+    )
+
     return {
         "text": merged_text,
         "txt_path": merged_txt_path,
@@ -266,6 +369,10 @@ def process_many(file_paths: List[str], **kwargs):
         "srt_path": merged_srt_path,
         "vtt_path": merged_vtt_path,
         "segments_path": merged_seg_path,
+        "wav_path": saved_wavs[0] if len(saved_wavs) == 1 else None,
+        "wav_paths": saved_wavs,
+        "manifest_path": manifest_path,
+        "user_email": layout.user_email,
         "job_id": job_id,
         "items": per_file_results,
     }

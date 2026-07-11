@@ -22,7 +22,7 @@ class ASRResponse(BaseModel):
 
 class TTSRequest(BaseModel):
     text: str = Field(..., title="Text to synthesize")
-    voice: str = Field("af_heart", title="Voice ID")
+    voice: str = Field("ar_mms", title="Voice ID")
     speed: float = Field(1.0, title="Speech speed")
 
 

@@ -37,7 +37,7 @@ def cleanup_old_outputs(max_age_hours: float = None) -> int:
     """
     Delete files/dirs under settings.OUTPUTS_DIR older than max_age_hours.
     Returns number of items deleted. Does NOT delete outside OUTPUTS_DIR.
-    Handles asr/<job_id>/ dirs: deletes whole dir when oldest content exceeds cutoff.
+    Handles legacy flat dirs and per-user output trees.
     """
     if max_age_hours is None:
         max_age_hours = settings.CLEANUP_MAX_AGE_HOURS
@@ -45,10 +45,11 @@ def cleanup_old_outputs(max_age_hours: float = None) -> int:
     deleted = 0
     if not OUTPUTS_BASE.exists():
         return 0
-    for subdir in ("tts", "jobs", "asr", "manual_summary"):
-        dir_path = OUTPUTS_BASE / subdir
+
+    def _cleanup_dir(dir_path: Path) -> None:
+        nonlocal deleted
         if not dir_path.is_dir():
-            continue
+            return
         try:
             for f in dir_path.iterdir():
                 if not _is_safe_under_outputs(f):
@@ -65,6 +66,15 @@ def cleanup_old_outputs(max_age_hours: float = None) -> int:
                     logger.debug("cleanup skip %s: %s", f, e)
         except OSError as e:
             logger.warning("cleanup dir %s: %s", dir_path, e)
+
+    for subdir in ("tts", "jobs", "asr", "manual_summary"):
+        _cleanup_dir(OUTPUTS_BASE / subdir)
+
+    for entry in OUTPUTS_BASE.iterdir():
+        if not entry.is_dir() or entry.name in {"tts", "jobs", "asr", "manual_summary"}:
+            continue
+        for subdir in ("tts", "jobs", "asr", "manual_summary"):
+            _cleanup_dir(entry / subdir)
     if deleted:
         logger.info("cleanup deleted %d item(s) older than %s h under outputs/", deleted, max_age_hours)
     return deleted

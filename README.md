@@ -4,7 +4,7 @@
 
 - ASR: تفريغ صوتي + تمييز متحدثين.
 - NLP: تلخيص + كلمات مفتاحية + NER.
-- TTS: MMS عربي + XTTS v2 + Habibi (لهجات عربية متعددة).
+- TTS: MMS عربي + Habibi + OmniVoice (استنساخ بصمة عربي + لهجات).
 - Auth + Users + Dashboard + Billing.
 - تشغيل محلي أو Docker، مع دعم CPU/GPU.
 
@@ -20,8 +20,27 @@
 - البيانات المحلية: `data/` (نماذج، مخرجات، أصوات، SQLite).
 
 ملاحظة مهمة:
-- توجد مسارات حديثة مهيكلة (`/asr/*`, `/nlp/*`, `/tts/*`) 
-- ويوجد أيضًا توافق خلفي عبر طبقة `app/compat` (مثل `/transcribe`, `/summarize`, `/tts`).
+- المسارات **الرسمية** للواجهة والتكامل الجديد: `/asr/*`, `/nlp/*`, `/tts/*`.
+- توجد مسارات **legacy** للتوافق الخلفي عبر `app/compat` (مثل `/transcribe`, `/summarize`, `/tts`).
+
+### مسارات API الرسمية (Canonical)
+
+| الميزة | المسار | ملاحظة |
+|--------|--------|--------|
+| **ASR** | `POST /asr/transcribe` | رفع ملف أو تسجيل مباشر |
+| | `GET /asr/job/{id}` | متابعة الوظيفة |
+| | `GET /asr/download` | تحميل مخرجات (مسار آمن تحت `data/outputs`) |
+| | `POST /asr/enroll-speaker` | تسجيل متحدث |
+| | `GET /asr/enrolled-speakers` | قائمة المتحدثين |
+| **NLP** | `POST /nlp/summarize` | تلخيص (FormData أو JSON) |
+| | `POST /nlp/ner` | استخراج كيانات |
+| **TTS** | `POST /tts` | توليد صوت WAV |
+| | `GET /tts/voices` | قائمة الأصوات |
+| | `POST /tts/voice-samples` | رفع بصمات المستخدم |
+| | `GET /tts/voice-samples` | قائمة بصمات المستخدم |
+| **صحة** | `GET /health` | فحص الخدمة والنماذج |
+
+> التفاصيل الكاملة: `http://127.0.0.1:8000/docs`
 
 ---
 
@@ -30,28 +49,25 @@
 ```text
 meet-asr/
 ├─ apps/
-│  ├─ api/                    # FastAPI backend
-│  │  ├─ api.py
-│  │  ├─ requirements.txt
-│  │  └─ app/
-│  │     ├─ main.py
-│  │     ├─ config.py
-│  │     ├─ routers/
-│  │     ├─ compat/
-│  │     └─ features/
+│  └─ api/                    # FastAPI backend (main.py, routers, features)
+├─ static/frontend/           # واجهة HTML/CSS/JS المدمجة
+├─ scripts/                   # سكربتات (OmniVoice، Docker، setup_env، migrate_to_dot_venv)
+├─ tests/                     # pytest (unit + integration markers)
+├─ docker/                    # Dockerfile.api
 ├─ nabra/                     # Flutter app (اختياري)
-├─ static/frontend/            # واجهة HTML/CSS/JS المدمجة
-├─ data/
-│  ├─ models/                  # نماذج محلية
-│  ├─ outputs/                 # مخرجات ASR/TTS/NLP
-│  ├─ voices/                  # بصمات XTTS v2 لكل مستخدم
-│  └─ meetasr.sqlite3          # قاعدة SQLite المحلية
-├─ docker/Dockerfile.api
+├─ data/                      # نماذج، مخرجات، أصوات، SQLite (gitignored)
+├─ .tools/                    # أدوات منفصلة (OmniVoice inference venv)
+├─ .github/workflows/         # CI (ci.yml — unit + security + integration)
+├─ .venv/                     # بيئة Python المفضّلة (أنشئها عبر run.sh أو migrate)
+├─ README.md
+├─ LICENSE
+├─ pytest.ini
+├─ .env.example               # قالب Docker/Compose (جذر)
 ├─ docker-compose.yml
 ├─ docker-compose.prod.yml
-├─ run.ps1
-├─ run.bat
-└─ scripts/docker.ps1
+├─ run.sh                     # تشغيل Linux/WSL
+├─ run.ps1 / run.bat          # تشغيل Windows
+└─ venv/                      # بيئة قديمة (يُفضَّل الترحيل إلى .venv)
 ```
 
 ---
@@ -151,17 +167,30 @@ python -m uvicorn api:app --host 0.0.0.0 --port 8000
 Copy-Item apps/api/.env.example apps/api/.env
 ```
 
+أو توليد إعدادات تطوير جاهزة (يكتشف CUDA وmishkal وOmniVoice تلقائيًا):
+```bash
+chmod +x scripts/setup_env.sh
+./scripts/setup_env.sh          # لا يستبدل ملفات موجودة
+./scripts/setup_env.sh --force  # إعادة توليد JWT_SECRET والقيم
+```
+
 أهم المتغيرات:
 - `ASR_ENV`, `ASR_ALLOWED_ORIGINS`
 - `JWT_SECRET`, `JWT_EXPIRES_SECONDS`, `JWT_ISSUER`, `JWT_AUDIENCE`, `ADMIN_EMAILS`
 - `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE`
-- `TTS_MMS_ENABLED`, `TTS_PREPROCESS_ENABLED`
+- `TTS_MMS_ENABLED`, `TTS_PREPROCESS_ENABLED`, `TTS_DIACRITIZE`
+- `OMNIVOICE_TIMEOUT_SEC`, `OMNIVOICE_INFER_BIN`
 - `RAG_ENABLE`, `RAG_EMB_MODEL`
 
 ملاحظات:
 - التطبيق يحمّل `.env` من `apps/api/.env` محليًا.
 - في Docker، ملف `docker-compose*.yml` يمرر `.env` من جذر المشروع إلى الحاوية.
-- عند تغيير إعدادات جوهرية، حدّث القالبين معًا (`apps/api/.env.example` و`.env.example`).
+- عند تغيير إعدادات جوهرية، حدّث القالبين معًا (`apps/api/.env.example` و`.env.example` في الجذر).
+- **البيئة الافتراضية:** يُفضَّل `.venv/`. إن كان لديك `venv/` قديم:
+  ```bash
+  chmod +x scripts/migrate_to_dot_venv.sh
+  ./scripts/migrate_to_dot_venv.sh
+  ```
 
 ---
 
@@ -215,13 +244,42 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 ### TTS
 - `POST /tts` (تحويل نص إلى WAV)
 - `GET /tts/voices`
-- وضع `engine=auto` يعطي أولوية لـ XTTS v2 عند وجود بصمة للمستخدم، ثم fallback تلقائي إلى TTS العربي.
-- **تجريبي/اختياري:** `engine=habibi` (Unified/Specialized لهجات عربية متعددة) ويتطلب:
-  - تثبيت اختياري: `pip install habibi-tts`
+- وضع `engine=auto` يعطي أولوية لـ **OmniVoice** عند وجود بصمة للمستخدم (لا يحتاج `ref_text`)، ثم **Habibi** عند توفر `ref_text`، ثم fallback تلقائي إلى MMS عربي.
+
+#### OmniVoice (استنساخ بصمة ~3.2 GB)
+- `engine=omnivoice` — استنساخ صوت بدون `ref_text` (اختياري لتحسين الجودة).
+- يُشغَّل كأداة CLI داخل بيئة منفصلة لتفادي تعارض المتطلبات مع الـ API.
+- **تنزيل النموذج مسبقًا (موصى به):**
+  ```bash
+  chmod +x scripts/download_omnivoice.sh scripts/cleanup_omnivoice_cache.sh
+  ./scripts/download_omnivoice.sh          # ~3.2 GB، قابل للاستئناف
+  ./scripts/cleanup_omnivoice_cache.sh     # حذف بقايا .incomplete بعد الاكتمال
+  ```
+- يستخدم نفس سياسة إعادة المحاولة `download_retry` مثل Whisper/NLP.
+- تثبيت أداة الاستنتاج (مرة واحدة):
+  ```bash
+  python3 -m venv .tools/omnivoice/.venv
+  .tools/omnivoice/.venv/bin/pip install -U pip omnivoice
+  export OMNIVOICE_INFER_BIN="$PWD/.tools/omnivoice/.venv/bin/omnivoice-infer"
+  ```
+
+#### تشكيل عربي قبل TTS (`TTS_DIACRITIZE`)
+- يحسّن نطق النصوص العربية **غير المشكّلة** قبل التوليد.
+- التفعيل:
+  ```bash
+  ./.venv/bin/pip install mishkal   # داخل بيئة المشروع — لا تستخدم pip النظام
+  # في apps/api/.env:
+  TTS_DIACRITIZE=1
+  ```
+- يُطبَّق على محركات TTS عند التفعيل؛ قد يبطئ التوليد قليلاً.
+
+#### Habibi (لهجات عربية)
+- `engine=habibi` (Unified/Specialized لهجات عربية متعددة) ويتطلب:
+  - تثبيت اختياري: `./.venv/bin/pip install habibi-tts`
   - `user_email` + عينة صوت مرفوعة مسبقًا
   - `ref_text` (نص مطابق لعينة الصوت المرجعية) — يمكن حفظه مرة واحدة عند رفع العينة عبر `POST /tts/voice-sample`
   - `dialect` اختياري (`UNK|MSA|SAU|UAE|ALG|IRQ|EGY|MAR|OMN|TUN|LEV|SDN|LBY`)
-- XTTS v2 بصمات لكل مستخدم:
+- بصمات المستخدم (Habibi/OmniVoice):
   - `POST /tts/voice-sample`
   - `POST /tts/voice-samples` (يدعم أيضًا `ref_texts_json` كخريطة JSON: اسم_الملف -> ref_text، و`default_ref_text` احتياطي)
   - `GET /tts/voice-samples`
@@ -265,20 +323,27 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 المرجع التشغيلي الحالي للاختبارات: `tests/` في جذر المشروع.
 
 من داخل `apps/api`:
-```powershell
-pytest -q ../../tests/test_auth_security.py ../../tests/test_secure_endpoints.py
+```bash
+# اختبارات الوحدة (سريعة — تُشغَّل في CI على كل push)
+PYTHONPATH=. pytest -q ../../tests/ -m "not integration"
+
+# اختبار تكامل: رفض path traversal على /asr/download
+PYTHONPATH=. pytest -q ../../tests/test_api_units.py::test_download_path_traversal_integration -m integration
+
+# اختبارات الأمان
+PYTHONPATH=. pytest -q ../../tests/test_auth_security.py ../../tests/test_secure_endpoints.py
 ```
 
-اختبار أوسع:
-```powershell
-pytest -q ../../tests/test_api_units.py
-```
+**CI (`/.github/workflows/ci.yml`):**
+- workflow واحد: تثبيت deps مرة واحدة ثم `pytest ../../tests/`
+- يشمل: unit + security + integration (path traversal)
+- يعمل على `push`/`PR` لـ `nabra`, `main`, `master`
 
 ---
 
 ## 11) ملاحظات تشغيل مهمة
 
-- الأفضل توحيد البيئة على (`.venv`)؛ السكربت يدعم (`venv`) القديم للتوافق.
+- الأفضل توحيد البيئة على (`.venv/`)؛ `run.sh` ينشئها تلقائيًا. مجلد `venv/` القديم مدعوم للتوافق — راجع `scripts/migrate_to_dot_venv.sh`.
 - عند مشاكل CUDA/نماذج، افحص أولاً `/health`.
 - لتجربة الواجهة مباشرة استخدم `http://127.0.0.1:8000/`.
 

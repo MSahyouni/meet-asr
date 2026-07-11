@@ -41,7 +41,7 @@ def test_tts_arabic():
         try:
             r = requests.post(
                 f"{BASE}/tts",
-                json={"text": text, "voice": "af_heart", "speed": 1.0},
+                json={"text": text, "voice": "ar_mms", "speed": 1.0},
                 headers=headers,
                 timeout=60,
             )

@@ -1,38 +1,53 @@
-# routers/tts.py — POST /tts (MMS / XTTS / Habibi)
+# routers/tts.py — POST /tts (MMS / Habibi)
 import asyncio
 import json
 import pathlib
-import uuid
 from typing import List, Optional
 from urllib.parse import quote
+
+from app.storage.naming import new_timestamped_id
 
 from fastapi import APIRouter, File, Form, Header, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import settings
+from app.features.auth.deps import require_logged_in_user
 from app.features.dashboard.schema import ActivityType
 from app.features.dashboard.service import DashboardService
 from app.server.deps import response_error, limiter, check_api_key
+from app.storage.user_paths import is_under_outputs, user_tts_output_dir
 
 router = APIRouter()
 
 MAX_VOICE_SAMPLE_MB = 20
 
 
+def _require_tts_auth(
+    authorization: Optional[str],
+    x_api_key: Optional[str],
+    user_email: Optional[str] = None,
+):
+    auth_error = check_api_key(x_api_key)
+    if auth_error:
+        return None, auth_error
+    return require_logged_in_user(user_email, authorization)
+
+
 def _safe_under_outputs_tts(resolved: pathlib.Path) -> bool:
-    """True if path is under settings.OUTPUTS_DIR/tts (no path traversal)."""
-    base = (settings.OUTPUTS_DIR / "tts").resolve()
+    """True if path is under outputs (global or per-user tts)."""
     try:
-        resolved = resolved.resolve()
-        return base in resolved.parents or resolved.parent == base
+        return is_under_outputs(resolved.resolve())
     except Exception:
         return False
 
 
-@router.get("/tts/voices")
-async def tts_voices(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+@router.get("/voices")
+async def tts_voices(
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
     """Return list of available TTS voice IDs. Does not load the TTS model."""
-    auth_error = check_api_key(x_api_key)
+    _, auth_error = _require_tts_auth(authorization, x_api_key)
     if auth_error:
         return auth_error
     try:
@@ -43,19 +58,21 @@ async def tts_voices(x_api_key: Optional[str] = Header(None, alias="X-API-Key"))
         return response_error(500, "voices_failed", str(e))
 
 
-@router.post("/tts/voice-sample")
+@router.post("/voice-sample")
 @limiter.limit("20/minute")
 async def upload_tts_voice_sample(
     request: Request,
     user_email: str = Form(...),
     ref_text: str = Form(""),
     file: UploadFile = File(...),
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """Upload a speaker reference sample to user-specific folder: data/voices/<user>/"""
-    auth_error = check_api_key(x_api_key)
+    resolved_email, auth_error = _require_tts_auth(authorization, x_api_key, user_email)
     if auth_error:
         return auth_error
+    user_email = resolved_email
     try:
         from app.tts.voice_profiles import save_user_speaker_sample, save_user_speaker_ref_text, user_voice_dir
 
@@ -87,7 +104,7 @@ async def upload_tts_voice_sample(
         return response_error(500, "upload_failed", str(e))
 
 
-@router.post("/tts/voice-samples")
+@router.post("/voice-samples")
 @limiter.limit("20/minute")
 async def upload_tts_voice_samples(
     request: Request,
@@ -95,12 +112,14 @@ async def upload_tts_voice_samples(
     ref_texts_json: str = Form(""),
     default_ref_text: str = Form(""),
     files: List[UploadFile] = File(...),
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """Upload multiple speaker samples to user-specific folder: data/voices/<user>/"""
-    auth_error = check_api_key(x_api_key)
+    resolved_email, auth_error = _require_tts_auth(authorization, x_api_key, user_email)
     if auth_error:
         return auth_error
+    user_email = resolved_email
     try:
         from app.tts.voice_profiles import save_user_speaker_ref_text, save_user_speaker_sample, user_voice_dir
 
@@ -185,15 +204,17 @@ async def upload_tts_voice_samples(
         return response_error(500, "upload_failed", str(e))
 
 
-@router.get("/tts/voice-samples")
+@router.get("/voice-samples")
 def list_tts_voice_samples(
     user_email: str = Query(...),
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """List uploaded speaker sample files for a specific user folder."""
-    auth_error = check_api_key(x_api_key)
+    resolved_email, auth_error = _require_tts_auth(authorization, x_api_key, user_email)
     if auth_error:
         return auth_error
+    user_email = resolved_email
     try:
         from app.tts.voice_profiles import get_user_speaker_ref_text, list_user_speaker_samples, user_voice_dir
 
@@ -224,16 +245,18 @@ def list_tts_voice_samples(
         return response_error(500, "list_failed", str(e))
 
 
-@router.get("/tts/voice-file")
+@router.get("/voice-file")
 def get_tts_voice_file(
     user_email: str = Query(...),
     file: str = Query(..., description="Voice sample file name (basename only)"),
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """Stream one user speaker sample for preview/playback."""
-    auth_error = check_api_key(x_api_key)
+    resolved_email, auth_error = _require_tts_auth(authorization, x_api_key, user_email)
     if auth_error:
         return auth_error
+    user_email = resolved_email
     try:
         from app.tts.voice_profiles import resolve_user_speaker_path
 
@@ -257,16 +280,18 @@ def get_tts_voice_file(
         return response_error(500, "download_failed", str(e))
 
 
-@router.delete("/tts/voice-sample")
+@router.delete("/voice-sample")
 def delete_tts_voice_sample(
     user_email: str = Query(...),
     file: str = Query(...),
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """Delete one speaker sample file from user-specific voice folder."""
-    auth_error = check_api_key(x_api_key)
+    resolved_email, auth_error = _require_tts_auth(authorization, x_api_key, user_email)
     if auth_error:
         return auth_error
+    user_email = resolved_email
     try:
         from app.tts.voice_profiles import delete_user_speaker_sample
 
@@ -280,28 +305,33 @@ def delete_tts_voice_sample(
         return response_error(500, "delete_failed", str(e))
 
 
-@router.post("/tts")
+@router.post("")
+@router.post("/", include_in_schema=False)
 @limiter.limit("12/minute")
 async def tts(
     request: Request,
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """
     Synthesize speech from text. Returns WAV path and download URL.
-    Body (JSON): { "text", "voice" (optional), "speed" (optional), "seed" (optional), "engine" (auto|mms|xtts_v2|habibi), "speaker_ref" (optional), "ref_text" (required for habibi), "dialect" (optional for habibi), "format" (ignored; always wav) }
+    Body (JSON): { "text", "voice" (optional), "speed" (optional), "seed" (optional), "engine" (auto|mms|habibi), "speaker_ref" (optional), "ref_text" (required for habibi), "dialect" (optional for habibi), "format" (ignored; always wav) }
     Max text length: 5000 chars. Rate: 12/minute per IP.
     """
-    auth_error = check_api_key(x_api_key)
-    if auth_error:
-        return auth_error
     try:
         body = await request.json()
     except Exception as json_error:
         return response_error(400, "invalid_json", str(json_error))
     if not isinstance(body, dict):
         return response_error(400, "invalid_body", "JSON object required")
-    text = (body.get("text") or "").strip()
+
     user_email = (body.get("user_email") or "").strip() or None
+    resolved_email, auth_error = _require_tts_auth(authorization, x_api_key, user_email)
+    if auth_error:
+        return auth_error
+    user_email = resolved_email
+
+    text = (body.get("text") or "").strip()
     if not text:
         return response_error(400, "validation_error", "text is required and cannot be empty")
     from app.tts_core import TTS_TEXT_MAX_LEN
@@ -324,10 +354,9 @@ async def tts(
     dialect = (body.get("dialect") or "").strip() or None
     # format is accepted but we only output wav
 
-    # Generate unique path under outputs/tts/ (no user-controlled path → no path traversal)
-    tts_dir = pathlib.Path(settings.OUTPUTS_DIR) / "tts"
-    tts_dir.mkdir(parents=True, exist_ok=True)
-    job_id = str(uuid.uuid4())
+    # Generate unique path under per-user or global tts output dir.
+    tts_dir = user_tts_output_dir(user_email)
+    job_id = new_timestamped_id("tts")
     out_path = str((tts_dir / f"{job_id}.wav").resolve())
     if not _safe_under_outputs_tts(pathlib.Path(out_path)):
         return response_error(403, "forbidden_path", "path outside outputs/tts/")
@@ -358,16 +387,12 @@ async def tts(
     # Same path whitelist as /download: path must be under OUTPUTS_DIR
     audio_path = result["audio_path"]
     resolved = pathlib.Path(audio_path).resolve()
-    base_out = settings.OUTPUTS_DIR.resolve()
-    if base_out not in resolved.parents and resolved.parent != base_out:
+    if not _safe_under_outputs_tts(resolved):
         return response_error(403, "forbidden_path", "outside outputs/")
     if resolved.suffix.lower() not in settings.DOWNLOAD_ALLOW:
         return response_error(403, "forbidden_extension", resolved.suffix.lower())
 
-    base_url = settings.BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
-    download_url = f"/download?path={quote(resolved.as_posix())}"
-    if base_url:
-        download_url = f"{base_url}{download_url}"
+    download_url = f"/asr/download?path={quote(resolved.as_posix())}"
 
     if user_email:
         try:

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app import nlp_core
 from app.config import settings
+from app.features.auth.deps import require_logged_in_user
 from app.server.deps import response_error, check_api_key
 
 router = APIRouter()
@@ -16,11 +17,15 @@ router = APIRouter()
 async def ner_endpoint(
     text: Optional[str] = Form(None),
     path: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     auth_error = check_api_key(x_api_key)
     if auth_error:
         return auth_error
+    _, login_error = require_logged_in_user(authorization=authorization)
+    if login_error:
+        return login_error
     body = (text or "").strip()
     if (path or "").strip():
         try:

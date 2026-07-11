@@ -56,16 +56,32 @@ def get_model(name: str, device: Optional[str] = None, compute_type: Optional[st
     return _MODEL_CACHE[key]
 
 
-def run_asr(wav_path: str, model_obj: WhisperModel, whisper_mode: str = "normal"):
-    init_prompt = "لغة عربية عامية سورية." if whisper_mode == "whisper" else "لغة عربية فصحى."
+def run_asr(
+    wav_path: str,
+    model_obj: WhisperModel,
+    whisper_mode: str = "normal",
+    multi_speaker: bool = False,
+):
+    if whisper_mode == "whisper":
+        init_prompt = "حوار باللهجة السورية العامية، نص واضح ودقيق."
+    else:
+        init_prompt = "نص عربي فصيح واضح مع علامات ترقيم مناسبة."
     segments_generator, info = model_obj.transcribe(
         wav_path,
         language="ar",
         task="transcribe",
         vad_filter=True,
-        vad_parameters={"threshold": 0.7, "min_silence_duration_ms": 800, "speech_pad_ms": 100},
-        beam_size=5,
+        vad_parameters={
+            "threshold": 0.45,
+            "min_silence_duration_ms": 400,
+            "speech_pad_ms": 200,
+        },
+        beam_size=8,
         temperature=[0.0, 0.2, 0.4],
+        compression_ratio_threshold=2.4,
+        log_prob_threshold=-1.0,
+        no_speech_threshold=0.5,
+        condition_on_previous_text=not multi_speaker,
         initial_prompt=init_prompt,
     )
     seglist = [{"start": s.start, "end": s.end, "text": s.text.strip()} for s in segments_generator]

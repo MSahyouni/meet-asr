@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 
 from app import nlp_core
 from app.config import settings
+from app.storage.naming import new_timestamped_id
+from app.features.auth.deps import require_logged_in_user
 from app.features.dashboard.schema import ActivityType
 from app.features.dashboard.service import DashboardService
 from app.server.deps import response_error, JOBS, run_summary_job_impl, limiter, check_api_key
@@ -24,6 +26,7 @@ async def summarize_after(
     user_email: Optional[str] = Form(None),
     summary_mode: str = Form("ultra"),
     async_mode: bool = Form(False),
+    authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     fake_file: Optional[UploadFile] = File(None),
 ):
@@ -45,6 +48,11 @@ async def summarize_after(
     auth_error = check_api_key(x_api_key)
     if auth_error:
         return auth_error
+
+    resolved_email, login_error = require_logged_in_user(user_email, authorization)
+    if login_error:
+        return login_error
+    user_email = resolved_email
 
     body = (text or "").strip()
     if (path or "").strip():
@@ -79,8 +87,7 @@ async def summarize_after(
         except Exception:
             sum_path = None
         from urllib.parse import quote
-        base = settings.BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
-        summary_url = f"{base}/download?path={quote(sum_path)}" if (base and sum_path) else None
+        summary_url = f"/asr/download?path={quote(sum_path)}" if sum_path else None
         if user_email:
             try:
                 DashboardService.record_activity(
@@ -99,8 +106,7 @@ async def summarize_after(
             "download_urls": {"summary": summary_url},
         })
 
-    import uuid
-    job_id = str(uuid.uuid4())
+    job_id = new_timestamped_id("nlp")
     JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
     asyncio.create_task(run_summary_job_impl(job_id, body, out_base_path, summary_mode))
     if user_email:
@@ -118,8 +124,8 @@ async def summarize_after(
         {
             "job_id": job_id,
             "status": "queued",
-            "poll_url": f"{base}/job/{job_id}",
-            "result_url": f"{base}/job/{job_id}/download",
+            "poll_url": f"/asr/job/{job_id}",
+            "result_url": f"{base}/asr/job/{job_id}/download",
         },
         status_code=202,
     )

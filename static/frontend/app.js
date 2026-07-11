@@ -5,6 +5,45 @@
   function qsa(s) { return document.querySelectorAll(s); }
   function getId(id) { return document.getElementById(id); }
 
+  function setZoneVisible(id, visible) {
+    var el = getId(id);
+    if (el) el.classList.toggle("hidden", !visible);
+  }
+
+  function updateTtsEngineUi() {
+    var engine = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
+    var showHabibiFields = engine === "habibi" || engine === "auto";
+    var showMmsSeed = engine === "mms";
+    setZoneVisible("ttsDialectZone", showHabibiFields);
+    setZoneVisible("ttsRefTextZone", showHabibiFields);
+    setZoneVisible("ttsHabibiSpeedHint", showHabibiFields);
+    setZoneVisible("ttsSeedZone", showMmsSeed);
+  }
+
+  // Canonical API routes (feature-prefixed)
+  var API = {
+    asr: {
+      transcribe: "/asr/transcribe",
+      job: "/asr/job",
+      download: "/asr/download",
+      enrolledSpeakers: "/asr/enrolled-speakers",
+      enrollSpeaker: "/asr/enroll-speaker",
+      deleteSpeaker: "/asr/delete-speaker",
+      speakerFiles: "/asr/speaker-files",
+      speakerFile: "/asr/speaker-file",
+    },
+    nlp: {
+      summarize: "/nlp/summarize",
+    },
+    tts: {
+      root: "/tts",
+      voices: "/tts/voices",
+      voiceSamples: "/tts/voice-samples",
+      voiceSample: "/tts/voice-sample",
+      voiceFile: "/tts/voice-file",
+    },
+  };
+
   var UI_STATE_KEY = "meetasr_ui_state_v1";
   var uiSaveTimer = null;
 
@@ -59,7 +98,7 @@
       };
 
       [
-        "apiKey", "timeout", "whisperMode", "enhance", "enhanceLevel", "maxSpeakers", "enrollThreshold",
+        "apiKey", "timeout", "whisperMode", "enhance", "enhanceLevel", "punctuate", "maxSpeakers", "enrollThreshold",
         "deviceSel", "computeSel", "summaryMode", "ttsEngine", "ttsUserEmail", "ttsText", "ttsVoice",
         "ttsSpeed", "ttsSeed", "ttsDialect", "ttsRefText", "ttsVoiceFilesList", "spkName", "spkList", "spkFilesList",
         "authEmail", "authFullName", "profileFullName", "profileBio", "profileAvatar"
@@ -176,6 +215,15 @@
   });
 
   restoreUIState();
+  updateTtsEngineUi();
+
+  var ttsEngineEl = getId("ttsEngine");
+  if (ttsEngineEl) {
+    ttsEngineEl.addEventListener("change", function () {
+      updateTtsEngineUi();
+      queueUIStateSave();
+    });
+  }
 
   document.addEventListener("input", function (e) {
     var t = e && e.target;
@@ -252,6 +300,96 @@
     return h;
   }
 
+  function isLoggedIn() {
+    return !!(session && session.token && session.email);
+  }
+
+  function requireLogin(message) {
+    if (isLoggedIn()) return true;
+    if (message) alert(message);
+    return false;
+  }
+
+  var PROTECTED_CONTROL_IDS = [
+    "btnSend", "btnSummary", "micBtn", "btnTts", "btnEnroll", "spkMicBtn",
+    "btnRefreshSpeakers", "btnDeleteSpeaker", "btnTtsUploadVoices",
+    "btnTtsRefreshVoices", "btnTtsDeleteVoice", "filesIn"
+  ];
+
+  function syncAuthGates() {
+    var loggedIn = isLoggedIn();
+    var banner = getId("loginGateBanner");
+    if (banner) banner.classList.toggle("hidden", loggedIn);
+    PROTECTED_CONTROL_IDS.forEach(function (id) {
+      var el = getId(id);
+      if (el) el.disabled = !loggedIn;
+    });
+    if (!loggedIn) {
+      if (pendingPollTimers.transcribe) clearPendingJob("transcribe");
+      if (pendingPollTimers.summary) clearPendingJob("summary");
+    } else {
+      refreshTtsVoiceSamples();
+    }
+  }
+
+  function revokeBlobSrc(el) {
+    if (!el || !el.src) return;
+    try {
+      if (String(el.src).indexOf("blob:") === 0) URL.revokeObjectURL(el.src);
+    } catch (_) {}
+  }
+
+  function normalizeApiUrl(url) {
+    if (!url) return url;
+    var raw = String(url).trim();
+    if (!raw) return raw;
+    if (raw.charAt(0) === "/" && raw.charAt(1) !== "/") return raw;
+    try {
+      var parsed = new URL(raw, window.location.origin);
+      return parsed.pathname + parsed.search + (parsed.hash || "");
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  function loadAuthenticatedMedia(url, fallbackName) {
+    var timeout = getId("timeout") ? getId("timeout").value : 300;
+    return fetchWithTimeout(normalizeApiUrl(url), { method: "GET", headers: getHeaders() }, timeout)
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (j) {
+            throw new Error(j.detail || j.error || r.statusText);
+          });
+        }
+        var dispo = r.headers.get("Content-Disposition") || "";
+        var match = /filename="?([^";]+)"?/i.exec(dispo);
+        return r.blob().then(function (blob) {
+          return {
+            blob: blob,
+            objectUrl: URL.createObjectURL(blob),
+            filename: (match && match[1]) || fallbackName || "download",
+          };
+        });
+      });
+  }
+
+  function triggerAuthenticatedDownload(url, fallbackName) {
+    if (!requireLogin(ACCOUNT_MESSAGES.needLoginFirst)) return;
+    loadAuthenticatedMedia(url, fallbackName)
+      .then(function (res) {
+        var a = document.createElement("a");
+        a.href = res.objectUrl;
+        a.download = res.filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(res.objectUrl); }, 0);
+      })
+      .catch(function (e) {
+        alert("فشل التحميل: " + (e.message || String(e)));
+      });
+  }
+
   var session = {
     email: localStorage.getItem("meetasr_email") || "",
     token: localStorage.getItem("meetasr_token") || "",
@@ -270,6 +408,7 @@
     if (profileEmail) profileEmail.value = session.email;
     if (dashEmail) dashEmail.value = session.email;
     if (ttsUserEmail && session.email) ttsUserEmail.value = session.email;
+    syncAuthGates();
     queueUIStateSave();
   }
 
@@ -282,11 +421,12 @@
   function jsonRequest(url, method, body, timeoutSec) {
     var headers = getHeaders();
     headers["Content-Type"] = "application/json";
+    var effectiveTimeout = (timeoutSec == null || timeoutSec === "") ? (getId("timeout") ? getId("timeout").value : 300) : timeoutSec;
     return fetchWithTimeout(url, {
       method: method,
       headers: headers,
       body: body ? JSON.stringify(body) : undefined,
-    }, timeoutSec || (getId("timeout") ? getId("timeout").value : 300))
+    }, effectiveTimeout)
       .then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (data) {
           if (!r.ok) {
@@ -306,23 +446,29 @@
   function resolveTimeoutSeconds(timeoutSec, fallbackSec) {
     var raw = normalizeDigits(timeoutSec);
     var parsed = parseInt(raw, 10);
-    if (!isFinite(parsed) || parsed <= 0) parsed = parseInt(fallbackSec, 10);
+    // 0 means unlimited timeout (no client-side abort).
+    if (isFinite(parsed) && parsed === 0) return 0;
+    if (!isFinite(parsed) || parsed < 0) parsed = parseInt(fallbackSec, 10);
     if (!isFinite(parsed) || parsed <= 0) parsed = 900;
     return parsed;
   }
 
   function fetchWithTimeout(url, opts, timeoutMs) {
     var sec = resolveTimeoutSeconds(timeoutMs, 900);
-    var t = Math.max(60000, sec * 1000);
-    var ctrl = new AbortController();
-    var id = setTimeout(function () { ctrl.abort(); }, t);
     opts = opts || {};
-    opts.signal = ctrl.signal;
+    var ctrl = null;
+    var id = null;
+    if (sec > 0) {
+      var t = Math.max(60000, sec * 1000);
+      ctrl = new AbortController();
+      id = setTimeout(function () { ctrl.abort(); }, t);
+      opts.signal = ctrl.signal;
+    }
     return fetch(url, opts).then(function (r) {
-      clearTimeout(id);
+      if (id) clearTimeout(id);
       return r;
     }, function (e) {
-      clearTimeout(id);
+      if (id) clearTimeout(id);
       if (e && e.name === "AbortError") {
         throw new Error("انتهت مهلة الطلب. زِد قيمة timeout ثم أعد المحاولة.");
       }
@@ -441,13 +587,14 @@
 
   function buildDownloadUrls(data) {
     var urls = (data && data.download_urls) ? data.download_urls : {};
-    if (urls.txt || urls.srt || urls.vtt || urls.summary || urls.segments) return urls;
+    if (urls.txt || urls.srt || urls.vtt || urls.summary || urls.segments || urls.wav) return urls;
     var out = {};
-    if (data && data.txt_path) out.txt = "/download?path=" + encodeURIComponent(data.txt_path);
-    if (data && data.srt_path) out.srt = "/download?path=" + encodeURIComponent(data.srt_path);
-    if (data && data.vtt_path) out.vtt = "/download?path=" + encodeURIComponent(data.vtt_path);
-    if (data && data.summary_path) out.summary = "/download?path=" + encodeURIComponent(data.summary_path);
-    if (data && data.segments_path) out.segments = "/download?path=" + encodeURIComponent(data.segments_path);
+    if (data && data.txt_path) out.txt = API.asr.download + "?path=" + encodeURIComponent(data.txt_path);
+    if (data && data.srt_path) out.srt = API.asr.download + "?path=" + encodeURIComponent(data.srt_path);
+    if (data && data.vtt_path) out.vtt = API.asr.download + "?path=" + encodeURIComponent(data.vtt_path);
+    if (data && data.summary_path) out.summary = API.asr.download + "?path=" + encodeURIComponent(data.summary_path);
+    if (data && data.segments_path) out.segments = API.asr.download + "?path=" + encodeURIComponent(data.segments_path);
+    if (data && data.wav_path) out.wav = API.asr.download + "?path=" + encodeURIComponent(data.wav_path);
     return out;
   }
 
@@ -456,11 +603,24 @@
     if (!links) return;
     if (clearFirst) links.innerHTML = "";
     urls = urls || {};
-    if (urls.txt) links.innerHTML += '<a href="' + urls.txt + '" download>تحميل TXT</a> ';
-    if (urls.srt) links.innerHTML += '<a href="' + urls.srt + '" download>تحميل SRT</a> ';
-    if (urls.vtt) links.innerHTML += '<a href="' + urls.vtt + '" download>تحميل VTT</a> ';
-    if (urls.segments) links.innerHTML += '<a href="' + urls.segments + '" download>تحميل segments</a> ';
-    if (urls.summary) links.innerHTML += '<a href="' + urls.summary + '" download>تحميل الملخص</a>';
+    function addBtn(url, label, fallbackName) {
+      if (!url) return;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-secondary";
+      btn.textContent = label;
+      btn.addEventListener("click", function () {
+        triggerAuthenticatedDownload(url, fallbackName);
+      });
+      links.appendChild(btn);
+      links.appendChild(document.createTextNode(" "));
+    }
+    addBtn(urls.txt, "تحميل TXT", "transcript.txt");
+    addBtn(urls.srt, "تحميل SRT", "transcript.srt");
+    addBtn(urls.vtt, "تحميل VTT", "transcript.vtt");
+    addBtn(urls.segments, "تحميل segments", "segments.json");
+    addBtn(urls.wav, "تحميل WAV", "recording.wav");
+    addBtn(urls.summary, "تحميل الملخص", "summary.txt");
   }
 
   function applyTranscribeResult(data) {
@@ -568,11 +728,24 @@
     errorPrefix: "خطأ: "
   };
 
+  function normalizeJobPollUrl(url, jobId) {
+    if (!jobId) return API.asr.job + "/";
+    if (!url) return API.asr.job + "/" + encodeURIComponent(jobId);
+    try {
+      var parsed = new URL(url, window.location.origin);
+      return parsed.pathname + parsed.search;
+    } catch (_) {
+      if (String(url).charAt(0) === "/") return url;
+      return API.asr.job + "/" + encodeURIComponent(jobId);
+    }
+  }
+
   function pollJob(kind, info) {
     if (!info || !info.job_id) return;
     if (pendingPollTimers[kind]) clearTimeout(pendingPollTimers[kind]);
-    var pollUrl = info.poll_url || ("/job/" + encodeURIComponent(info.job_id));
+    var pollUrl = normalizeJobPollUrl(info.poll_url, info.job_id);
     var timeout = getId("timeout") ? getId("timeout").value : 300;
+    var pollFailures = 0;
 
     var tick = function () {
       fetchWithTimeout(pollUrl, { method: "GET", headers: getHeaders() }, timeout)
@@ -583,6 +756,7 @@
           });
         })
         .then(function (job) {
+          pollFailures = 0;
           var status = (job && job.status) ? String(job.status).toLowerCase() : "";
           if (status === "queued" || status === "running") {
             if (kind === "transcribe") {
@@ -597,9 +771,24 @@
 
           if (status === "done") {
             var result = (job && job.result) ? job.result : {};
-            if (kind === "transcribe") applyTranscribeResult(result);
+            if (kind === "transcribe") {
+              if (!(result.text || "").trim() && result.error) {
+                getId("outText").value = ASR_MESSAGES.errorPrefix + result.error;
+              } else {
+                applyTranscribeResult(result);
+              }
+            }
             if (kind === "summary") applySummaryResult(result);
             clearPendingJob(kind);
+            return;
+          }
+
+          if (status === "error") {
+            var failedMsg = (job && (job.error || job.detail)) || ASR_MESSAGES.jobFailed;
+            if (kind === "transcribe") getId("outText").value = ASR_MESSAGES.errorPrefix + failedMsg;
+            if (kind === "summary") getId("outSummary").value = SUMMARY_MESSAGES.errorPrefix + failedMsg;
+            clearPendingJob(kind);
+            queueUIStateSave();
             return;
           }
 
@@ -609,7 +798,16 @@
           clearPendingJob(kind);
           queueUIStateSave();
         })
-        .catch(function () {
+        .catch(function (e) {
+          pollFailures += 1;
+          if (pollFailures >= 12) {
+            var failMsg = (e && e.message) ? e.message : ASR_MESSAGES.jobFailed;
+            if (kind === "transcribe") getId("outText").value = ASR_MESSAGES.errorPrefix + failMsg;
+            if (kind === "summary") getId("outSummary").value = SUMMARY_MESSAGES.errorPrefix + failMsg;
+            clearPendingJob(kind);
+            queueUIStateSave();
+            return;
+          }
           pendingPollTimers[kind] = setTimeout(tick, 2500);
         });
     };
@@ -618,6 +816,7 @@
   }
 
   function resumePendingJobs() {
+    if (!isLoggedIn()) return;
     var jobs = getPendingJobs();
     if (jobs.transcribe && jobs.transcribe.job_id) {
       getId("outText").value = ASR_MESSAGES.restoreTranscribe;
@@ -639,6 +838,7 @@
     fd.append("enhance", (enhanceEl && enhanceEl.value !== "off") ? "true" : "false");
     fd.append("enhance_mode", enhanceEl ? (enhanceEl.value || "off") : "off");
     fd.append("enhance_level", enhanceLevelEl ? enhanceLevelEl.value : "medium");
+    fd.append("punctuate", (getId("punctuate") && getId("punctuate").checked) ? "true" : "false");
     fd.append("diarize", getId("diarize").checked ? "true" : "false");
     fd.append("auto_k", getId("autoK").checked ? "true" : "false");
     fd.append("max_speakers", getId("maxSpeakers") ? getId("maxSpeakers").value : "2");
@@ -646,12 +846,16 @@
     fd.append("device_sel", getId("deviceSel") ? getId("deviceSel").value : "auto");
     fd.append("compute_sel", getId("computeSel") ? getId("computeSel").value : "auto");
     fd.append("async_mode", "true");
-    if (session.email) fd.append("user_email", session.email);
+    fd.append("user_email", session.email);
   }
 
   function sendTranscribeRequest(fd) {
+    if (!requireLogin(ACCOUNT_MESSAGES.needLoginFirst)) {
+      getId("outText").value = ACCOUNT_MESSAGES.needLoginFirst;
+      return Promise.resolve();
+    }
     var timeout = getId("timeout") ? getId("timeout").value : 300;
-    return fetchWithTimeout("/transcribe", {
+    return fetchWithTimeout(API.asr.transcribe, {
       method: "POST",
       headers: getHeaders(),
       body: fd,
@@ -664,7 +868,7 @@
         if (data && data.job_id && (data.status === "queued" || data.status === "running")) {
           setPendingJob("transcribe", {
             job_id: data.job_id,
-            poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
+            poll_url: normalizeJobPollUrl(data.poll_url, data.job_id),
           });
           getId("outText").value = ASR_MESSAGES.processingBg + " (" + formatJobStatusLabel(data.status) + ")";
           queueUIStateSave();
@@ -736,6 +940,10 @@
 
   // تلخيص النص
   getId("btnSummary").addEventListener("click", function () {
+    if (!requireLogin(ACCOUNT_MESSAGES.needLoginFirst)) {
+      getId("outSummary").value = ACCOUNT_MESSAGES.needLoginFirst;
+      return;
+    }
     var btnSummary = getId("btnSummary");
     var text = (getId("outText") && getId("outText").value || "").trim();
     if (!text) {
@@ -747,11 +955,11 @@
     fd.append("text", text);
     fd.append("summary_mode", mode);
     fd.append("async_mode", "true");
-    if (session.email) fd.append("user_email", session.email);
+    fd.append("user_email", session.email);
     getId("outSummary").value = SUMMARY_MESSAGES.loading;
     setButtonBusy(btnSummary, true, SUMMARY_MESSAGES.busy);
     var timeout = getId("timeout") ? getId("timeout").value : 300;
-    fetchWithTimeout("/summarize", { method: "POST", headers: getHeaders(), body: fd }, timeout)
+    fetchWithTimeout(API.nlp.summarize, { method: "POST", headers: getHeaders(), body: fd }, timeout)
       .then(function (r) {
         if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
         return r.json();
@@ -760,7 +968,7 @@
         if (data && data.job_id && (data.status === "queued" || data.status === "running")) {
           setPendingJob("summary", {
             job_id: data.job_id,
-            poll_url: data.poll_url || ("/job/" + encodeURIComponent(data.job_id)),
+            poll_url: normalizeJobPollUrl(data.poll_url, data.job_id),
           });
           getId("outSummary").value = SUMMARY_MESSAGES.queued;
           queueUIStateSave();
@@ -824,6 +1032,17 @@
     return ttsUserEmail || session.email || "";
   }
 
+  function getSpeakersUserEmail() {
+    return session.email || "";
+  }
+
+  function withSpeakersUserQuery(path) {
+    var userEmail = getSpeakersUserEmail();
+    if (!userEmail) return path;
+    var sep = path.indexOf("?") >= 0 ? "&" : "?";
+    return path + sep + "user_email=" + encodeURIComponent(userEmail);
+  }
+
   function refreshTtsVoiceSamples() {
     var statusEl = getId("ttsVoiceStatus");
     var listEl = getId("ttsVoiceFilesList");
@@ -835,7 +1054,7 @@
       return;
     }
     var timeout = getId("timeout") ? getId("timeout").value : 300;
-    fetchWithTimeout("/tts/voice-samples?user_email=" + encodeURIComponent(userEmail), {
+    fetchWithTimeout(API.tts.voiceSamples + "?user_email=" + encodeURIComponent(userEmail), {
       method: "GET",
       headers: getHeaders(),
     }, timeout)
@@ -892,7 +1111,7 @@
       for (var i = 0; i < filesEl.files.length; i++) fd.append("files", filesEl.files[i]);
       if (statusEl) statusEl.textContent = TTS_MESSAGES.uploadingVoices;
       var timeout = getId("timeout") ? getId("timeout").value : 300;
-      fetchWithTimeout("/tts/voice-samples", {
+      fetchWithTimeout(API.tts.voiceSamples, {
         method: "POST",
         headers: getHeaders(),
         body: fd,
@@ -925,7 +1144,7 @@
         return;
       }
       var timeout = getId("timeout") ? getId("timeout").value : 300;
-      var url = "/tts/voice-sample?user_email=" + encodeURIComponent(userEmail) + "&file=" + encodeURIComponent(selectedFile);
+      var url = API.tts.voiceSample + "?user_email=" + encodeURIComponent(userEmail) + "&file=" + encodeURIComponent(selectedFile);
       fetchWithTimeout(url, {
         method: "DELETE",
         headers: getHeaders(),
@@ -958,7 +1177,7 @@
         if (audioEl) audioEl.removeAttribute("src");
         return;
       }
-      var url = "/tts/voice-file?user_email=" + encodeURIComponent(userEmail) + "&file=" + encodeURIComponent(file);
+      var url = API.tts.voiceFile + "?user_email=" + encodeURIComponent(userEmail) + "&file=" + encodeURIComponent(file);
       fetch(url, { headers: getHeaders() })
         .then(function (r) {
           if (!r.ok) throw new Error(r.statusText);
@@ -981,6 +1200,7 @@
   }
 
   getId("btnTts").addEventListener("click", function () {
+    if (!requireLogin(ACCOUNT_MESSAGES.needLoginFirst)) return;
     var btnTts = getId("btnTts");
     var textEl = getId("ttsText"), text = (textEl && textEl.value || "").trim();
     if (!text) {
@@ -1009,42 +1229,69 @@
     if (metaEl) metaEl.textContent = "";
 
     var body = { text: text, voice: voice, speed: speed, engine: engine || "auto" };
-    if (engine === "habibi" && !refText) {
-      refText = text;
+    if (engine === "habibi" && !refText && !speakerRef) {
+      errEl.textContent = "اختر بصمة صوتية لـ Habibi أو اكتب ref_text المطابق للعينة فقط.";
+      errEl.classList.remove("hidden");
+      return;
     }
     if (userEmailForTts) body.user_email = userEmailForTts;
-    if (seed != null) body.seed = seed;
+    if (engine === "mms" && seed != null) body.seed = seed;
     if (speakerRef) body.speaker_ref = speakerRef;
-    if (dialect) body.dialect = dialect;
-    if (refText) body.ref_text = refText;
+    if (engine === "habibi" || engine === "auto") {
+      if (dialect) body.dialect = dialect;
+      if (refText) body.ref_text = refText;
+    }
 
     var h = getHeaders();
     h["Content-Type"] = "application/json";
 
     var timeout = getId("timeout") ? getId("timeout").value : 300;
+    // OmniVoice first run may download ~3GB; use a longer client timeout unless user set 0 (unlimited).
+    if ((engine === "omnivoice" || engine === "auto") && String(timeout).trim() !== "0") {
+      var ttsTimeoutNum = parseInt(String(timeout), 10);
+      if (!isNaN(ttsTimeoutNum) && ttsTimeoutNum > 0 && ttsTimeoutNum < 7200) timeout = 7200;
+    }
     setButtonBusy(btnTts, true, TTS_MESSAGES.generating);
-    fetchWithTimeout("/tts", { method: "POST", headers: h, body: JSON.stringify(body) }, timeout)
+    fetchWithTimeout(API.tts.root, { method: "POST", headers: h, body: JSON.stringify(body) }, timeout)
       .then(function (r) {
         if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
         return r.json();
       })
       .then(function (data) {
+        var done = Promise.resolve();
         if (data.download_url) {
-          audioEl.src = data.download_url;
-          dlEl.innerHTML = '<a href="' + data.download_url + '" download="tts.wav">تحميل الصوت</a>';
+          done = loadAuthenticatedMedia(data.download_url, "tts.wav").then(function (res) {
+            revokeBlobSrc(audioEl);
+            audioEl.src = res.objectUrl;
+            dlEl.innerHTML = "";
+            var dlBtn = document.createElement("button");
+            dlBtn.type = "button";
+            dlBtn.className = "btn btn-secondary";
+            dlBtn.textContent = "تحميل الصوت";
+            dlBtn.addEventListener("click", function () {
+              var a = document.createElement("a");
+              a.href = res.objectUrl;
+              a.download = res.filename;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+            });
+            dlEl.appendChild(dlBtn);
+          });
         }
-        if (metaEl) {
-          var meta = [
-            "engine_used: " + (data.engine_used || "-"),
-            "requested_voice: " + (data.requested_voice || "-"),
-            "resolved_voice: " + (data.resolved_voice || "-"),
-            "speaker_ref: " + (data.speaker_ref || "-"),
-            "dialect: " + (data.dialect || "-"),
-            "fallback_used: " + (data.fallback_used ? "yes" : "no"),
-            "arabic_detected: " + (data.arabic_detected ? "yes" : "no")
-          ].join("\n");
-          metaEl.textContent = meta;
-        }
+        return done.then(function () {
+          if (metaEl) {
+            metaEl.textContent = [
+              "engine_used: " + (data.engine_used || "-"),
+              "requested_voice: " + (data.requested_voice || "-"),
+              "resolved_voice: " + (data.resolved_voice || "-"),
+              "speaker_ref: " + (data.speaker_ref || "-"),
+              "dialect: " + (data.dialect || "-"),
+              "fallback_used: " + (data.fallback_used ? "yes" : "no"),
+              "arabic_detected: " + (data.arabic_detected ? "yes" : "no"),
+            ].join("\n");
+          }
+        });
       })
       .catch(function (e) {
         errEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
@@ -1059,7 +1306,7 @@
   var spkMediaRecorder = null, spkRecordedChunks = [];
   function refreshSpeakersList() {
     var timeout = getId("timeout") ? getId("timeout").value : 300;
-    fetchWithTimeout("/enrolled-speakers", { method: "GET", headers: getHeaders() }, timeout)
+    fetchWithTimeout(withSpeakersUserQuery(API.asr.enrolledSpeakers), { method: "GET", headers: getHeaders() }, timeout)
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         var sel = getId("spkList");
@@ -1078,6 +1325,13 @@
       .catch(function () {});
   }
 
+  function uniqueSpkRecordingFilename() {
+    var now = new Date();
+    function pad(n) { return String(n).padStart(2, "0"); }
+    return "spk_" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + "_" +
+      pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds()) + ".webm";
+  }
+
   getId("btnEnroll").addEventListener("click", function () {
     var btnEnroll = getId("btnEnroll");
     var name = (getId("spkName") && getId("spkName").value || "").trim();
@@ -1085,8 +1339,13 @@
       getId("enrollOut").textContent = SPEAKERS_MESSAGES.needName;
       return;
     }
+    if (!getSpeakersUserEmail()) {
+      getId("enrollOut").textContent = "سجّل الدخول أولاً — بصمة «محمد» تُحفظ لحسابك فقط وليست مشتركة.";
+      return;
+    }
     var fd = new FormData();
     fd.append("name", name);
+    fd.append("user_email", getSpeakersUserEmail());
     var filesIn = getId("spkFiles");
     var hasFile = false;
     if (filesIn && filesIn.files) {
@@ -1096,7 +1355,11 @@
       }
     }
     if (window._lastSpkRecordedBlob) {
-      fd.append("files", window._lastSpkRecordedBlob, "spk_recording.webm");
+      fd.append(
+        "files",
+        window._lastSpkRecordedBlob,
+        window._lastSpkRecordingName || uniqueSpkRecordingFilename()
+      );
       hasFile = true;
     }
     if (!hasFile) {
@@ -1113,14 +1376,21 @@
     getId("enrollOut").textContent = SPEAKERS_MESSAGES.enrolling;
     setButtonBusy(btnEnroll, true, SPEAKERS_MESSAGES.enrollBusy);
     var timeout = getId("timeout") ? getId("timeout").value : 300;
-    fetchWithTimeout("/enroll-speaker", { method: "POST", headers: getHeaders(), body: fd }, timeout)
+    fetchWithTimeout(API.asr.enrollSpeaker, { method: "POST", headers: getHeaders(), body: fd }, timeout)
       .then(function (r) {
         if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.message || j.error || r.statusText); });
         return r.json();
       })
       .then(function (data) {
         getId("enrollOut").textContent = (data.message || SPEAKERS_MESSAGES.enrolled) + (data.success ? "" : SPEAKERS_MESSAGES.warningSuffix);
+        window._lastSpkRecordedBlob = null;
+        window._lastSpkRecordingName = null;
+        if (getId("spkMicStatus")) getId("spkMicStatus").textContent = "";
+        if (getId("spkFiles")) getId("spkFiles").value = "";
         refreshSpeakersList();
+        var spkList = getId("spkList");
+        if (spkList && name) spkList.value = name;
+        if (spkList) spkList.dispatchEvent(new Event("change"));
       })
       .catch(function (e) {
         getId("enrollOut").textContent = SPEAKERS_MESSAGES.errorPrefix + (e.message || String(e));
@@ -1135,7 +1405,11 @@
     if (spkMediaRecorder && spkMediaRecorder.state === "recording") {
       spkMediaRecorder.stop();
       btn.textContent = "تسجيل مقطع من الميكروفون";
-      status.textContent = SPEAKERS_MESSAGES.micStopped;
+      if (window._lastSpkRecordingName) {
+        status.textContent = "تم حفظ المقطع: " + window._lastSpkRecordingName + " — اضغط «تسجيل/تحديث البصمة».";
+      } else {
+        status.textContent = SPEAKERS_MESSAGES.micStopped;
+      }
       return;
     }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1149,6 +1423,7 @@
         spkMediaRecorder.ondataavailable = function (e) { if (e.data.size) spkRecordedChunks.push(e.data); };
         spkMediaRecorder.onstop = function () {
           stream.getTracks().forEach(function (t) { t.stop(); });
+          window._lastSpkRecordingName = uniqueSpkRecordingFilename();
           window._lastSpkRecordedBlob = new Blob(spkRecordedChunks, { type: "audio/webm" });
         };
         spkMediaRecorder.start();
@@ -1169,7 +1444,7 @@
       return;
     }
     var timeout = getId("timeout") ? getId("timeout").value : 300;
-    fetchWithTimeout("/delete-speaker?name=" + encodeURIComponent(name), { method: "DELETE", headers: getHeaders() }, timeout)
+    fetchWithTimeout(withSpeakersUserQuery(API.asr.deleteSpeaker + "?name=" + encodeURIComponent(name)), { method: "DELETE", headers: getHeaders() }, timeout)
       .then(function (r) {
         if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.message || r.statusText); });
         return r.json();
@@ -1193,7 +1468,7 @@
     audioEl.removeAttribute("src");
     if (!name) return;
     var timeout = getId("timeout") ? getId("timeout").value : 300;
-    fetchWithTimeout("/speaker-files?name=" + encodeURIComponent(name), { method: "GET", headers: getHeaders() }, timeout)
+    fetchWithTimeout(withSpeakersUserQuery(API.asr.speakerFiles + "?name=" + encodeURIComponent(name)), { method: "GET", headers: getHeaders() }, timeout)
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         var files = (data && data.files) ? data.files : [];
@@ -1215,7 +1490,7 @@
       audioEl.removeAttribute("src");
       return;
     }
-    var url = "/speaker-file?name=" + encodeURIComponent(name) + "&file=" + encodeURIComponent(file);
+    var url = withSpeakersUserQuery(API.asr.speakerFile + "?name=" + encodeURIComponent(name) + "&file=" + encodeURIComponent(file));
     // استخدام fetch مع الرأس ليدعم مفتاح API ثم blob URL للتشغيل
     fetch(url, { headers: getHeaders() })
       .then(function (r) {
@@ -1233,7 +1508,8 @@
   });
 
   // تحميل قائمة أصوات TTS من API
-  fetch("/tts/voices", { headers: getHeaders() })
+  if (isLoggedIn()) {
+    fetch(API.tts.voices, { headers: getHeaders() })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (data) {
       if (data && data.voices && data.voices.length) {
@@ -1252,8 +1528,7 @@
       }
     })
     .catch(function () {});
-
-  refreshTtsVoiceSamples();
+  }
 
   // ——— الحساب (تسجيل/دخول/خروج) ———
   var btnRegister = getId("btnRegister");

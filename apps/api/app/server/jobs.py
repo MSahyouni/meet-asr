@@ -7,6 +7,7 @@ from typing import Callable, Any, Optional, List
 
 from ..config import settings
 from .. import nlp_core
+from ..storage.user_paths import user_jobs_dir
 
 JOBS_DIR: pathlib.Path = settings.OUTPUTS_DIR / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,8 +26,12 @@ def get_transcribe_semaphore() -> asyncio.Semaphore:
     return _transcribe_semaphore
 
 
-def job_file(job_id: str) -> pathlib.Path:
-    return JOBS_DIR / f"{job_id}.json"
+def job_file(job_id: str, user_email: Optional[str] = None) -> pathlib.Path:
+    if user_email is None:
+        meta = JOBS.get(job_id) or {}
+        user_email = meta.get("user_email")
+    base = user_jobs_dir(user_email) if user_email else JOBS_DIR
+    return base / f"{job_id}.json"
 
 
 def job_payload(status: str, result: Optional[dict] = None, error: Optional[str] = None) -> dict:
@@ -42,19 +47,24 @@ async def run_transcribe_job(
     sem = get_transcribe_semaphore()
     async with sem:
         core = get_core()
-        JOBS[job_id] = {"status": "running", "result_path": None, "error": None}
+        JOBS[job_id] = {
+            "status": "running",
+            "result_path": None,
+            "error": None,
+            "user_email": kwargs.get("user_email"),
+        }
         try:
             result = await asyncio.to_thread(core.process, str(tmp_path), **kwargs)
             if not isinstance(result, dict):
                 raise RuntimeError("unexpected_result_type")
             payload = job_payload("done", result, None)
-            out = job_file(job_id)
+            out = job_file(job_id, kwargs.get("user_email"))
             out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             JOBS[job_id]["status"] = "done"
             JOBS[job_id]["result_path"] = out.as_posix()
         except Exception as e:
             payload = job_payload("error", None, str(e))
-            out = job_file(job_id)
+            out = job_file(job_id, kwargs.get("user_email"))
             out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             JOBS[job_id]["status"] = "error"
             JOBS[job_id]["error"] = str(e)
@@ -120,7 +130,12 @@ async def run_transcribe_batch_job(
     sem = get_transcribe_semaphore()
     async with sem:
         core = get_core()
-        JOBS[job_id] = {"status": "running", "result_path": None, "error": None}
+        JOBS[job_id] = {
+            "status": "running",
+            "result_path": None,
+            "error": None,
+            "user_email": kwargs.get("user_email"),
+        }
         try:
             result = await asyncio.to_thread(core.process_many, [str(p) for p in file_paths], **kwargs)
             if not isinstance(result, dict):
@@ -157,13 +172,13 @@ async def run_transcribe_batch_job(
             payload_result["summary_path"] = merged_sum_path
 
             payload = job_payload("done", payload_result, None)
-            out = job_file(job_id)
+            out = job_file(job_id, kwargs.get("user_email"))
             out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             JOBS[job_id]["status"] = "done"
             JOBS[job_id]["result_path"] = out.as_posix()
         except Exception as e:
             payload = job_payload("error", None, str(e))
-            out = job_file(job_id)
+            out = job_file(job_id, kwargs.get("user_email"))
             out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             JOBS[job_id]["status"] = "error"
             JOBS[job_id]["error"] = str(e)

@@ -7,7 +7,7 @@ text = """السلام عليكم ورحمة الله وبركاته. نبدأ �
 
 r = requests.post(
     "http://127.0.0.1:8000/tts",
-    json={"text": text, "voice": "af_heart", "speed": 1.0},
+    json={"text": text, "voice": "ar_mms", "speed": 1.0},
     timeout=180,
 )
 r.raise_for_status()

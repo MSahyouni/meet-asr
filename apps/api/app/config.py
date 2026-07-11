@@ -1,5 +1,6 @@
 import os
 import pathlib
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -9,10 +10,36 @@ load_dotenv(ROOT.parent / ".env")
 
 import multiprocessing
 
+_HF_REPO_RE = re.compile(r"^[^/\\]+/[^/\\]+$")
+
+
+def _is_hf_repo_id(value: str) -> bool:
+    s = (value or "").strip()
+    if not s or s.startswith(("data/", ".", "/")) or "\\" in s:
+        return False
+    return bool(_HF_REPO_RE.match(s))
+
 
 def _prefer_local(path: pathlib.Path, fallback: str) -> str:
     """إذا وُجد المسار المحلي خذه، وإلا استخدم الاسم الافتراضي."""
-    return path.as_posix() if path.exists() else fallback
+    if path.exists() and (path.is_file() or any(path.rglob("*"))):
+        return path.as_posix()
+    return fallback
+
+
+def _resolve_model_ref(base_dir: pathlib.Path, raw: str, local_dir: pathlib.Path, hf_id: str) -> str:
+    """Resolve env model setting: existing local path, HF repo id, or HF fallback."""
+    value = (raw or "").strip()
+    if not value:
+        return _prefer_local(local_dir, hf_id)
+    if _is_hf_repo_id(value):
+        return value
+    candidate = pathlib.Path(value)
+    if not candidate.is_absolute():
+        candidate = (base_dir / value).resolve()
+    if candidate.exists() and (candidate.is_file() or any(candidate.rglob("*"))):
+        return candidate.as_posix()
+    return hf_id
 
 
 def _has_cuda_available() -> bool:
@@ -83,7 +110,12 @@ class Settings:
         
         # mT5 Summarizer (lite mode)
         _sum_mt5_dir = self.MODELS_DIR / "summarizers" / "mT5_XLSum"
-        self.SUMMARIZER_MODEL = os.getenv("SUMMARIZER_MODEL", _prefer_local(_sum_mt5_dir, "csebuetnlp/mT5_multilingual_XLSum"))
+        self.SUMMARIZER_MODEL = _resolve_model_ref(
+            self.BASE_DIR,
+            os.getenv("SUMMARIZER_MODEL", ""),
+            _sum_mt5_dir,
+            "csebuetnlp/mT5_multilingual_XLSum",
+        )
 
         # Jais Summarizer (ultra mode)
         self.ULTRA_MODEL = os.getenv("ULTRA_MODEL", "inceptionai/jais-13b-chat")
@@ -94,9 +126,21 @@ class Settings:
 
         # --- Punctuation & NER ---
         _punct_dir = self.MODELS_DIR / "punctuation" / "arabic_punct"
-        self.PUNCT_MODEL = os.getenv("PUNCT_MODEL", _prefer_local(_punct_dir, "Alireza1044/byt5-small-arabic-punctuation"))
+        # NOTE: punctuation restoration models commonly use token-classification, not seq2seq.
+        # This fallback must be a valid public HF repo id.
+        self.PUNCT_MODEL = _resolve_model_ref(
+            self.BASE_DIR,
+            os.getenv("PUNCT_MODEL", ""),
+            _punct_dir,
+            "makdadTaleb/arabic-punctuation-arabert",
+        )
         _ner_dir = self.MODELS_DIR / "ner" / "arabic_ner"
-        self.NER_MODEL = os.getenv("NER_MODEL", _prefer_local(_ner_dir, "CAMeL-Lab/bert-base-arabic-camelbert-ner"))
+        self.NER_MODEL = _resolve_model_ref(
+            self.BASE_DIR,
+            os.getenv("NER_MODEL", ""),
+            _ner_dir,
+            "CAMeL-Lab/bert-base-arabic-camelbert-ner",
+        )
 
         # --- Summarization Limits ---
         self.SUM_MAX_INPUT_TOKENS = max(256, int(os.getenv("SUM_MAX_INPUT_TOKENS", "800")))
@@ -106,7 +150,12 @@ class Settings:
         self.RAG_ENABLED = os.getenv("RAG_ENABLE", "0").lower() in ("1", "true")
         self.RAG_DIR = self.DATA_DIR / "rag" / "arabictext_large"
         _e5_base_dir = self.MODELS_DIR / "multilingual-e5-base"
-        self.RAG_EMB_MODEL = os.getenv("RAG_EMB_MODEL", _prefer_local(_e5_base_dir, "intfloat/multilingual-e5-base"))
+        self.RAG_EMB_MODEL = _resolve_model_ref(
+            self.BASE_DIR,
+            os.getenv("RAG_EMB_MODEL", ""),
+            _e5_base_dir,
+            "intfloat/multilingual-e5-base",
+        )
         os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", self.MODELS_DIR.as_posix())
 
         # --- TTS — optional diacritization before TTS (P2: CAMeL / Farasa) ---
@@ -115,6 +164,11 @@ class Settings:
         self.TTS_PREPROCESS_ENABLED = os.getenv("TTS_PREPROCESS_ENABLED", "1").lower() in ("1", "true", "yes")
         # --- TTS MMS for Arabic — use facebook/mms-tts-ara when text is Arabic (offline, transformers) ---
         self.TTS_MMS_ENABLED = os.getenv("TTS_MMS_ENABLED", "1").lower() in ("1", "true", "yes")
+        # OmniVoice CLI timeout (seconds). First run may download ~3GB; use 0 for no limit.
+        try:
+            self.OMNIVOICE_TIMEOUT_SEC = int(os.getenv("OMNIVOICE_TIMEOUT_SEC", "7200"))
+        except ValueError:
+            self.OMNIVOICE_TIMEOUT_SEC = 7200
 
         # --- Output cleanup (P2-3) — delete files under outputs/ older than N hours ---
         self.CLEANUP_MAX_AGE_HOURS = max(1, int(os.getenv("CLEANUP_MAX_AGE_HOURS", "24")))
