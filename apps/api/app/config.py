@@ -29,7 +29,12 @@ def _prefer_local(path: pathlib.Path, fallback: str) -> str:
 
 def _resolve_model_ref(base_dir: pathlib.Path, raw: str, local_dir: pathlib.Path, hf_id: str) -> str:
     """Resolve env model setting: existing local path, HF repo id, or HF fallback."""
-    value = (raw or "").strip()
+    value = (raw or "").strip().replace("\\", "/")
+    # Legacy apps/api-relative prefixes accidentally written into .env templates
+    for prefix in ("../../data/", "../data/"):
+        if value.startswith(prefix):
+            value = "data/" + value[len(prefix) :]
+            break
     if not value:
         return _prefer_local(local_dir, hf_id)
     if _is_hf_repo_id(value):
@@ -60,8 +65,17 @@ class Settings:
         # --- General Paths & Dirs ---
         # BASE_DIR is @ apps/api/app/; go up 3 levels to reach project root
         self.BASE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent.parent
-        # DATA_DIR defaults to project_root/data/ (can be overridden by ASR_DATA_DIR env var)
-        self.DATA_DIR = (self.BASE_DIR / os.getenv("ASR_DATA_DIR", "data")).resolve()
+        # ASR_DATA_DIR is resolved against the project root (not apps/api/).
+        # Legacy templates used ../../data (apps/api-relative); normalize those.
+        _raw_data_dir = (os.getenv("ASR_DATA_DIR", "data") or "data").strip().replace("\\", "/")
+        _legacy_data_aliases = {"../../data", "../data"}
+        if _raw_data_dir in _legacy_data_aliases:
+            _raw_data_dir = "data"
+        _data_candidate = pathlib.Path(_raw_data_dir)
+        if _data_candidate.is_absolute():
+            self.DATA_DIR = _data_candidate.resolve()
+        else:
+            self.DATA_DIR = (self.BASE_DIR / _raw_data_dir).resolve()
         self.OUTPUTS_DIR = (self.DATA_DIR / "outputs").resolve()
         self.MODELS_DIR = (self.DATA_DIR / "models").resolve()
         self.SPK_DIR = (self.DATA_DIR / "voices").resolve()
@@ -86,9 +100,10 @@ class Settings:
         self._HAS_CUDA = _has_cuda_available()
         self.WHISPER_MODEL = os.getenv("WHISPER_MODEL", "heavy")
         # تحسين الصوت: off (بدون) | light (تطبيع + highpass) | full (تقليل ضجيج + فلاتر)
-        self.ENHANCE_MODE = os.getenv("ENHANCE_MODE", "full").lower().strip()
+        # Default matches .env.example / setup_env.sh (off = faster, safer first-run).
+        self.ENHANCE_MODE = os.getenv("ENHANCE_MODE", "off").lower().strip()
         if self.ENHANCE_MODE not in ("off", "light", "full"):
-            self.ENHANCE_MODE = "full"
+            self.ENHANCE_MODE = "off"
         # مستويات التحسين: light | medium | strong | aggressive
         self.ENHANCE_LEVEL = os.getenv("ENHANCE_LEVEL", "strong").lower().strip()
         if self.ENHANCE_LEVEL not in ("light", "medium", "strong", "aggressive"):

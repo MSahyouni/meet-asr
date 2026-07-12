@@ -29,7 +29,8 @@ def get_model(name: str, device: Optional[str] = None, compute_type: Optional[st
     if key not in _MODEL_CACHE:
         try:
             local_dir = MODELS_DIR / f"whisper-{name}"
-            if not local_dir.exists():
+            # Require model.bin so a partial HF download is not treated as "already local"
+            if not (local_dir / "model.bin").exists():
                 def _download_once():
                     return snapshot_download(
                         repo_id=f"Systran/faster-whisper-{name}",

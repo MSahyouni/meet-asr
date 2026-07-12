@@ -2,11 +2,27 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 import uuid
 from functools import lru_cache
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+WEAK_JWT_DEFAULT = "meet-asr-offline-secret-change-me"
+_WEAK_JWT_PLACEHOLDERS = frozenset(
+    {
+        WEAK_JWT_DEFAULT,
+        "change-me",
+        "change-me-very-strong-secret",
+        "secret",
+        "jwt-secret",
+        "your-secret-here",
+    }
+)
+MIN_JWT_SECRET_LEN = 32
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -19,7 +35,7 @@ def _b64url_decode(data: str) -> bytes:
 
 
 def _jwt_secret() -> str:
-    return os.getenv("JWT_SECRET", "meet-asr-offline-secret-change-me")
+    return os.getenv("JWT_SECRET", WEAK_JWT_DEFAULT)
 
 
 def _is_production_env() -> bool:
@@ -32,6 +48,17 @@ def _is_production_env() -> bool:
     return env in {"prod", "production"}
 
 
+def is_weak_jwt_secret(secret: Optional[str] = None) -> bool:
+    value = (secret if secret is not None else _jwt_secret()).strip()
+    if not value:
+        return True
+    if value.lower() in {item.lower() for item in _WEAK_JWT_PLACEHOLDERS}:
+        return True
+    if len(value) < MIN_JWT_SECRET_LEN:
+        return True
+    return False
+
+
 def _jwt_issuer() -> str:
     return (os.getenv("JWT_ISSUER", "meet-asr") or "meet-asr").strip()
 
@@ -41,10 +68,30 @@ def _jwt_audience() -> str:
 
 
 def _validate_jwt_config() -> None:
-    secret = _jwt_secret().strip()
-    weak_default = "meet-asr-offline-secret-change-me"
-    if _is_production_env() and (not secret or secret == weak_default):
-        raise RuntimeError("JWT_SECRET must be set to a strong value in production")
+    """Hard-fail on weak secrets in production (used when minting/decoding tokens)."""
+    if _is_production_env() and is_weak_jwt_secret():
+        raise RuntimeError(
+            "JWT_SECRET must be a strong secret in production "
+            f"(not a placeholder, length >= {MIN_JWT_SECRET_LEN})"
+        )
+
+
+def ensure_jwt_secret_at_startup() -> None:
+    """
+    Startup gate for JWT_SECRET:
+    - production: refuse to boot with a weak/default/short secret
+    - development: log a clear warning so local setups are not silently unsafe
+    """
+    if not is_weak_jwt_secret():
+        return
+    message = (
+        "JWT_SECRET is weak or missing (placeholder/default or shorter than "
+        f"{MIN_JWT_SECRET_LEN} chars). Set a strong random secret via JWT_SECRET "
+        "(e.g. openssl rand -hex 32)."
+    )
+    if _is_production_env():
+        raise RuntimeError(message)
+    logger.warning(message)
 
 
 def token_ttl_seconds() -> int:

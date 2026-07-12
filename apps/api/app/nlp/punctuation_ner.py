@@ -1,6 +1,6 @@
 # nlp/punctuation_ner.py — ترقيم عربي و NER
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from transformers import (
     pipeline,
@@ -14,6 +14,40 @@ from .models_loader import ensure_local
 
 _PUNCT_PIPE = None
 _NER_PIPE = None
+
+# makdadTaleb/arabic-punctuation-arabert ships generic LABEL_N in config.json;
+# real symbols are documented in the model card.
+_ARABIC_PUNCT_ID2SYMBOL = {
+    0: "",
+    1: ".",
+    2: "،",
+    3: "؟",
+    4: "!",
+    5: "؛",
+    6: ":",
+}
+_NO_PUNCT_LABELS = {"O", "", "NONE", "NO_PUNCT", "LABEL_0"}
+_LEAKED_LABEL_RE = re.compile(r"LABEL_\d+", re.IGNORECASE)
+
+
+def _punct_from_label(label: str, label_id: Optional[int] = None) -> str:
+    """Map model class label/id to an actual punctuation character."""
+    if label_id is not None and label_id in _ARABIC_PUNCT_ID2SYMBOL:
+        return _ARABIC_PUNCT_ID2SYMBOL[label_id]
+
+    raw = str(label or "").strip()
+    if not raw or raw.upper() in _NO_PUNCT_LABELS or raw.upper() == "LABEL_0":
+        return ""
+
+    # Generic HF placeholders: LABEL_1 .. LABEL_6
+    m = re.fullmatch(r"LABEL_(\d+)", raw, flags=re.IGNORECASE)
+    if m:
+        return _ARABIC_PUNCT_ID2SYMBOL.get(int(m.group(1)), "")
+
+    # Model already exposes the punctuation character as the label
+    if len(raw) <= 2 and not raw.isalnum():
+        return raw
+    return ""
 
 
 def _load_punct_pipe():
@@ -32,6 +66,9 @@ def _load_punct_pipe():
         try:
             tok = AutoTokenizer.from_pretrained(local_path, token=settings.HF_TOKEN, use_fast=True)
             mdl = AutoModelForTokenClassification.from_pretrained(local_path, token=settings.HF_TOKEN)
+            # Override generic LABEL_N so pipeline/debug dumps show real symbols.
+            mdl.config.id2label = {i: (sym or "O") for i, sym in _ARABIC_PUNCT_ID2SYMBOL.items()}
+            mdl.config.label2id = {(sym or "O"): i for i, sym in _ARABIC_PUNCT_ID2SYMBOL.items()}
             _PUNCT_PIPE = pipeline(
                 "token-classification",
                 model=mdl,
@@ -80,30 +117,31 @@ def restore_punct(text: str, max_len: int = 512) -> str:
                     )
                     import torch
 
-                    with torch.no_grad():
-                        logits = mdl(**enc).logits
-                    pred_ids = logits.argmax(dim=-1)[0].tolist()
                     word_ids = enc.word_ids(batch_index=0)
-                    id2label = getattr(mdl.config, "id2label", {}) or {}
+                    try:
+                        device = next(mdl.parameters()).device
+                    except Exception:
+                        device = torch.device("cpu")
+                    model_inputs = {k: v.to(device) for k, v in enc.items()}
+                    with torch.no_grad():
+                        logits = mdl(**model_inputs).logits
+                    pred_ids = logits.argmax(dim=-1)[0].tolist()
                     restored = []
                     prev_word_id = None
                     for token_pred, word_id in zip(pred_ids, word_ids):
                         if word_id is None or word_id == prev_word_id:
                             continue
                         w = chunk_words[word_id]
-                        label = id2label.get(token_pred, "")
-                        if label in {"O", "", "NONE", "NO_PUNCT"}:
-                            punct = ""
-                        else:
-                            punct = label
+                        punct = _punct_from_label("", label_id=int(token_pred))
                         if punct:
                             w = w + punct
                         restored.append(w)
                         prev_word_id = word_id
-                    out.append(" ".join(restored).strip() or chunk)
+                    restored_text = " ".join(restored).strip() or chunk
+                    out.append(_LEAKED_LABEL_RE.sub("", restored_text).strip())
                 else:
                     y = p(chunk, max_new_tokens=max_len, do_sample=False)[0]["generated_text"]
-                    out.append(y.strip())
+                    out.append(_LEAKED_LABEL_RE.sub("", y.strip()))
             except Exception:
                 out.append(chunk)
     return "\n".join(out)

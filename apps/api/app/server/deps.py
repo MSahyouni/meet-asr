@@ -35,11 +35,17 @@ from .segments import parse_segments, write_segments_json
 from .jobs import (
     JOBS_DIR,
     JOBS,
+    find_job_file,
     job_file,
     job_payload,
+    load_job_payload,
+    reload_jobs_from_disk,
+    schedule_resumed_jobs,
     run_transcribe_job,
     run_transcribe_batch_job,
     run_summary_job,
+    set_job,
+    stage_job_inputs,
 )
 
 run_transcribe_job_impl = run_transcribe_job

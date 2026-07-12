@@ -78,15 +78,15 @@ class PaymentMethod(BaseModel):
 
 
 class SubscribeRequest(BaseModel):
-    """Subscribe to plan request"""
-    user_email: EmailStr
+    """Subscribe to plan request. Email comes from JWT; optional user_email must match token."""
+    user_email: EmailStr | None = None
     plan_type: PlanType
     billing_cycle: str = Field(default="monthly")
 
 
 class CancelSubscriptionRequest(BaseModel):
-    """Cancel subscription request"""
-    user_email: EmailStr
+    """Cancel subscription request. Path email is authoritative; body email optional and must match."""
+    user_email: EmailStr | None = None
     reason: str | None = None
 
 

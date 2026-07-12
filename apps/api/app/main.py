@@ -144,6 +144,27 @@ async def lifespan(app: FastAPI):
     # Startup
     logging.info("Application startup")
     try:
+        from app.features.auth.security import ensure_jwt_secret_at_startup
+
+        ensure_jwt_secret_at_startup()
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logging.warning("JWT secret startup check failed unexpectedly: %s", e)
+    try:
+        from app.server.jobs import reload_jobs_from_disk, schedule_resumed_jobs
+
+        stats = reload_jobs_from_disk()
+        resumed = schedule_resumed_jobs(stats.get("pending") or [], get_core)
+        logging.info(
+            "Job store restored from disk (restored=%s interrupted=%s resumed=%s)",
+            stats.get("restored"),
+            stats.get("interrupted"),
+            resumed,
+        )
+    except Exception as e:
+        logging.warning("Failed to reload jobs from disk: %s", e)
+    try:
         core = get_core()
         logging.info("Core services initialized")
     except Exception as e:
@@ -207,23 +228,9 @@ async def favicon_ico():
 
 
 # ——— Route Includes (from features) ———
-from app.features.health import router as health_router
-from app.features.asr import router as asr_router
-from app.features.nlp import router as nlp_router
-from app.features.tts import router as tts_router
-from app.features.auth.router import router as auth_router
-from app.features.users import router as users_router
-from app.features.billing import router as billing_router
-from app.features.dashboard import router as dashboard_router
+from app.features import register_feature_routers
 
-app.include_router(health_router, tags=["Health"])
-app.include_router(asr_router, prefix="/asr", tags=["ASR"])
-app.include_router(nlp_router, prefix="/nlp", tags=["NLP"])
-app.include_router(tts_router, prefix="/tts", tags=["TTS"])
-app.include_router(auth_router, tags=["Auth"])
-app.include_router(users_router, tags=["Users"])
-app.include_router(billing_router, tags=["Billing"])
-app.include_router(dashboard_router, tags=["Dashboard"])
+register_feature_routers(app)
 
 
 # ——— Legacy Route Includes (via app.compat; backward compatibility layer) ———

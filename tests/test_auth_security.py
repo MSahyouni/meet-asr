@@ -115,3 +115,37 @@ def test_create_token_requires_strong_secret_in_production(monkeypatch):
         assert False, "Expected RuntimeError for weak/default JWT secret in production"
     except RuntimeError as exc:
         assert "JWT_SECRET" in str(exc)
+
+
+def test_is_weak_jwt_secret_detects_placeholders_and_short_values(monkeypatch):
+    assert security.is_weak_jwt_secret("") is True
+    assert security.is_weak_jwt_secret(security.WEAK_JWT_DEFAULT) is True
+    assert security.is_weak_jwt_secret("change-me-very-strong-secret") is True
+    assert security.is_weak_jwt_secret("short-secret") is True
+    assert security.is_weak_jwt_secret("a" * security.MIN_JWT_SECRET_LEN) is False
+
+
+def test_ensure_jwt_secret_at_startup_rejects_production_weak(monkeypatch):
+    monkeypatch.setenv("ASR_ENV", "production")
+    monkeypatch.setenv("JWT_SECRET", "too-short")
+    try:
+        security.ensure_jwt_secret_at_startup()
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert "JWT_SECRET" in str(exc)
+
+
+def test_ensure_jwt_secret_at_startup_warns_in_development(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("ASR_ENV", "development")
+    monkeypatch.setenv("JWT_SECRET", security.WEAK_JWT_DEFAULT)
+    with caplog.at_level(logging.WARNING, logger="app.features.auth.security"):
+        security.ensure_jwt_secret_at_startup()
+    assert any("JWT_SECRET" in record.message for record in caplog.records)
+
+
+def test_ensure_jwt_secret_at_startup_ok_with_strong_secret(monkeypatch):
+    monkeypatch.setenv("ASR_ENV", "production")
+    monkeypatch.setenv("JWT_SECRET", "a" * 32)
+    security.ensure_jwt_secret_at_startup()

@@ -215,6 +215,13 @@ class BillingService:
         return [PaymentMethod(**row) for row in local_db.get_payment_methods(user_email)]
 
     @staticmethod
+    def get_payment_method(payment_id: str) -> PaymentMethod | None:
+        row = local_db.get_payment_method(payment_id)
+        if row:
+            return PaymentMethod(**row)
+        return None
+
+    @staticmethod
     def delete_payment_method(payment_id: str) -> None:
         if not local_db.delete_payment_method(payment_id):
             raise ValueError(f"Payment method {payment_id} not found")

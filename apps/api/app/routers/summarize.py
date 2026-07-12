@@ -12,7 +12,7 @@ from app.storage.naming import new_timestamped_id
 from app.features.auth.deps import require_logged_in_user
 from app.features.dashboard.schema import ActivityType
 from app.features.dashboard.service import DashboardService
-from app.server.deps import response_error, JOBS, run_summary_job_impl, limiter, check_api_key
+from app.server.deps import response_error, set_job, run_summary_job_impl, limiter, check_api_key
 
 router = APIRouter()
 
@@ -107,8 +107,18 @@ async def summarize_after(
         })
 
     job_id = new_timestamped_id("nlp")
-    JOBS[job_id] = {"status": "queued", "result_path": None, "error": None}
-    asyncio.create_task(run_summary_job_impl(job_id, body, out_base_path, summary_mode))
+    set_job(
+        job_id,
+        status="queued",
+        user_email=user_email,
+        resume={
+            "job_type": "summary",
+            "summary_body": body,
+            "summary_mode": summary_mode,
+            "out_base_path": str(out_base_path),
+        },
+    )
+    asyncio.create_task(run_summary_job_impl(job_id, body, out_base_path, summary_mode, user_email=user_email))
     if user_email:
         try:
             DashboardService.record_activity(

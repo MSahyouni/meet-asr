@@ -539,6 +539,24 @@ def get_payment_methods(user_email: str) -> List[Dict[str, Any]]:
         return methods
 
 
+def get_payment_method(payment_id: str) -> Optional[Dict[str, Any]]:
+    with _conn() as connection:
+        row = connection.execute(
+            """
+            SELECT payment_id, user_email, payment_type, last_four, is_default, created_at
+            FROM payment_methods
+            WHERE payment_id = ?
+            """,
+            (payment_id,),
+        ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["is_default"] = bool(data.get("is_default", 0))
+        data["created_at"] = _parse_dt(data.get("created_at"))
+        return data
+
+
 def delete_payment_method(payment_id: str) -> bool:
     with _conn() as connection:
         cursor = connection.execute(

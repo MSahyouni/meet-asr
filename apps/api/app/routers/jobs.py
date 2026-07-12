@@ -1,13 +1,17 @@
 # routers/jobs.py
-import json
-from json import JSONDecodeError
 from typing import Optional
 
 from fastapi import APIRouter, Header
 from fastapi.responses import FileResponse
 
 from app.features.auth.deps import require_logged_in_user
-from app.server.deps import response_error, job_file, JOBS, check_api_key
+from app.server.deps import (
+    response_error,
+    find_job_file,
+    load_job_payload,
+    JOBS,
+    check_api_key,
+)
 
 router = APIRouter()
 
@@ -31,21 +35,10 @@ def job_status(
     auth_error = _require_job_auth(authorization, x_api_key)
     if auth_error:
         return auth_error
-    meta = JOBS.get(job_id, None)
-    file = job_file(job_id)
-    if file.exists():
-        raw = file.read_text(encoding="utf-8").strip()
-        if not raw:
-            if meta is not None:
-                return {"status": meta["status"], "result": {}, "error": meta.get("error") or ""}
-            return response_error(404, "job_not_found")
-        try:
-            data = json.loads(raw)
-            return data
-        except JSONDecodeError:
-            if meta is not None:
-                return {"status": meta["status"], "result": {}, "error": meta.get("error") or ""}
-            return response_error(404, "job_not_found")
+    data = load_job_payload(job_id)
+    if data is not None:
+        return data
+    meta = JOBS.get(job_id)
     if meta is None:
         return response_error(404, "job_not_found")
     return {"status": meta["status"], "result": {}, "error": meta.get("error") or ""}
@@ -60,7 +53,7 @@ def job_download(
     auth_error = _require_job_auth(authorization, x_api_key)
     if auth_error:
         return auth_error
-    p = job_file(job_id)
-    if not p.exists():
+    p = find_job_file(job_id)
+    if p is None or not p.exists():
         return response_error(404, "job_not_ready")
     return FileResponse(p.as_posix(), media_type="application/json", filename=p.name)

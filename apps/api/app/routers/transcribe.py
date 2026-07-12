@@ -26,7 +26,8 @@ from app.server.deps import (
     parse_segments,
     write_segments_json,
     JOBS,
-    job_file,
+    set_job,
+    stage_job_inputs,
     run_transcribe_job_impl,
     run_transcribe_batch_job_impl,
     limiter,
@@ -266,12 +267,12 @@ async def _transcribe_common(
         if _active_transcribe_jobs_count() >= max_queued:
             return response_error(429, "rate_limited", f"too many queued or running transcribe jobs (max {max_queued})")
 
-        JOBS[job_id] = {
-            "status": "queued",
-            "result_path": None,
-            "error": None,
-            "user_email": user_email,
-        }
+        staged = stage_job_inputs(job_id, [temp_file_path], user_email=user_email)
+        try:
+            shutil.rmtree(temp_file_path.parent, ignore_errors=True)
+        except OSError:
+            pass
+        staged_path = staged[0]
         job_kwargs = dict(
             model_name=model_name or settings.WHISPER_MODEL,
             enhance=enhance,
@@ -289,7 +290,17 @@ async def _transcribe_common(
             job_id=job_id,
             user_email=user_email,
         )
-        asyncio.create_task(run_transcribe_job_impl(job_id, temp_file_path, job_kwargs, get_core))
+        set_job(
+            job_id,
+            status="queued",
+            user_email=user_email,
+            resume={
+                "job_type": "transcribe",
+                "input_paths": [str(staged_path)],
+                "kwargs": job_kwargs,
+            },
+        )
+        asyncio.create_task(run_transcribe_job_impl(job_id, staged_path, job_kwargs, get_core))
         if user_email:
             try:
                 DashboardService.record_activity(
@@ -315,12 +326,13 @@ async def _transcribe_common(
             if _active_transcribe_jobs_count() >= max_queued:
                 return response_error(429, "rate_limited", f"too many queued or running transcribe jobs (max {max_queued})")
 
-            JOBS[job_id] = {
-                "status": "queued",
-                "result_path": None,
-                "error": None,
-                "user_email": user_email,
-            }
+            staged = stage_job_inputs(
+                job_id,
+                [pathlib.Path(path) for path in saved_str],
+                user_email=user_email,
+            )
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
             job_kwargs = dict(
                 model_name=model_name or settings.WHISPER_MODEL,
                 enhance=enhance,
@@ -339,10 +351,20 @@ async def _transcribe_common(
                 user_email=user_email,
             )
             cleanup_tmpdir = False
+            set_job(
+                job_id,
+                status="queued",
+                user_email=user_email,
+                resume={
+                    "job_type": "transcribe_batch",
+                    "input_paths": [str(p) for p in staged],
+                    "kwargs": job_kwargs,
+                },
+            )
             asyncio.create_task(
                 run_transcribe_batch_job_impl(
                     job_id,
-                    [pathlib.Path(path) for path in saved_str],
+                    staged,
                     job_kwargs,
                     get_core,
                 )

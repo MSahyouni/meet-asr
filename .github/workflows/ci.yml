@@ -16,11 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      JWT_SECRET: ci-local-secret
+      JWT_SECRET: ci-local-secret-meet-asr-tests-ok32
       JWT_EXPIRES_SECONDS: 86400
       JWT_ISSUER: meet-asr
       JWT_AUDIENCE: meet-asr-api
       ADMIN_EMAILS: admin@local
+      ASR_ENV: development
     steps:
       - name: Checkout
         uses: actions/checkout@v4

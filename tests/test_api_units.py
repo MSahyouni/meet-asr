@@ -236,3 +236,20 @@ def test_download_path_traversal_integration(monkeypatch):
         headers={"Authorization": "Bearer test-token"},
     )
     assert resp.status_code == 403
+
+
+def test_punct_label_mapping_does_not_leak_label_tokens():
+    from app.nlp.punctuation_ner import _punct_from_label, _LEAKED_LABEL_RE
+
+    assert _punct_from_label("LABEL_0", label_id=0) == ""
+    assert _punct_from_label("LABEL_1", label_id=1) == "."
+    assert _punct_from_label("LABEL_2", label_id=2) == "،"
+    assert _punct_from_label("LABEL_3", label_id=3) == "؟"
+    assert _punct_from_label("LABEL_4", label_id=4) == "!"
+    assert _punct_from_label("", label_id=5) == "؛"
+    assert _punct_from_label("", label_id=6) == ":"
+
+    leaked = "السلامLABEL_0 عليكمLABEL_2 وبركاتهLABEL_1"
+    cleaned = _LEAKED_LABEL_RE.sub("", leaked)
+    assert "LABEL_" not in cleaned
+    assert "السلام" in cleaned

@@ -129,9 +129,23 @@ python -m venv .venv
 pip install -U pip
 pip install -r apps/api/requirements.txt
 
+# اختياري: Habibi + mishkal (OmniVoice عبر سكربت منفصل)
+# ./.venv/bin/pip install -r apps/api/requirements-optional.txt
+
 cd apps/api
 python -m uvicorn api:app --host 0.0.0.0 --port 8000
 ```
+
+### حزم اختيارية (TTS extras)
+الـ API الأساسي (Whisper / MMS / تلخيص) يعمل بعد `requirements.txt` فقط. الميزات التالية **اختيارية** ولن تُثبَّت تلقائيًا:
+
+| الميزة | التثبيت | ملاحظة |
+|--------|---------|--------|
+| **mishkal** | `./.venv/bin/pip install mishkal` ثم `TTS_DIACRITIZE=1` | تشكيل عربي قبل TTS |
+| **Habibi** | `./.venv/bin/pip install habibi-tts` | لهجات + يحتاج عينة صوت و`ref_text` |
+| **OmniVoice** | `./scripts/download_omnivoice.sh` + venv تحت `.tools/omnivoice/` | بيئة منفصلة عن API (~3.2 GB) |
+
+ملف مجمّع: `apps/api/requirements-optional.txt` (بدون OmniVoice — يبقى في `.tools/`).
 
 ### التشغيل اليدوي على Linux
 ```bash
@@ -325,18 +339,22 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 من داخل `apps/api`:
 ```bash
 # اختبارات الوحدة (سريعة — تُشغَّل في CI على كل push)
-PYTHONPATH=. pytest -q ../../tests/ -m "not integration"
+PYTHONPATH=. pytest -q ../../tests/ -m "not integration and not smoke"
 
 # اختبار تكامل: رفض path traversal على /asr/download
 PYTHONPATH=. pytest -q ../../tests/test_api_units.py::test_download_path_traversal_integration -m integration
 
 # اختبارات الأمان
 PYTHONPATH=. pytest -q ../../tests/test_auth_security.py ../../tests/test_secure_endpoints.py
+
+# دخان ASR (يتخطى تلقائيًا إن لم يوجد model.bin محليًا)
+PYTHONPATH=. pytest -q ../../tests/test_asr_smoke.py -m smoke
 ```
 
 **CI (`/.github/workflows/ci.yml`):**
 - workflow واحد: تثبيت deps مرة واحدة ثم `pytest ../../tests/`
 - يشمل: unit + security + integration (path traversal)
+- اختبار الدخان ASR يعمل إن وُجدت أوزان محلية، وإلا `skip` بدون فشل
 - يعمل على `push`/`PR` لـ `nabra`, `main`, `master`
 
 ---
