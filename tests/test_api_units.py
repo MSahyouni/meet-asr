@@ -224,10 +224,14 @@ def test_download_path_traversal_integration(monkeypatch):
     """Integration: /asr/download must reject path traversal."""
     from fastapi.testclient import TestClient
     from apps.api import api as api_mod
-    from app.features.auth import security as auth_security
     from app.routers import export as export_router
 
-    monkeypatch.setattr(auth_security, "resolve_email_from_authorization", lambda _: "user@example.com")
+    # Patch where export looks up auth (deps import is bound at module load).
+    monkeypatch.setattr(
+        export_router,
+        "require_logged_in_user",
+        lambda user_email=None, authorization=None: ("user@example.com", None),
+    )
     monkeypatch.setattr(export_router, "check_api_key", lambda _: None)
 
     client = TestClient(api_mod.app)
