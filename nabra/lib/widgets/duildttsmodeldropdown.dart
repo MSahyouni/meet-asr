@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/model/voice_model.dart';
 import 'package:flutter_app/services/tts_services.dart';
-import '../models/voice_model.dart';
+
 
 class TtsModelDropdown extends StatefulWidget {
   final String? selectedModel;

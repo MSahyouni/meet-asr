@@ -42,8 +42,9 @@
 // }
 
 import 'dart:convert';
+import 'package:flutter_app/model/voice_model.dart';
 import 'package:http/http.dart' as http;
-import '../models/voice_model.dart';
+
 
 class TtsService {
   static Future<List<VoiceModel>> fetchVoices({required String apiUrl}) async {
