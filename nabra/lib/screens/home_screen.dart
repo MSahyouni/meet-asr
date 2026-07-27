@@ -76,7 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: () async {
                     final apiUrl = _controller.text.trim();
 
-                    final result = await FilePicker.pickFiles(
+                    final result = await FilePicker.platform.pickFiles(
                       type: FileType.custom,
                       allowedExtensions: [
                         'mp3',

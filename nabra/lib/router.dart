@@ -15,7 +15,8 @@ final GoRouter router = GoRouter(
     GoRoute(
       path: "/",
       builder: (context, state) {
-        return LoginScreen();
+        // return LoginScreen();
+        return HomeScreen();
       },
     ),
     GoRoute(path: "/home", builder: (context, state) => HomeScreen()),
