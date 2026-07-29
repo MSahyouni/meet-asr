@@ -199,6 +199,88 @@ def test_list_voices_returns_non_empty():
     assert "omnivoice" in voices
 
 
+def test_list_voices_detailed_includes_ready_flags():
+    from app.tts_core import list_engine_status, list_voices_detailed
+
+    detailed = list_voices_detailed()
+    assert isinstance(detailed, list)
+    assert len(detailed) >= 3
+    for item in detailed:
+        assert "id" in item
+        assert "engine" in item
+        assert "ready" in item
+        assert isinstance(item["ready"], bool)
+    engines = list_engine_status()
+    assert {e["engine"] for e in engines} >= {"omnivoice", "habibi", "mms"}
+
+
+def test_auto_with_ar_mms_voice_still_attempts_omnivoice(monkeypatch, tmp_path):
+    """engine=auto must try cloning even when voice defaults/legacy is ar_mms."""
+    from app import tts_core as tc
+
+    called = {"omnivoice": False}
+
+    monkeypatch.setattr(
+        tc,
+        "_resolve_user_speaker_ref_if_available",
+        lambda user_email, speaker_ref=None: "voice.wav",
+    )
+    monkeypatch.setattr(tc, "_preprocess_text", lambda t: t)
+    monkeypatch.setattr(tc, "maybe_diacritize", lambda t: t)
+
+    def _fake_omnivoice(**kwargs):
+        called["omnivoice"] = True
+        return {
+            "audio_path": str(tmp_path / "out.wav"),
+            "sample_rate": 24000,
+            "duration_sec": 0.1,
+            "voice": "omnivoice",
+        }
+
+    monkeypatch.setattr(
+        "app.tts.tts_omnivoice.synthesize_omnivoice",
+        _fake_omnivoice,
+    )
+    monkeypatch.setattr(
+        "app.tts.voice_profiles.resolve_user_speaker_path",
+        lambda user_email, speaker_ref=None: tmp_path / "voice.wav",
+    )
+    monkeypatch.setattr(
+        "app.tts.voice_profiles.get_user_speaker_ref_text",
+        lambda user_email, speaker_ref: None,
+    )
+    (tmp_path / "voice.wav").write_bytes(b"RIFF")
+
+    core = tc.TTSCore()
+    result = core.synthesize(
+        "مرحبا",
+        voice="ar_mms",
+        speed=1.0,
+        out_path=str(tmp_path / "out.wav"),
+        engine="auto",
+        user_email="user@example.com",
+        speaker_ref="voice.wav",
+    )
+    assert called["omnivoice"] is True
+    assert result["engine_used"] == "omnivoice"
+
+
+def test_voice_sample_save_does_not_overwrite(tmp_path, monkeypatch):
+    from app.config import settings
+    from app.tts import voice_profiles as vp
+
+    monkeypatch.setattr(settings, "SPK_DIR", tmp_path)
+    first = vp.save_user_speaker_sample("u@example.com", b"aaa", filename="voice.wav")
+    second = vp.save_user_speaker_sample("u@example.com", b"bbb", filename="voice.wav")
+    assert first.name == "voice.wav"
+    assert second.name != first.name
+    assert first.read_bytes() == b"aaa"
+    assert second.read_bytes() == b"bbb"
+    # Default without speaker_ref prefers newest upload.
+    picked = vp.resolve_user_speaker_path("u@example.com", speaker_ref=None)
+    assert picked.name == second.name
+
+
 def test_response_error_format_has_required_keys():
     """All endpoints use response_error from server.deps; it must include error and detail."""
     from app.server.deps import response_error

@@ -3,6 +3,7 @@
 
 import logging
 import pathlib
+import threading
 from typing import Optional
 
 from app.config import settings
@@ -13,6 +14,8 @@ logger = logging.getLogger("tts_mms")
 MMS_MODEL_ID = "facebook/mms-tts-ara"
 _MMS_MODEL = None
 _MMS_TOKENIZER = None
+_MMS_LOCK = threading.Lock()
+_MMS_INFER_LOCK = threading.Lock()
 
 
 from app.tts.audio_speed import apply_speed_numpy
@@ -23,30 +26,33 @@ def _get_mms():
     global _MMS_MODEL, _MMS_TOKENIZER
     if _MMS_MODEL is not None:
         return _MMS_MODEL, _MMS_TOKENIZER
-    import os
-    os.environ.setdefault("HF_HOME", str(settings.HF_DIR))
-    try:
-        from transformers import VitsModel, AutoTokenizer
-        import torch
-        logger.info("Loading MMS-TTS Arabic (first run may download ~200MB)...")
-        _MMS_TOKENIZER = run_with_download_retry(
-            lambda: AutoTokenizer.from_pretrained(MMS_MODEL_ID),
-            "tts:mms-tokenizer",
-        )
-        _MMS_MODEL = run_with_download_retry(
-            lambda: VitsModel.from_pretrained(MMS_MODEL_ID),
-            "tts:mms-model",
-        )
-        _MMS_MODEL.eval()
-        if torch.cuda.is_available():
-            _MMS_MODEL = _MMS_MODEL.cuda()
-        logger.info("MMS-TTS Arabic loaded.")
-        return _MMS_MODEL, _MMS_TOKENIZER
-    except ImportError as e:
-        raise RuntimeError("MMS-TTS requires transformers>=4.33. Install: pip install transformers") from e
-    except Exception as e:
-        logger.exception("Failed to load MMS-TTS: %s", e)
-        raise RuntimeError(f"Failed to load MMS-TTS: {e}") from e
+    with _MMS_LOCK:
+        if _MMS_MODEL is not None:
+            return _MMS_MODEL, _MMS_TOKENIZER
+        import os
+        os.environ.setdefault("HF_HOME", str(settings.HF_DIR))
+        try:
+            from transformers import VitsModel, AutoTokenizer
+            import torch
+            logger.info("Loading MMS-TTS Arabic (first run may download ~200MB)...")
+            _MMS_TOKENIZER = run_with_download_retry(
+                lambda: AutoTokenizer.from_pretrained(MMS_MODEL_ID),
+                "tts:mms-tokenizer",
+            )
+            _MMS_MODEL = run_with_download_retry(
+                lambda: VitsModel.from_pretrained(MMS_MODEL_ID),
+                "tts:mms-model",
+            )
+            _MMS_MODEL.eval()
+            if torch.cuda.is_available():
+                _MMS_MODEL = _MMS_MODEL.cuda()
+            logger.info("MMS-TTS Arabic loaded.")
+            return _MMS_MODEL, _MMS_TOKENIZER
+        except ImportError as e:
+            raise RuntimeError("MMS-TTS requires transformers>=4.33. Install: pip install transformers") from e
+        except Exception as e:
+            logger.exception("Failed to load MMS-TTS: %s", e)
+            raise RuntimeError(f"Failed to load MMS-TTS: {e}") from e
 
 
 def synthesize_mms(
@@ -85,51 +91,54 @@ def synthesize_mms(
     if not chunks:
         chunks = [text]
 
-    audio_parts = []
-    silence_cache = {}
-    for chunk in chunks:
-        inputs = tokenizer(chunk, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        if "input_ids" in inputs:
-            inputs["input_ids"] = inputs["input_ids"].long()
-        if "attention_mask" in inputs:
-            inputs["attention_mask"] = inputs["attention_mask"].long()
-        if "token_type_ids" in inputs:
-            inputs["token_type_ids"] = inputs["token_type_ids"].long()
-        if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
-
-        with torch.no_grad():
-            output = model(**inputs).waveform
-
-        wav = output.squeeze().cpu().numpy()
-        audio_parts.append(wav)
-
-        end_mark = chunk[-1] if chunk else ""
-        pause_sec = 0.08 if end_mark in ("،", ";", "؛", ":") else 0.14
-        silence_cache.setdefault(pause_sec, (pause_sec, None))
-        audio_parts.append(("__silence__", pause_sec))
-
-    sample_rate = model.config.sampling_rate
     import numpy as np
-    final_parts = []
-    for part in audio_parts:
-        if isinstance(part, tuple) and part and part[0] == "__silence__":
-            pause_sec = float(part[1])
-            num_samples = max(1, int(sample_rate * pause_sec))
-            final_parts.append(np.zeros(num_samples, dtype=np.float32))
-            continue
-        final_parts.append(np.asarray(part, dtype=np.float32))
-
-    if final_parts:
-        waveform = np.concatenate(final_parts, axis=0)
-    else:
-        waveform = np.zeros(1, dtype=np.float32)
-
-    waveform = apply_speed_numpy(waveform, speed)
-    sample_rate = model.config.sampling_rate
-
     import soundfile as sf
-    sf.write(out_path, waveform, sample_rate)
+
+    # Serialize inference to avoid concurrent CUDA use of the singleton model.
+    with _MMS_INFER_LOCK:
+        audio_parts = []
+        silence_arrays = {}
+        for chunk in chunks:
+            inputs = tokenizer(chunk, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            if "input_ids" in inputs:
+                inputs["input_ids"] = inputs["input_ids"].long()
+            if "attention_mask" in inputs:
+                inputs["attention_mask"] = inputs["attention_mask"].long()
+            if "token_type_ids" in inputs:
+                inputs["token_type_ids"] = inputs["token_type_ids"].long()
+            if torch.cuda.is_available():
+                inputs = {k: v.cuda() for k, v in inputs.items()}
+
+            with torch.no_grad():
+                output = model(**inputs).waveform
+
+            wav = output.squeeze().cpu().numpy()
+            audio_parts.append(wav)
+
+            end_mark = chunk[-1] if chunk else ""
+            pause_sec = 0.08 if end_mark in ("،", ";", "؛", ":") else 0.14
+            audio_parts.append(("__silence__", pause_sec))
+
+        sample_rate = model.config.sampling_rate
+        final_parts = []
+        for part in audio_parts:
+            if isinstance(part, tuple) and part and part[0] == "__silence__":
+                pause_sec = float(part[1])
+                if pause_sec not in silence_arrays:
+                    num_samples = max(1, int(sample_rate * pause_sec))
+                    silence_arrays[pause_sec] = np.zeros(num_samples, dtype=np.float32)
+                final_parts.append(silence_arrays[pause_sec])
+                continue
+            final_parts.append(np.asarray(part, dtype=np.float32))
+
+        if final_parts:
+            waveform = np.concatenate(final_parts, axis=0)
+        else:
+            waveform = np.zeros(1, dtype=np.float32)
+
+        waveform = apply_speed_numpy(waveform, speed)
+        sample_rate = model.config.sampling_rate
+        sf.write(out_path, waveform, sample_rate)
 
     duration_sec = len(waveform) / float(sample_rate)
     return {

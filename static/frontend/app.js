@@ -20,6 +20,30 @@
     setZoneVisible("ttsSeedZone", showMmsSeed);
   }
 
+  function refreshTtsEngineStatus() {
+    var statusEl = getId("ttsEngineStatus");
+    if (!statusEl) return;
+    var h = getHeaders();
+    fetchWithTimeout(API.tts.voices, { method: "GET", headers: h }, 30)
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.statusText);
+        return r.json();
+      })
+      .then(function (data) {
+        var engines = data.engines || [];
+        if (!engines.length) {
+          statusEl.textContent = "";
+          return;
+        }
+        statusEl.textContent = engines.map(function (e) {
+          return (e.engine || "?") + ": " + (e.ready ? "جاهز" : (e.status || "غير جاهز"));
+        }).join(" | ");
+      })
+      .catch(function () {
+        statusEl.textContent = "";
+      });
+  }
+
   // Canonical API routes (feature-prefixed)
   var API = {
     asr: {
@@ -42,6 +66,7 @@
       voiceSample: "/tts/voice-sample",
       voiceFile: "/tts/voice-file",
     },
+    download: "/download",
   };
 
   var UI_STATE_KEY = "meetasr_ui_state_v1";
@@ -216,6 +241,7 @@
 
   restoreUIState();
   updateTtsEngineUi();
+  refreshTtsEngineStatus();
 
   var ttsEngineEl = getId("ttsEngine");
   if (ttsEngineEl) {
@@ -1209,7 +1235,7 @@
       errEl.classList.remove("hidden");
       return;
     }
-    var voice = getId("ttsVoice").value || "ar_mms";
+    var voice = getId("ttsVoice").value || "omnivoice";
     var engine = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
     var speed = parseFloat(getId("ttsSpeed").value) || 1;
     var seedEl = getId("ttsSeed");
@@ -1229,6 +1255,11 @@
     if (metaEl) metaEl.textContent = "";
 
     var body = { text: text, voice: voice, speed: speed, engine: engine || "auto" };
+    if (engine === "omnivoice" && !speakerRef) {
+      errEl.textContent = "اختر بصمة صوتية لـ OmniVoice أو ارفع عينة أولاً.";
+      errEl.classList.remove("hidden");
+      return;
+    }
     if (engine === "habibi" && !refText && !speakerRef) {
       errEl.textContent = "اختر بصمة صوتية لـ Habibi أو اكتب ref_text المطابق للعينة فقط.";
       errEl.classList.remove("hidden");

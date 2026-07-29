@@ -42,7 +42,7 @@ def response_ok(
         data["timings_ms"] = timings_ms
     if txt_path or srt_path or vtt_path or summary_path or segments_path or wav_path:
         def _u(p):
-            return f"/asr/download?path={quote(p)}" if p else None
+            return f"/download?path={quote(p)}" if p else None
         data["download_urls"] = {
             "txt": _u(txt_path),
             "srt": _u(srt_path),

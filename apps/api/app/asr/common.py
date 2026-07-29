@@ -81,11 +81,32 @@ def resolve_model(name: str) -> str:
 
 
 def safe_compute(device: Optional[str], compute_type: Optional[str], has_cuda: bool):
-    dev = (device or ("cuda" if has_cuda else "cpu")).lower()
-    ctp = (compute_type or ("float16" if dev == "cuda" else "int8_float32")).lower()
-    if dev != "cuda" and ctp == "float16":
-        ctp = "int8_float32"
-    return dev, ctp
+    """Resolve device/compute, treating 'auto' as unset (use settings / sensible defaults)."""
+    raw_dev = (device or "").strip().lower()
+    raw_ctp = (compute_type or "").strip().lower()
+    if raw_dev in ("", "auto"):
+        configured = (getattr(settings, "WHISPER_DEVICE", "") or "").strip().lower()
+        if configured in ("cuda", "cpu"):
+            raw_dev = configured
+        else:
+            raw_dev = "cuda" if has_cuda else "cpu"
+    if raw_dev == "cuda" and not has_cuda:
+        raw_dev = "cpu"
+
+    if raw_ctp in ("", "auto"):
+        configured_ctp = (getattr(settings, "WHISPER_COMPUTE", "") or "").strip().lower()
+        if configured_ctp:
+            raw_ctp = configured_ctp
+        else:
+            # int8 fits large-v3 on 6–8GB laptop GPUs; float16 often OOMs.
+            raw_ctp = "int8" if raw_dev == "cuda" else "int8_float32"
+
+    if raw_dev != "cuda" and raw_ctp in ("float16", "int8"):
+        if raw_ctp == "float16":
+            raw_ctp = "int8_float32"
+        elif raw_ctp == "int8":
+            raw_ctp = "int8_float32"
+    return raw_dev, raw_ctp
 
 
 # مسارات من الإعدادات (تُستخدم من الوحدات الأخرى)

@@ -29,7 +29,8 @@
 |--------|--------|--------|
 | **ASR** | `POST /asr/transcribe` | رفع ملف أو تسجيل مباشر |
 | | `GET /asr/job/{id}` | متابعة الوظيفة |
-| | `GET /asr/download` | تحميل مخرجات (مسار آمن تحت `data/outputs`) |
+| | `GET /asr/download` | تحميل مخرجات (مسار آمن تحت `data/outputs`) — legacy |
+| | `GET /download` | نفس التحميل الآمن (مسار محايد لـ ASR/NLP/TTS) |
 | | `POST /asr/enroll-speaker` | تسجيل متحدث |
 | | `GET /asr/enrolled-speakers` | قائمة المتحدثين |
 | **NLP** | `POST /nlp/summarize` | تلخيص (FormData أو JSON) |

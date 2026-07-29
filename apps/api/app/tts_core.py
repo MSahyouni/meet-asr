@@ -56,6 +56,14 @@ TTS_KNOWN_VOICES = [
     "ar_mms",
 ]
 
+# voice id -> engine family (for status / routing hints)
+TTS_VOICE_ENGINE = {
+    "omnivoice": "omnivoice",
+    "habibi_unified": "habibi",
+    "habibi_specialized": "habibi",
+    "ar_mms": "mms",
+}
+
 
 def _use_mms_for_arabic(text: str) -> bool:
     """True if we should route to MMS-TTS (Arabic text + MMS enabled)."""
@@ -168,18 +176,20 @@ class TTSCore:
         if engine_requested not in TTS_ALLOWED_ENGINES:
             raise ValueError(f"engine must be one of: {', '.join(sorted(TTS_ALLOWED_ENGINES))}")
 
-        # Route Arabic through MMS/Habibi/OmniVoice.
+        # Route Arabic through OmniVoice / Habibi / MMS.
+        # Note: voice=ar_mms must NOT skip cloning in engine=auto — only engine=mms forces MMS.
         requested_voice = (voice or "").strip() or TTS_DEFAULT_VOICE
         requested_voice_lc = requested_voice.lower()
-        force_arabic_voice = requested_voice_lc in ("ar_mms",)
-        arabic_detected = _use_mms_for_arabic(text) or force_arabic_voice
+        prefer_mms_voice = requested_voice_lc in ("ar_mms",)
+        arabic_detected = _use_mms_for_arabic(text) or prefer_mms_voice
         auto_fallback_used = False
 
-        # 1) OmniVoice (explicit or auto)
-        if engine_requested in ("auto", "omnivoice") and not force_arabic_voice:
+        # 1) OmniVoice (explicit or auto with uploaded voice sample)
+        if engine_requested in ("auto", "omnivoice"):
             run_omnivoice = engine_requested == "omnivoice"
             omnivoice_speaker_ref = None
             if engine_requested == "auto":
+                # Prefer clone when a sample exists, even if UI defaulted voice to ar_mms.
                 omnivoice_speaker_ref = _resolve_user_speaker_ref_if_available(
                     user_email=user_email, speaker_ref=speaker_ref
                 )
@@ -234,11 +244,11 @@ class TTSCore:
                         auto_fallback_used = True
                         logger.warning("Auto OmniVoice failed, falling back: %s", e)
 
-        # 2) Habibi (explicit or auto)
+        # 2) Habibi (explicit or auto with sample + ref_text)
         if engine_requested in ("auto", "habibi"):
             run_habibi = engine_requested == "habibi"
             habibi_speaker_ref = None
-            if engine_requested == "auto" and not force_arabic_voice:
+            if engine_requested == "auto":
                 habibi_speaker_ref = _resolve_user_speaker_ref_if_available(
                     user_email=user_email, speaker_ref=speaker_ref
                 )
@@ -353,6 +363,76 @@ def list_voices() -> list:
     Uses static TTS_KNOWN_VOICES for enabled engines only.
     """
     return list(TTS_KNOWN_VOICES)
+
+
+def _engine_status_omnivoice() -> dict:
+    try:
+        from app.tts.tts_omnivoice import omnivoice_readiness
+
+        ready, status, infer_bin = omnivoice_readiness()
+        return {
+            "engine": "omnivoice",
+            "ready": bool(ready),
+            "status": status,
+            "infer_bin": infer_bin,
+        }
+    except Exception as e:
+        return {"engine": "omnivoice", "ready": False, "status": str(e)}
+
+
+def _engine_status_habibi() -> dict:
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("habibi_tts") is None:
+            return {
+                "engine": "habibi",
+                "ready": False,
+                "status": "habibi-tts غير مثبت (pip install habibi-tts)",
+            }
+        return {"engine": "habibi", "ready": True, "status": "جاهز (الحزمة متوفرة)"}
+    except Exception as e:
+        return {"engine": "habibi", "ready": False, "status": str(e)}
+
+
+def _engine_status_mms() -> dict:
+    if not getattr(settings, "TTS_MMS_ENABLED", True):
+        return {"engine": "mms", "ready": False, "status": "معطّل عبر TTS_MMS_ENABLED=0"}
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("transformers") is None:
+            return {"engine": "mms", "ready": False, "status": "transformers غير مثبت"}
+        return {"engine": "mms", "ready": True, "status": "جاهز"}
+    except Exception as e:
+        return {"engine": "mms", "ready": False, "status": str(e)}
+
+
+def list_engine_status() -> list[dict]:
+    """Return readiness for each TTS engine family."""
+    return [
+        _engine_status_omnivoice(),
+        _engine_status_habibi(),
+        _engine_status_mms(),
+    ]
+
+
+def list_voices_detailed() -> list[dict]:
+    """Voice IDs with per-engine readiness (for GET /tts/voices)."""
+    by_engine = {item["engine"]: item for item in list_engine_status()}
+    detailed = []
+    for voice_id in TTS_KNOWN_VOICES:
+        engine = TTS_VOICE_ENGINE.get(voice_id, "unknown")
+        info = by_engine.get(engine) or {}
+        detailed.append(
+            {
+                "id": voice_id,
+                "engine": engine,
+                "ready": bool(info.get("ready")),
+                "status": info.get("status") or "",
+            }
+        )
+    return detailed
 
 
 def get_tts_core(lang_code: Optional[str] = None) -> TTSCore:

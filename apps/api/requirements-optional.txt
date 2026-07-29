@@ -9,7 +9,10 @@
 mishkal
 
 # Dialectal Arabic voice clone (engine=habibi). Requires voice sample + ref_text.
+# Keep transformers pinned: habibi-tts/f5-tts may otherwise pull transformers 5.x
+# which breaks torch==2.4.0 (ImportError: DTensor).
 habibi-tts
+transformers==4.43.0
 
 # OmniVoice is intentionally NOT pip-installed into the API venv.
 # Use a separate tool venv to avoid dependency conflicts:

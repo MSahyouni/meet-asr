@@ -46,14 +46,24 @@ async def tts_voices(
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
-    """Return list of available TTS voice IDs. Does not load the TTS model."""
+    """Return TTS voice IDs plus per-engine readiness (does not load heavy models)."""
     _, auth_error = _require_tts_auth(authorization, x_api_key)
     if auth_error:
         return auth_error
     try:
-        from app.tts_core import list_voices
+        from app.tts_core import list_engine_status, list_voices, list_voices_detailed
+
         voices = list_voices()
-        return JSONResponse({"ok": True, "voices": voices})
+        detailed = list_voices_detailed()
+        engines = list_engine_status()
+        return JSONResponse(
+            {
+                "ok": True,
+                "voices": voices,
+                "voices_detailed": detailed,
+                "engines": engines,
+            }
+        )
     except Exception as e:
         return response_error(500, "voices_failed", str(e))
 
@@ -315,8 +325,9 @@ async def tts(
 ):
     """
     Synthesize speech from text. Returns WAV path and download URL.
-    Body (JSON): { "text", "voice" (optional), "speed" (optional), "seed" (optional), "engine" (auto|mms|habibi), "speaker_ref" (optional), "ref_text" (required for habibi), "dialect" (optional for habibi), "format" (ignored; always wav) }
+    Body (JSON): { "text", "voice" (optional; alias voice_id), "speed" (optional), "seed" (optional), "engine" (auto|mms|habibi|omnivoice), "speaker_ref" (optional), "ref_text" (required for habibi), "dialect" (optional for habibi), "format" (ignored; always wav) }
     Max text length: 5000 chars. Rate: 12/minute per IP.
+    download_url uses /download (legacy /asr/download still accepted).
     """
     try:
         body = await request.json()
@@ -337,7 +348,12 @@ async def tts(
     from app.tts_core import TTS_TEXT_MAX_LEN
     if len(text) > TTS_TEXT_MAX_LEN:
         return response_error(400, "validation_error", f"text length exceeds maximum ({TTS_TEXT_MAX_LEN} characters)")
-    voice = (body.get("voice") or "ar_mms").strip() or "ar_mms"
+    engine = (body.get("engine") or "auto").strip().lower() or "auto"
+    # Accept voice_id as Flutter/legacy alias for voice.
+    voice = (body.get("voice") or body.get("voice_id") or "").strip()
+    if not voice:
+        # Align defaults with engine: auto prefers clone-capable voice id; mms → ar_mms.
+        voice = "ar_mms" if engine == "mms" else "omnivoice"
     try:
         speed = float(body.get("speed", 1.0))
     except (TypeError, ValueError):
@@ -348,7 +364,6 @@ async def tts(
             seed = int(seed)
         except (TypeError, ValueError):
             seed = None
-    engine = (body.get("engine") or "auto").strip().lower() or "auto"
     speaker_ref = (body.get("speaker_ref") or "").strip() or None
     ref_text = (body.get("ref_text") or "").strip() or None
     dialect = (body.get("dialect") or "").strip() or None
@@ -392,7 +407,8 @@ async def tts(
     if resolved.suffix.lower() not in settings.DOWNLOAD_ALLOW:
         return response_error(403, "forbidden_extension", resolved.suffix.lower())
 
-    download_url = f"/asr/download?path={quote(resolved.as_posix())}"
+    # Neutral download path (legacy /asr/download still works).
+    download_url = f"/download?path={quote(resolved.as_posix())}"
 
     if user_email:
         try:

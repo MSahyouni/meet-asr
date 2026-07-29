@@ -87,7 +87,7 @@ async def summarize_after(
         except Exception:
             sum_path = None
         from urllib.parse import quote
-        summary_url = f"/asr/download?path={quote(sum_path)}" if sum_path else None
+        summary_url = f"/download?path={quote(sum_path)}" if sum_path else None
         if user_email:
             try:
                 DashboardService.record_activity(

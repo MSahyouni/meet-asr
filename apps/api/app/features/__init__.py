@@ -29,8 +29,11 @@ def register_feature_routers(app: "FastAPI") -> None:
     from app.features.users import router as users_router
     from app.features.billing import router as billing_router
     from app.features.dashboard import router as dashboard_router
+    from app.routers.export import download_txt
 
     app.include_router(health_router, tags=["Health"])
+    # Neutral download alias (ASR/TTS/NLP outputs). Legacy: /asr/download
+    app.add_api_route("/download", download_txt, methods=["GET"], tags=["Download"])
     app.include_router(asr_router, prefix="/asr", tags=["ASR"])
     app.include_router(nlp_router, prefix="/nlp", tags=["NLP"])
     app.include_router(tts_router, prefix="/tts", tags=["TTS"])

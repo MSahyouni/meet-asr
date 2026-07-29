@@ -1,5 +1,6 @@
 import logging
 import pathlib
+import threading
 from typing import Optional
 
 import numpy as np
@@ -11,6 +12,8 @@ from app.tts.habibi_infer import run_habibi_inference
 logger = logging.getLogger("tts_habibi")
 
 _HABIBI_RUNTIME = {}
+_HABIBI_LOAD_LOCK = threading.Lock()
+_HABIBI_INFER_LOCK = threading.Lock()
 
 HABIBI_UNIFIED_DIALECTS = {
     "UNK",
@@ -73,53 +76,57 @@ def _get_runtime(model_choice: str, dialect: str):
     if model_key in _HABIBI_RUNTIME:
         return _HABIBI_RUNTIME[model_key]
 
-    try:
-        from importlib.resources import files
+    with _HABIBI_LOAD_LOCK:
+        if model_key in _HABIBI_RUNTIME:
+            return _HABIBI_RUNTIME[model_key]
 
-        from f5_tts.infer.utils_infer import load_model, load_vocoder
-        from hydra.utils import get_class
-        from omegaconf import OmegaConf
+        try:
+            from importlib.resources import files
 
-        from habibi_tts.infer.utils_infer import device as habibi_device
-        from habibi_tts.model.utils import dialect_id_map
-    except ImportError as e:
-        raise RuntimeError(
-            "Habibi backend requires optional dependencies. Install in a dedicated env: "
-            "pip install habibi-tts"
-        ) from e
+            from f5_tts.infer.utils_infer import load_model, load_vocoder
+            from hydra.utils import get_class
+            from omegaconf import OmegaConf
 
-    model_cfg = OmegaConf.load(str(files("f5_tts").joinpath("configs/F5TTS_v1_Base.yaml")))
-    model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
-    model_arc = model_cfg.model.arch
-    vocoder_name = model_cfg.model.mel_spec.mel_spec_type
+            from habibi_tts.infer.utils_infer import device as habibi_device
+            from habibi_tts.model.utils import dialect_id_map
+        except ImportError as e:
+            raise RuntimeError(
+                "Habibi backend requires optional dependencies. Install in a dedicated env: "
+                "pip install habibi-tts"
+            ) from e
 
-    ckpt_file, vocab_file = _resolve_ckpt_and_vocab(model_choice=model_choice, dialect=dialect)
-    logger.info("Loading Habibi model (%s, %s)", model_choice, dialect)
-    model = load_model(
-        model_cls,
-        model_arc,
-        ckpt_file,
-        mel_spec_type=vocoder_name,
-        vocab_file=vocab_file,
-        device=habibi_device,
-    )
-    vocoder = load_vocoder(
-        vocoder_name=vocoder_name,
-        is_local=False,
-        local_path="",
-        device=habibi_device,
-    )
-    dialect_id = dialect_id_map.get(dialect) if model_choice == "unified" else None
+        model_cfg = OmegaConf.load(str(files("f5_tts").joinpath("configs/F5TTS_v1_Base.yaml")))
+        model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
+        model_arc = model_cfg.model.arch
+        vocoder_name = model_cfg.model.mel_spec.mel_spec_type
 
-    runtime = {
-        "model": model,
-        "vocoder": vocoder,
-        "device": habibi_device,
-        "dialect_id": dialect_id,
-    }
-    _HABIBI_RUNTIME[model_key] = runtime
-    logger.info("Habibi model loaded (%s)", model_key)
-    return runtime
+        ckpt_file, vocab_file = _resolve_ckpt_and_vocab(model_choice=model_choice, dialect=dialect)
+        logger.info("Loading Habibi model (%s, %s)", model_choice, dialect)
+        model = load_model(
+            model_cls,
+            model_arc,
+            ckpt_file,
+            mel_spec_type=vocoder_name,
+            vocab_file=vocab_file,
+            device=habibi_device,
+        )
+        vocoder = load_vocoder(
+            vocoder_name=vocoder_name,
+            is_local=False,
+            local_path="",
+            device=habibi_device,
+        )
+        dialect_id = dialect_id_map.get(dialect) if model_choice == "unified" else None
+
+        runtime = {
+            "model": model,
+            "vocoder": vocoder,
+            "device": habibi_device,
+            "dialect_id": dialect_id,
+        }
+        _HABIBI_RUNTIME[model_key] = runtime
+        logger.info("Habibi model loaded (%s)", model_key)
+        return runtime
 
 
 def synthesize_habibi(
@@ -159,25 +166,26 @@ def synthesize_habibi(
     from f5_tts.infer.utils_infer import preprocess_ref_audio_text
     import soundfile as sf
 
-    ref_audio_ready, ref_text_ready = preprocess_ref_audio_text(str(ref_audio), ref_text.strip())
-    try:
-        ref_duration_sec = float(sf.info(ref_audio_ready).duration)
-    except Exception:
-        ref_duration_sec = 0.0
-    ref_text_ready = trim_ref_text_for_duration(ref_text_ready, ref_duration_sec)
+    with _HABIBI_INFER_LOCK:
+        ref_audio_ready, ref_text_ready = preprocess_ref_audio_text(str(ref_audio), ref_text.strip())
+        try:
+            ref_duration_sec = float(sf.info(ref_audio_ready).duration)
+        except Exception:
+            ref_duration_sec = 0.0
+        ref_text_ready = trim_ref_text_for_duration(ref_text_ready, ref_duration_sec)
 
-    final_wave, final_sample_rate = run_habibi_inference(
-        ref_audio_ready,
-        ref_text_ready,
-        text.strip(),
-        runtime,
-    )
+        final_wave, final_sample_rate = run_habibi_inference(
+            ref_audio_ready,
+            ref_text_ready,
+            text.strip(),
+            runtime,
+        )
 
-    if final_wave is None:
-        raise RuntimeError("Habibi synthesis produced no audio")
-    final_wave = apply_speed_numpy(np.asarray(final_wave, dtype=np.float32), speed)
+        if final_wave is None:
+            raise RuntimeError("Habibi synthesis produced no audio")
+        final_wave = apply_speed_numpy(np.asarray(final_wave, dtype=np.float32), speed)
 
-    sf.write(out_path, final_wave, final_sample_rate)
+        sf.write(out_path, final_wave, final_sample_rate)
     duration_sec = len(final_wave) / float(final_sample_rate)
     return {
         "audio_path": out_path,

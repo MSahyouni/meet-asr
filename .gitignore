@@ -81,3 +81,4 @@ coverage/
 **/macos/Podfile.lock
 **/windows/flutter/generated_plugin_registrant.cc
 
+*.deb

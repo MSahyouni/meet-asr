@@ -26,35 +26,65 @@ def get_model(name: str, device: Optional[str] = None, compute_type: Optional[st
     name = resolve_model(name)
     dev, ctp = safe_compute(device, compute_type, _HAS_CUDA)
     key = (name, dev, ctp)
-    if key not in _MODEL_CACHE:
-        try:
-            local_dir = MODELS_DIR / f"whisper-{name}"
-            # Require model.bin so a partial HF download is not treated as "already local"
-            if not (local_dir / "model.bin").exists():
-                def _download_once():
-                    return snapshot_download(
-                        repo_id=f"Systran/faster-whisper-{name}",
-                        local_dir=str(local_dir),
-                        local_dir_use_symlinks=False,
-                        cache_dir=str(settings.HF_DIR),
-                        token=_HF_TOKEN,
-                    )
+    if key in _MODEL_CACHE:
+        return _MODEL_CACHE[key]
 
-                run_with_download_retry(_download_once, f"asr:whisper-{name}")
+    local_dir = MODELS_DIR / f"whisper-{name}"
+    # Require model.bin so a partial HF download is not treated as "already local"
+    if not (local_dir / "model.bin").exists():
+        def _download_once():
+            return snapshot_download(
+                repo_id=f"Systran/faster-whisper-{name}",
+                local_dir=str(local_dir),
+                local_dir_use_symlinks=False,
+                cache_dir=str(settings.HF_DIR),
+                token=_HF_TOKEN,
+            )
+
+        run_with_download_retry(_download_once, f"asr:whisper-{name}")
+
+    # On CUDA OOM, fall back: float16 → int8 → cpu/int8_float32
+    attempts = [(dev, ctp)]
+    if dev == "cuda":
+        if ctp != "int8":
+            attempts.append((dev, "int8"))
+        attempts.append(("cpu", "int8_float32"))
+
+    last_error: Optional[Exception] = None
+    for attempt_dev, attempt_ctp in attempts:
+        attempt_key = (name, attempt_dev, attempt_ctp)
+        if attempt_key in _MODEL_CACHE:
+            return _MODEL_CACHE[attempt_key]
+        try:
             model_args = {
-                "device": dev,
-                "compute_type": ctp,
+                "device": attempt_dev,
+                "compute_type": attempt_ctp,
                 "cpu_threads": settings.CPU_THREADS,
                 "download_root": str(MODELS_DIR),
             }
-            if dev == "cuda":
+            if attempt_dev == "cuda":
                 model_args["device_index"] = settings.GPU_ID
-            _MODEL_CACHE[key] = WhisperModel(str(local_dir), **model_args)
-            if settings.ASR_LOG_LOAD:
-                print(f"[WHISPER] loaded name={name} path={local_dir} device={dev} compute={ctp}")
+            model = WhisperModel(str(local_dir), **model_args)
+            _MODEL_CACHE[attempt_key] = model
+            # Also cache under the originally requested key so callers reuse the working load.
+            _MODEL_CACHE[key] = model
+            if settings.ASR_LOG_LOAD or (attempt_dev, attempt_ctp) != (dev, ctp):
+                print(
+                    f"[WHISPER] loaded name={name} path={local_dir} "
+                    f"device={attempt_dev} compute={attempt_ctp}"
+                    + (f" (fallback from {dev}/{ctp})" if (attempt_dev, attempt_ctp) != (dev, ctp) else "")
+                )
+            return model
         except Exception as e:
-            raise RuntimeError(f"Failed to load Whisper model {name}: {e}") from e
-    return _MODEL_CACHE[key]
+            last_error = e
+            err_l = str(e).lower()
+            is_oom = "out of memory" in err_l or "cuda" in err_l and "memory" in err_l
+            if not is_oom:
+                break
+            print(f"[WHISPER] load failed ({attempt_dev}/{attempt_ctp}): {e} — trying fallback...")
+            continue
+
+    raise RuntimeError(f"Failed to load Whisper model {name}: {last_error}") from last_error
 
 
 def run_asr(

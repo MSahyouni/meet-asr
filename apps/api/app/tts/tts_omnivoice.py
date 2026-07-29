@@ -2,6 +2,7 @@ import logging
 import os
 import pathlib
 import subprocess
+import threading
 from typing import Optional, Tuple
 
 from app.config import settings
@@ -17,6 +18,7 @@ _OMNIVOICE_MODEL_ID = "k2-fsa/OmniVoice"
 _OMNIVOICE_CACHE_DIRNAME = "models--k2-fsa--OmniVoice"
 _OMNIVOICE_EXPECTED_BYTES = 3_200_000_000  # ~3.2 GB total repo weights
 _OMNIVOICE_MODEL_MIN_BYTES = 1_000_000_000
+_OMNIVOICE_INFER_LOCK = threading.Lock()
 
 
 def _project_root() -> pathlib.Path:
@@ -93,6 +95,39 @@ def _omnivoice_download_status() -> Tuple[bool, str]:
     return True, "جاهز"
 
 
+def omnivoice_readiness() -> Tuple[bool, str, str]:
+    """
+    Return (ready, status_message, infer_bin_path).
+    ready requires both model weights and a resolvable omnivoice-infer binary.
+    """
+    infer_bin = _resolve_omnivoice_infer_bin()
+    model_ready, model_status = _omnivoice_download_status()
+    if not model_ready:
+        return False, model_status, infer_bin
+
+    bin_path = pathlib.Path(infer_bin)
+    if infer_bin == "omnivoice-infer":
+        # PATH lookup — treat as present; synthesize will FileNotFoundError if missing.
+        import shutil
+
+        resolved = shutil.which("omnivoice-infer")
+        if not resolved:
+            return (
+                False,
+                "OmniVoice غير مُثبّت. أنشئ .tools/omnivoice/.venv أو اضبط OMNIVOICE_INFER_BIN.",
+                infer_bin,
+            )
+        return True, "جاهز", resolved
+
+    if not bin_path.exists():
+        return (
+            False,
+            f"ملف omnivoice-infer غير موجود: {infer_bin}",
+            infer_bin,
+        )
+    return True, "جاهز", str(bin_path)
+
+
 def _omnivoice_subprocess_env() -> dict:
     env = os.environ.copy()
     env["HF_HOME"] = str(settings.HF_DIR)
@@ -127,7 +162,7 @@ def synthesize_omnivoice(
     if not (text or "").strip():
         raise ValueError("OmniVoice requires non-empty text")
 
-    ready, status = _omnivoice_download_status()
+    ready, status, _infer = omnivoice_readiness()
     if not ready:
         raise RuntimeError(
             f"OmniVoice غير جاهز: {status} "
@@ -169,30 +204,32 @@ def synthesize_omnivoice(
         "none" if timeout_sec is None else f"{int(timeout_sec)}s",
         " ".join(cmd[:6]) + " ...",
     )
-    try:
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=timeout_sec,
-            env=_omnivoice_subprocess_env(),
-        )
-    except FileNotFoundError as e:
-        raise RuntimeError(
-            "OmniVoice غير مُثبّت كأداة. ثبّته في بيئة منفصلة ثم اضبط OMNIVOICE_INFER_BIN "
-            "أو أنشئ .tools/omnivoice/.venv. "
-            f"Details: {e}"
-        ) from e
-    except subprocess.TimeoutExpired as e:
-        _, status_after = _omnivoice_download_status()
-        raise RuntimeError(
-            "انتهت مهلة OmniVoice على السيرفر. "
-            f"{status_after} "
-            "يمكنك زيادة OMNIVOICE_TIMEOUT_SEC (مثلاً 14400) أو تشغيل scripts/download_omnivoice.sh "
-            "لإكمال التنزيل خارج الواجهة."
-        ) from e
+    # Serialize CLI runs to avoid GPU/VRAM contention across concurrent requests.
+    with _OMNIVOICE_INFER_LOCK:
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=timeout_sec,
+                env=_omnivoice_subprocess_env(),
+            )
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "OmniVoice غير مُثبّت كأداة. ثبّته في بيئة منفصلة ثم اضبط OMNIVOICE_INFER_BIN "
+                "أو أنشئ .tools/omnivoice/.venv. "
+                f"Details: {e}"
+            ) from e
+        except subprocess.TimeoutExpired as e:
+            _, status_after = _omnivoice_download_status()
+            raise RuntimeError(
+                "انتهت مهلة OmniVoice على السيرفر. "
+                f"{status_after} "
+                "يمكنك زيادة OMNIVOICE_TIMEOUT_SEC (مثلاً 14400) أو تشغيل scripts/download_omnivoice.sh "
+                "لإكمال التنزيل خارج الواجهة."
+            ) from e
 
     if proc.returncode != 0:
         msg = (proc.stderr or proc.stdout or "").strip()

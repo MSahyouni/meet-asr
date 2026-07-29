@@ -109,8 +109,11 @@ class Settings:
         if self.ENHANCE_LEVEL not in ("light", "medium", "strong", "aggressive"):
             self.ENHANCE_LEVEL = "strong"
         self.WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda" if self._HAS_CUDA else "cpu")
-        # float16 للـ CPU لتحسين الدقة (بدلاً من int8)
-        self.WHISPER_COMPUTE = os.getenv("WHISPER_COMPUTE", "float16" if self.WHISPER_DEVICE == "cuda" else "float16")
+        # int8 on CUDA: large-v3 float16 often OOMs on 6–8GB laptop GPUs (e.g. RTX 4050).
+        self.WHISPER_COMPUTE = os.getenv(
+            "WHISPER_COMPUTE",
+            "int8" if self.WHISPER_DEVICE == "cuda" else "int8_float32",
+        )
         self.GPU_ID = int(os.getenv("GPU_ID", "0"))
         self.CPU_THREADS = max(1, os.cpu_count() // 2 if os.cpu_count() else 1)
         self.ASR_LOG_LOAD = os.getenv("ASR_LOG_LOAD", "1").lower() in ("1", "true")

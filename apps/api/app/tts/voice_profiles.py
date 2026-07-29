@@ -1,5 +1,7 @@
+import os
 import pathlib
 import re
+import time
 from typing import Optional
 
 from app.config import settings
@@ -29,16 +31,21 @@ def user_voice_dir(user_email: str) -> pathlib.Path:
     return path
 
 
+def _pick_default_sample(directory: pathlib.Path) -> Optional[pathlib.Path]:
+    """Prefer the most recently modified audio sample."""
+    files = [p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in _ALLOWED_AUDIO_EXT]
+    if not files:
+        return None
+    return max(files, key=lambda p: p.stat().st_mtime)
+
+
 def resolve_user_speaker_path(user_email: str, speaker_ref: Optional[str] = None) -> pathlib.Path:
     directory = user_voice_dir(user_email)
     ref = (speaker_ref or "").strip()
     if not ref:
-        default_candidate = (directory / "voice.wav").resolve()
-        if default_candidate.exists() and default_candidate.is_file():
-            return default_candidate
-        files = [p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in _ALLOWED_AUDIO_EXT]
-        if files:
-            return sorted(files, key=lambda p: p.name.lower())[0]
+        picked = _pick_default_sample(directory)
+        if picked is not None:
+            return picked
         ref = "voice.wav"
     ref_name = pathlib.Path(ref).name
     candidate = (directory / ref_name).resolve()
@@ -49,11 +56,41 @@ def resolve_user_speaker_path(user_email: str, speaker_ref: Optional[str] = None
     return candidate
 
 
+def _unique_target_path(directory: pathlib.Path, filename: str) -> pathlib.Path:
+    """Return a writable path under directory; avoid overwriting existing samples."""
+    raw_name = pathlib.Path(filename or "voice.wav").name
+    stem = pathlib.Path(raw_name).stem or "voice"
+    suffix = pathlib.Path(raw_name).suffix.lower() or ".wav"
+    if suffix not in _ALLOWED_AUDIO_EXT:
+        raise ValueError("unsupported speaker file extension")
+
+    safe_stem = _SAFE_SLUG_RE.sub("_", stem.lower()).strip("._-") or "voice"
+    candidate = (directory / f"{safe_stem}{suffix}").resolve()
+    if directory not in candidate.parents and candidate.parent != directory:
+        raise ValueError("invalid speaker_ref path")
+    if not candidate.exists():
+        return candidate
+
+    # Lazy import avoids circular import: storage.user_paths → voice_profiles.
+    from app.storage.naming import new_timestamped_id
+
+    # Collision: timestamped unique name (keeps original stem for readability).
+    unique = new_timestamped_id(safe_stem[:32])
+    return (directory / f"{unique}{suffix}").resolve()
+
+
 def save_user_speaker_sample(user_email: str, content: bytes, filename: Optional[str] = None) -> pathlib.Path:
     if not content:
         raise ValueError("empty audio sample")
-    target = resolve_user_speaker_path(user_email=user_email, speaker_ref=filename or "voice.wav")
+    directory = user_voice_dir(user_email)
+    target = _unique_target_path(directory, filename or "voice.wav")
     target.write_bytes(content)
+    # Touch mtime so "most recent" default picks this upload immediately.
+    try:
+        now = time.time()
+        os.utime(target, (now, now))
+    except OSError:
+        pass
     return target
 
 
@@ -86,7 +123,8 @@ def get_user_speaker_ref_text(user_email: str, speaker_ref: str) -> Optional[str
 def list_user_speaker_samples(user_email: str) -> list[pathlib.Path]:
     directory = user_voice_dir(user_email)
     files = [p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in _ALLOWED_AUDIO_EXT]
-    return sorted(files, key=lambda p: p.name.lower())
+    # Newest first for UI convenience.
+    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def delete_user_speaker_sample(user_email: str, speaker_ref: str) -> bool:

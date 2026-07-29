@@ -36,15 +36,34 @@ def _load_pyannote_pipeline():
     try:
         import torch
         import logging
-        import os
         log = logging.getLogger("asr.diarization")
+        if not (_HF_TOKEN or "").strip():
+            log.warning(
+                "Diarization skipped: HF_TOKEN غير مضبوط. "
+                "أنشئ توكن من https://hf.co/settings/tokens واقبل شروط "
+                "pyannote/speaker-diarization-3.1 و pyannote/segmentation-3.0 ثم ضع HF_TOKEN في apps/api/.env وأعد تشغيل السيرفر."
+            )
+            return None
         log.info("Loading diarization pipeline...")
-        # المسار المحلي للنموذج إذا كان متوفراً
-        # استخدم النموذج speaker-diarization-3.1 دائماً
-        pipeline = run_with_download_retry(
-            lambda: Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=_HF_TOKEN),
-            "asr:pyannote-diarization",
-        )
+        # token= is the current huggingface_hub API; use_auth_token kept as fallback for older pyannote.
+        def _from_pretrained():
+            try:
+                return Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    token=_HF_TOKEN,
+                )
+            except TypeError:
+                return Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=_HF_TOKEN,
+                )
+
+        pipeline = run_with_download_retry(_from_pretrained, "asr:pyannote-diarization", max_attempts=3)
+        if pipeline is None:
+            raise RuntimeError(
+                "Pipeline.from_pretrained أعاد None — غالباً النموذج gated ولم يُقبل بعد، "
+                "أو التوكن بلا صلاحية قراءة. اقبل الشروط على Hugging Face ثم أعد المحاولة."
+            )
         if _HAS_CUDA:
             pipeline.to(torch.device("cuda"))
         _PYANNOTE_PIPELINE = pipeline
@@ -52,7 +71,21 @@ def _load_pyannote_pipeline():
         return _PYANNOTE_PIPELINE
     except Exception as e:
         import logging
-        logging.getLogger("asr.diarization").warning("Diarization pipeline disabled: %s", e)
+        msg = str(e)
+        lowered = msg.lower()
+        if "gated" in lowered or "403" in lowered or "public gated repositories" in lowered:
+            tip = (
+                " توكن Hugging Face يحتاج صلاحية Access to public gated repositories، "
+                "واقبل شروط pyannote/speaker-diarization-3.1 و pyannote/segmentation-3.0 ثم أعد تشغيل السيرفر."
+            )
+            msg = f"{msg}{tip}"
+        elif "connection" in lowered or "local cache" in lowered:
+            tip = (
+                " غالباً رفض صلاحيات (403 على نموذج gated) وليس انقطاع الشبكة. "
+                "فعّل Access to public gated repositories في إعدادات التوكن، أو استخدم classic read token."
+            )
+            msg = f"{msg}{tip}"
+        logging.getLogger("asr.diarization").warning("Diarization pipeline disabled: %s", msg)
         _PYANNOTE_PIPELINE = None
         return None
 

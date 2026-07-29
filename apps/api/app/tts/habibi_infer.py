@@ -206,14 +206,25 @@ def _crossfade_concat(waves: List[np.ndarray], sample_rate: int, crossfade_sec: 
 
 
 def run_habibi_inference(ref_audio_ready: str, ref_text_ready: str, gen_text: str, runtime: dict):
+    import os
     from habibi_tts.infer.utils_infer import (
         cfg_strength,
         mel_spec_type,
-        nfe_step,
+        nfe_step as _nfe_step_default,
         sway_sampling_coef,
         target_rms,
         target_sample_rate,
     )
+    # On CPU use fewer diffusion steps for acceptable speed (quality slightly lower).
+    # Override via HABIBI_NFE_STEP env var; default 16 on CPU, 32 on GPU.
+    _on_cpu = runtime.get("device", "cpu") == "cpu"
+    _nfe_env = os.environ.get("HABIBI_NFE_STEP", "")
+    if _nfe_env.isdigit():
+        nfe_step = int(_nfe_env)
+    elif _on_cpu:
+        nfe_step = 16
+    else:
+        nfe_step = _nfe_step_default
 
     ref_text_ready = normalize_habibi_ref_text(ref_text_ready)
     gen_text = normalize_habibi_gen_text(gen_text, ref_text_ready)
@@ -234,7 +245,9 @@ def run_habibi_inference(ref_audio_ready: str, ref_text_ready: str, gen_text: st
     temp_paths: List[str] = []
 
     try:
+        import time as _time
         for idx, batch in enumerate(batches):
+            _t0 = _time.monotonic()
             batch_text = normalize_habibi_gen_text(batch, current_ref_text)
             audio_t, _ = _prepare_audio_tensor(current_ref_path, device)
             wave = _process_one_batch(
@@ -247,6 +260,11 @@ def run_habibi_inference(ref_audio_ready: str, ref_text_ready: str, gen_text: st
                 cfg_strength=cfg_strength,
                 sway_sampling_coef=sway_sampling_coef,
                 target_rms=target_rms,
+            )
+            _elapsed = _time.monotonic() - _t0
+            logger.info(
+                "Habibi batch %d/%d done in %.1fs (device=%s, nfe_step=%d, chars=%d)",
+                idx + 1, len(batches), _elapsed, device, nfe_step, len(batch_text.encode()),
             )
             waves.append(wave)
             if idx < len(batches) - 1:
