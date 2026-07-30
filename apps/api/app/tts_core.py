@@ -28,12 +28,15 @@ def _preprocess_text(text: str) -> str:
         return text
 
 
-def maybe_diacritize(text: str) -> str:
+def maybe_diacritize(text: str, enabled: Optional[bool] = None) -> str:
     """
-    Optional preprocessing: add Arabic diacritics (تشكيل) before TTS for better pronunciation.
-    Enable with TTS_DIACRITIZE=1 and install mishkal (pip install mishkal).
+    Optional Arabic diacritics (تشكيل) before TTS.
+
+    - enabled=None → follow env TTS_DIACRITIZE
+    - enabled=True/False → per-request override (UI / API)
     """
-    if not getattr(settings, "TTS_DIACRITIZE", False):
+    use = bool(enabled) if enabled is not None else bool(getattr(settings, "TTS_DIACRITIZE", False))
+    if not use:
         return text
     try:
         from app.tts.diacritize import add_diacritics
@@ -140,10 +143,14 @@ class TTSCore:
         speaker_ref: Optional[str] = None,
         ref_text: Optional[str] = None,
         dialect: Optional[str] = None,
+        diacritize: Optional[bool] = None,
+        max_chunk_chars: Optional[int] = None,
     ) -> dict:
         """
         Convert text to speech and save as WAV.
         Engines: mms (Arabic), habibi (dialectal Arabic + voice clone).
+
+        diacritize: None = env TTS_DIACRITIZE; True/False = per-request override.
 
         Returns:
             dict with keys: audio_path, sample_rate, duration_sec, voice
@@ -176,6 +183,12 @@ class TTSCore:
         if engine_requested not in TTS_ALLOWED_ENGINES:
             raise ValueError(f"engine must be one of: {', '.join(sorted(TTS_ALLOWED_ENGINES))}")
 
+        diacritize_enabled = (
+            bool(diacritize)
+            if diacritize is not None
+            else bool(getattr(settings, "TTS_DIACRITIZE", False))
+        )
+
         # Route Arabic through OmniVoice / Habibi / MMS.
         # Note: voice=ar_mms must NOT skip cloning in engine=auto — only engine=mms forces MMS.
         requested_voice = (voice or "").strip() or TTS_DEFAULT_VOICE
@@ -197,7 +210,7 @@ class TTSCore:
 
             if run_omnivoice:
                 text_o = _preprocess_text(text)
-                text_o = maybe_diacritize(text_o)
+                text_o = maybe_diacritize(text_o, enabled=diacritize_enabled)
                 if not (user_email or "").strip():
                     if engine_requested == "omnivoice":
                         raise ValueError("OmniVoice requires user_email and uploaded voice sample")
@@ -230,6 +243,7 @@ class TTSCore:
                             "requested_voice": requested_voice,
                             "resolved_voice": "omnivoice",
                             "speaker_ref": ref_audio.name,
+                            "diacritize": diacritize_enabled,
                         })
                         return result
                     except (ImportError, RuntimeError, FileNotFoundError, ValueError) as e:
@@ -254,8 +268,9 @@ class TTSCore:
                 )
                 run_habibi = bool(habibi_speaker_ref)
             if run_habibi:
+                # Habibi cannot use mishkal/tashkeel (reads marks as letters).
+                # Stripping happens inside synthesize_habibi for gen + ref_text.
                 text_h = _preprocess_text(text)
-                text_h = maybe_diacritize(text_h)
                 if not (user_email or "").strip():
                     if engine_requested == "habibi":
                         raise ValueError("Habibi requires user_email and uploaded voice sample")
@@ -290,6 +305,7 @@ class TTSCore:
                                 out_path=out_path,
                                 model_choice=requested_model,
                                 dialect=dialect or "UNK",
+                                max_chunk_chars=max_chunk_chars,
                             )
                             result.update({
                                 "engine_used": "habibi",
@@ -299,6 +315,8 @@ class TTSCore:
                                 "resolved_voice": result.get("voice", requested_model),
                                 "speaker_ref": ref_audio.name,
                                 "dialect": result.get("dialect", (dialect or "UNK").upper()),
+                                "diacritize": False,
+                                "max_chunk_chars": max_chunk_chars,
                             })
                             return result
                     except (ImportError, RuntimeError, FileNotFoundError, ValueError) as e:
@@ -315,7 +333,7 @@ class TTSCore:
 
         if engine_requested == "mms":
             text = _preprocess_text(text)
-            text = maybe_diacritize(text)
+            text = maybe_diacritize(text, enabled=diacritize_enabled)
             try:
                 from app.tts.tts_mms import synthesize_mms
                 result = synthesize_mms(text=text, voice="ar_mms", speed=speed, out_path=out_path, seed=seed)
@@ -325,6 +343,7 @@ class TTSCore:
                     "fallback_used": False,
                     "requested_voice": requested_voice,
                     "resolved_voice": "ar_mms",
+                    "diacritize": diacritize_enabled,
                 })
                 return result
             except (ImportError, RuntimeError) as e:
@@ -332,7 +351,7 @@ class TTSCore:
 
         if arabic_detected:
             text = _preprocess_text(text)
-            text = maybe_diacritize(text)
+            text = maybe_diacritize(text, enabled=diacritize_enabled)
             fallback_used = auto_fallback_used
             try:
                 from app.tts.tts_mms import synthesize_mms
@@ -343,6 +362,7 @@ class TTSCore:
                     "fallback_used": fallback_used,
                     "requested_voice": requested_voice,
                     "resolved_voice": "ar_mms",
+                    "diacritize": diacritize_enabled,
                 })
                 return result
             except (ImportError, RuntimeError) as e:

@@ -61,6 +61,7 @@ class TtsService {
     String? dialect,
     String? userEmail,
     int? seed,
+    bool? diacritize,
     String? authorization,
     String? apiKey,
   }) async {
@@ -86,6 +87,9 @@ class TtsService {
     }
     if (seed != null) {
       payload['seed'] = seed;
+    }
+    if (diacritize != null) {
+      payload['diacritize'] = diacritize;
     }
 
     final response = await http.post(

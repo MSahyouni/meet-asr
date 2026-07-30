@@ -14,14 +14,26 @@ _THOUSANDS = ["", "ألف", "ألفان", "ثلاثة آلاف", "أربعة آ�
 def normalize_arabic(text: str) -> str:
     """
     Minimal Arabic normalization for TTS.
-    - ى -> ي (alef maqsura)
-    - Optional: آ/أ/إ -> ا, ة->ه (conservative; ة->ه only when safe)
+    Keep alef maqsura (ى) as-is — converting it to ي makes TTS say /i/ instead of /a/
+    (e.g. على → علي, موسى → موسي).
+    Only strip tatweel (ـ) which has no phonetic value.
     """
     if not text:
         return text
-    t = text.replace("\u0649", "\u064A")  # ى -> ي (always safe)
-    t = t.replace("\u0640", "")  # tatweel
-    return t
+    return text.replace("\u0640", "")  # tatweel
+
+
+# Harakat / Quranic marks Habibi-F5 often treats as speakable tokens (not vowel hints).
+_ARABIC_DIACRITICS_RE = re.compile(
+    r"[\u064B-\u065F\u0670\u06D6-\u06ED\u08F0-\u08FF]"
+)
+
+
+def strip_arabic_diacritics(text: str) -> str:
+    """Remove tashkeel so engines that can't use it don't read marks as letters."""
+    if not text:
+        return text
+    return _ARABIC_DIACRITICS_RE.sub("", text)
 
 
 def cleanup_punctuation(text: str) -> str:

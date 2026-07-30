@@ -294,6 +294,7 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
   - `user_email` + عينة صوت مرفوعة مسبقًا
   - `ref_text` (نص مطابق لعينة الصوت المرجعية) — يمكن حفظه مرة واحدة عند رفع العينة عبر `POST /tts/voice-sample`
   - `dialect` اختياري (`UNK|MSA|SAU|UAE|ALG|IRQ|EGY|MAR|OMN|TUN|LEV|SDN|LBY`)
+- النصوص الطويلة: تقطيع عربي صارم (~سطرين/دفعة) مع المسار الرسمي لـ Habibi (نفس عيّنة المتحدث لكل دفعة + crossfade). اضبط `HABIBI_MAX_CHUNK_CHARS` عند الحاجة.
 - بصمات المستخدم (Habibi/OmniVoice):
   - `POST /tts/voice-sample`
   - `POST /tts/voice-samples` (يدعم أيضًا `ref_texts_json` كخريطة JSON: اسم_الملف -> ref_text، و`default_ref_text` احتياطي)

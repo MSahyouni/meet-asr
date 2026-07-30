@@ -188,6 +188,54 @@ def test_maybe_diacritize_uses_backend_when_enabled(monkeypatch):
     assert maybe_diacritize("نص") == "نص_tashkeel"
 
 
+def test_maybe_diacritize_request_override(monkeypatch):
+    from app.config import settings
+    from app.tts_core import maybe_diacritize
+
+    monkeypatch.setattr(settings, "TTS_DIACRITIZE", True)
+    monkeypatch.setattr(
+        "app.tts.diacritize.add_diacritics",
+        lambda text: text + "_tashkeel",
+    )
+    assert maybe_diacritize("نص", enabled=False) == "نص"
+    monkeypatch.setattr(settings, "TTS_DIACRITIZE", False)
+    assert maybe_diacritize("نص", enabled=True) == "نص_tashkeel"
+
+
+def test_suggest_habibi_dialect_msa_from_formal_text():
+    from app.tts.dialect_suggest import suggest_habibi_dialect
+
+    text = "إنّ الذي كتب الرسالة قد أوضح ذلك حيث بيّن الأسباب كما ينبغي."
+    out = suggest_habibi_dialect(text, current="UNK")
+    assert out["suggested"] == "MSA"
+    assert out["apply_recommended"] is True
+
+
+def test_suggest_habibi_dialect_egy_markers():
+    from app.tts.dialect_suggest import suggest_habibi_dialect
+
+    out = suggest_habibi_dialect("عايز أروح دلوقتي كده", current="UNK")
+    assert out["suggested"] == "EGY"
+
+
+def test_inspect_voice_sample_missing_ref(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    from app.tts.voice_sample_check import inspect_voice_sample
+
+    wav = tmp_path / "s.wav"
+    sr = 24000
+    tone = (0.1 * np.sin(2 * np.pi * 220 * np.arange(sr * 4) / sr)).astype(np.float32)
+    sf.write(str(wav), tone, sr)
+    info = inspect_voice_sample(str(wav), has_ref_text=False, ref_text="")
+    assert info["duration_sec"] > 3
+    assert info["blocking"] is True
+    assert any(w["code"] == "missing_ref_text" for w in info["warnings"])
+    info2 = inspect_voice_sample(str(wav), has_ref_text=True)
+    assert info2["blocking"] is False or not any(w["code"] == "missing_ref_text" for w in info2["warnings"])
+
+
 def test_list_voices_returns_non_empty():
     """GET /tts/voices relies on tts_core.list_voices() returning a non-empty list."""
     from app.tts_core import list_voices

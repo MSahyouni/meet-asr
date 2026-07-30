@@ -14,10 +14,45 @@
     var engine = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
     var showHabibiFields = engine === "habibi" || engine === "auto";
     var showMmsSeed = engine === "mms";
+    var showDiacritize = engine === "mms" || engine === "auto";
+    setZoneVisible("ttsHabibiSettings", showHabibiFields);
     setZoneVisible("ttsDialectZone", showHabibiFields);
     setZoneVisible("ttsRefTextZone", showHabibiFields);
     setZoneVisible("ttsHabibiSpeedHint", showHabibiFields);
     setZoneVisible("ttsSeedZone", showMmsSeed);
+    setZoneVisible("ttsDiacritizeZone", showDiacritize);
+
+    var voiceEl = getId("ttsVoice");
+    if (voiceEl && engine === "habibi") {
+      var v = voiceEl.value || "";
+      if (v !== "habibi_unified" && v !== "habibi_specialized") {
+        voiceEl.value = "habibi_unified";
+      }
+    }
+    if (voiceEl && engine === "mms") {
+      voiceEl.value = "ar_mms";
+    }
+  }
+
+  function setTtsSpeed(value) {
+    var speedEl = getId("ttsSpeed");
+    var speedValueEl = getId("speedValue");
+    if (!speedEl) return;
+    var n = parseFloat(value);
+    if (isNaN(n)) return;
+    n = Math.max(0.25, Math.min(2, n));
+    speedEl.value = String(n);
+    if (speedValueEl) speedValueEl.textContent = n.toFixed(1);
+    qsa(".tts-speed-preset").forEach(function (btn) {
+      var s = parseFloat(btn.getAttribute("data-speed") || "");
+      btn.classList.toggle("active", Math.abs(s - n) < 0.001);
+    });
+  }
+
+  function syncTtsChunkLabel() {
+    var chunkEl = getId("ttsMaxChunk");
+    var labelEl = getId("ttsChunkValue");
+    if (chunkEl && labelEl) labelEl.textContent = String(chunkEl.value || "120");
   }
 
   function refreshTtsEngineStatus() {
@@ -65,6 +100,9 @@
       voiceSamples: "/tts/voice-samples",
       voiceSample: "/tts/voice-sample",
       voiceFile: "/tts/voice-file",
+      suggestDialect: "/tts/suggest-dialect",
+      inspectVoice: "/tts/voice-sample/inspect",
+      transcribeRef: "/tts/voice-sample/transcribe-ref",
     },
     download: "/download",
   };
@@ -125,14 +163,15 @@
       [
         "apiKey", "timeout", "whisperMode", "enhance", "enhanceLevel", "punctuate", "maxSpeakers", "enrollThreshold",
         "deviceSel", "computeSel", "summaryMode", "ttsEngine", "ttsUserEmail", "ttsText", "ttsVoice",
-        "ttsSpeed", "ttsSeed", "ttsDialect", "ttsRefText", "ttsVoiceFilesList", "spkName", "spkList", "spkFilesList",
+        "ttsSpeed", "ttsSeed", "ttsDialect", "ttsRefText", "ttsVoiceFilesList", "ttsMaxChunk",
+        "spkName", "spkList", "spkFilesList",
         "authEmail", "authFullName", "profileFullName", "profileBio", "profileAvatar"
       ].forEach(function (id) {
         var el = getId(id);
         if (el) state.values[id] = el.value;
       });
 
-      ["diarize", "autoK"].forEach(function (id) {
+      ["diarize", "autoK", "ttsDiacritize"].forEach(function (id) {
         var el = getId(id);
         if (el) state.checks[id] = !!el.checked;
       });
@@ -216,10 +255,9 @@
       });
 
       var speedSliderEl = getId("ttsSpeed");
-      var speedValueEl = getId("speedValue");
-      if (speedSliderEl && speedValueEl) {
-        speedValueEl.textContent = parseFloat(speedSliderEl.value || "1").toFixed(1);
-      }
+      if (speedSliderEl) setTtsSpeed(speedSliderEl.value || "1");
+      syncTtsChunkLabel();
+      updateTtsEngineUi();
     } catch (_) {}
   }
 
@@ -1043,14 +1081,24 @@
       });
   });
 
-  // عرض قيمة السرعة ديناميكياً
+  // عرض قيمة السرعة + إعدادات Habibi
   var speedSlider = getId("ttsSpeed");
-  var speedValue = getId("speedValue");
-  if (speedSlider && speedValue) {
+  if (speedSlider) {
     speedSlider.addEventListener("input", function () {
-      speedValue.textContent = parseFloat(speedSlider.value).toFixed(1);
+      setTtsSpeed(speedSlider.value);
     });
+    setTtsSpeed(speedSlider.value);
   }
+  var chunkSlider = getId("ttsMaxChunk");
+  if (chunkSlider) {
+    chunkSlider.addEventListener("input", syncTtsChunkLabel);
+    syncTtsChunkLabel();
+  }
+  qsa(".tts-speed-preset").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      setTtsSpeed(btn.getAttribute("data-speed"));
+    });
+  });
 
   // TTS
   function getTtsUserEmail() {
@@ -1101,18 +1149,198 @@
           if (item.size_bytes) info.push(item.size_bytes + " bytes");
           if (item.has_ref_text) info.push("ref_text");
           opt.textContent = name + (info.length ? " (" + info.join(" · ") + ")" : "");
+          if (item.ref_text) opt.setAttribute("data-ref-text", item.ref_text);
+          if (item.has_ref_text) opt.setAttribute("data-has-ref", "1");
           listEl.appendChild(opt);
         });
         if (statusEl) statusEl.textContent = TTS_MESSAGES.loadedVoicesPrefix + files.length + TTS_MESSAGES.loadedVoicesSuffix;
+        if (listEl.value) inspectSelectedTtsVoice();
       })
       .catch(function (e) {
         if (statusEl) statusEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
       });
   }
 
+  var _dialectSuggestTimer = null;
+  var _dialectUserLocked = false;
+
+  function formatVoiceWarnings(warnings) {
+    if (!warnings || !warnings.length) return "";
+    return warnings.map(function (w) {
+      var prefix = w.level === "error" ? "⛔" : "⚠️";
+      return prefix + " " + (w.message || w.code || "");
+    }).join("\n");
+  }
+
+  function suggestTtsDialect(applyIfUnk) {
+    var textEl = getId("ttsText");
+    var dialectEl = getId("ttsDialect");
+    var hintEl = getId("ttsDialectHint");
+    var text = (textEl && textEl.value || "").trim();
+    if (!text || !dialectEl) {
+      if (hintEl) hintEl.textContent = "";
+      return Promise.resolve(null);
+    }
+    var current = (dialectEl.value || "UNK").trim().toUpperCase();
+    var h = getHeaders();
+    h["Content-Type"] = "application/json";
+    return fetchWithTimeout(API.tts.suggestDialect, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ text: text, current: current }),
+    }, 30)
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || d.error || r.statusText); return d; }); })
+      .then(function (data) {
+        var suggested = (data.suggested || "UNK").toUpperCase();
+        var reason = data.reason || "";
+        if (hintEl) {
+          hintEl.textContent = suggested && suggested !== "UNK"
+            ? ("اقتراح: " + suggested + (reason ? " — " + reason : ""))
+            : (reason || "");
+        }
+        if (applyIfUnk && data.apply_recommended && !_dialectUserLocked && current === "UNK" && suggested && suggested !== "UNK") {
+          dialectEl.value = suggested;
+        }
+        return data;
+      })
+      .catch(function () {
+        if (hintEl) hintEl.textContent = "";
+        return null;
+      });
+  }
+
+  function scheduleDialectSuggest() {
+    if (_dialectSuggestTimer) clearTimeout(_dialectSuggestTimer);
+    _dialectSuggestTimer = setTimeout(function () {
+      suggestTtsDialect(true);
+    }, 450);
+  }
+
+  function inspectSelectedTtsVoice() {
+    var checkEl = getId("ttsVoiceCheck");
+    var listEl = getId("ttsVoiceFilesList");
+    var refEl = getId("ttsRefText");
+    var userEmail = getTtsUserEmail();
+    var speakerRef = (listEl && listEl.value || "").trim();
+    if (!checkEl) return Promise.resolve(null);
+    if (!userEmail || !speakerRef) {
+      checkEl.textContent = "";
+      return Promise.resolve(null);
+    }
+    var formRef = (refEl && refEl.value || "").trim();
+    var selectedOpt = listEl.options[listEl.selectedIndex];
+    if (refEl && !formRef && selectedOpt && selectedOpt.getAttribute("data-ref-text")) {
+      refEl.value = selectedOpt.getAttribute("data-ref-text") || "";
+      formRef = refEl.value.trim();
+    }
+    checkEl.textContent = "فحص البصمة…";
+    var h = getHeaders();
+    h["Content-Type"] = "application/json";
+    return fetchWithTimeout(API.tts.inspectVoice, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({
+        user_email: userEmail,
+        speaker_ref: speakerRef,
+        ref_text: formRef || undefined,
+      }),
+    }, 60)
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || d.error || r.statusText); return d; }); })
+      .then(function (data) {
+        var lines = [];
+        if (data.duration_sec != null) {
+          lines.push("المدة: " + Number(data.duration_sec).toFixed(1) + "s (مثالي 3–10s)");
+        }
+        if (data.saved_ref_text && refEl && !(refEl.value || "").trim()) {
+          refEl.value = data.saved_ref_text;
+        }
+        var warnText = formatVoiceWarnings(data.warnings);
+        if (warnText) lines.push(warnText);
+        else lines.push("✅ البصمة جاهزة");
+        checkEl.textContent = lines.join("\n");
+        checkEl.dataset.blocking = data.blocking ? "1" : "0";
+        return data;
+      })
+      .catch(function (e) {
+        checkEl.textContent = "تعذّر فحص البصمة: " + (e.message || String(e));
+        checkEl.dataset.blocking = "0";
+        return null;
+      });
+  }
+
+  function extractRefTextFromVoice() {
+    var statusEl = getId("ttsVoiceStatus");
+    var checkEl = getId("ttsVoiceCheck");
+    var listEl = getId("ttsVoiceFilesList");
+    var refEl = getId("ttsRefText");
+    var btn = getId("btnTtsExtractRef");
+    var userEmail = getTtsUserEmail();
+    var speakerRef = (listEl && listEl.value || "").trim();
+    if (!userEmail) {
+      if (statusEl) statusEl.textContent = TTS_MESSAGES.needUser;
+      return;
+    }
+    if (!speakerRef) {
+      if (statusEl) statusEl.textContent = "اختر بصمة أولاً ثم استخرج ref_text.";
+      return;
+    }
+    setButtonBusy(btn, true, "جاري الاستخراج…");
+    if (checkEl) checkEl.textContent = "استخراج النص من البصمة عبر Whisper…";
+    var h = getHeaders();
+    h["Content-Type"] = "application/json";
+    var timeout = getId("timeout") ? getId("timeout").value : 300;
+    fetchWithTimeout(API.tts.transcribeRef, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ user_email: userEmail, speaker_ref: speakerRef, save: true }),
+    }, timeout)
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || d.error || d.message || r.statusText); return d; }); })
+      .then(function (data) {
+        if (refEl) refEl.value = data.ref_text || "";
+        if (statusEl) statusEl.textContent = "تم استخراج ref_text وحفظه مع البصمة.";
+        return inspectSelectedTtsVoice();
+      })
+      .catch(function (e) {
+        if (statusEl) statusEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
+        if (checkEl) checkEl.textContent = "";
+      })
+      .finally(function () {
+        setButtonBusy(btn, false);
+      });
+  }
+
   var btnTtsRefreshVoices = getId("btnTtsRefreshVoices");
   if (btnTtsRefreshVoices) {
     btnTtsRefreshVoices.addEventListener("click", refreshTtsVoiceSamples);
+  }
+
+  var btnTtsExtractRef = getId("btnTtsExtractRef");
+  if (btnTtsExtractRef) {
+    btnTtsExtractRef.addEventListener("click", extractRefTextFromVoice);
+  }
+
+  var ttsTextEl = getId("ttsText");
+  if (ttsTextEl) {
+    ttsTextEl.addEventListener("input", scheduleDialectSuggest);
+  }
+  var ttsDialectEl = getId("ttsDialect");
+  if (ttsDialectEl) {
+    ttsDialectEl.addEventListener("change", function () {
+      _dialectUserLocked = (ttsDialectEl.value || "UNK").toUpperCase() !== "UNK";
+      suggestTtsDialect(false);
+    });
+  }
+  var ttsVoiceListEl = getId("ttsVoiceFilesList");
+  if (ttsVoiceListEl) {
+    ttsVoiceListEl.addEventListener("change", function () {
+      inspectSelectedTtsVoice();
+    });
+  }
+  var ttsRefTextEl = getId("ttsRefText");
+  if (ttsRefTextEl) {
+    ttsRefTextEl.addEventListener("change", function () {
+      if ((getId("ttsVoiceFilesList") || {}).value) inspectSelectedTtsVoice();
+    });
   }
 
   var btnTtsUploadVoices = getId("btnTtsUploadVoices");
@@ -1230,106 +1458,156 @@
     var btnTts = getId("btnTts");
     var textEl = getId("ttsText"), text = (textEl && textEl.value || "").trim();
     if (!text) {
+      var errEl0 = getId("ttsError");
+      errEl0.textContent = TTS_MESSAGES.needTtsText;
+      errEl0.classList.remove("hidden");
+      return;
+    }
+
+    function runTtsRequest() {
+      var voice = getId("ttsVoice").value || "omnivoice";
+      var engine = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
+      var speed = parseFloat(getId("ttsSpeed").value) || 1;
+      var seedEl = getId("ttsSeed");
+      var seed = seedEl && seedEl.value ? parseInt(seedEl.value, 10) : undefined;
+      var dialect = (getId("ttsDialect") && getId("ttsDialect").value || "UNK").trim().toUpperCase();
+      var refText = (getId("ttsRefText") && getId("ttsRefText").value || "").trim();
+      var speakerRef = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
+      var userEmailForTts = getTtsUserEmail();
+      if (isNaN(seed)) seed = undefined;
+
       var errEl = getId("ttsError");
-      errEl.textContent = TTS_MESSAGES.needTtsText;
-      errEl.classList.remove("hidden");
-      return;
-    }
-    var voice = getId("ttsVoice").value || "omnivoice";
-    var engine = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
-    var speed = parseFloat(getId("ttsSpeed").value) || 1;
-    var seedEl = getId("ttsSeed");
-    var seed = seedEl && seedEl.value ? parseInt(seedEl.value, 10) : undefined;
-    var dialect = (getId("ttsDialect") && getId("ttsDialect").value || "UNK").trim().toUpperCase();
-    var refText = (getId("ttsRefText") && getId("ttsRefText").value || "").trim();
-    var speakerRef = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
-    var userEmailForTts = getTtsUserEmail();
-    if (isNaN(seed)) seed = undefined;
+      errEl.classList.add("hidden");
+      var audioEl = getId("ttsAudio");
+      var dlEl = getId("ttsDl");
+      var metaEl = getId("ttsMeta");
+      dlEl.innerHTML = "";
+      if (metaEl) metaEl.textContent = "";
 
-    var errEl = getId("ttsError");
-    errEl.classList.add("hidden");
-    var audioEl = getId("ttsAudio");
-    var dlEl = getId("ttsDl");
-    var metaEl = getId("ttsMeta");
-    dlEl.innerHTML = "";
-    if (metaEl) metaEl.textContent = "";
-
-    var body = { text: text, voice: voice, speed: speed, engine: engine || "auto" };
-    if (engine === "omnivoice" && !speakerRef) {
-      errEl.textContent = "اختر بصمة صوتية لـ OmniVoice أو ارفع عينة أولاً.";
-      errEl.classList.remove("hidden");
-      return;
-    }
-    if (engine === "habibi" && !refText && !speakerRef) {
-      errEl.textContent = "اختر بصمة صوتية لـ Habibi أو اكتب ref_text المطابق للعينة فقط.";
-      errEl.classList.remove("hidden");
-      return;
-    }
-    if (userEmailForTts) body.user_email = userEmailForTts;
-    if (engine === "mms" && seed != null) body.seed = seed;
-    if (speakerRef) body.speaker_ref = speakerRef;
-    if (engine === "habibi" || engine === "auto") {
-      if (dialect) body.dialect = dialect;
-      if (refText) body.ref_text = refText;
-    }
-
-    var h = getHeaders();
-    h["Content-Type"] = "application/json";
-
-    var timeout = getId("timeout") ? getId("timeout").value : 300;
-    // OmniVoice first run may download ~3GB; use a longer client timeout unless user set 0 (unlimited).
-    if ((engine === "omnivoice" || engine === "auto") && String(timeout).trim() !== "0") {
-      var ttsTimeoutNum = parseInt(String(timeout), 10);
-      if (!isNaN(ttsTimeoutNum) && ttsTimeoutNum > 0 && ttsTimeoutNum < 7200) timeout = 7200;
-    }
-    setButtonBusy(btnTts, true, TTS_MESSAGES.generating);
-    fetchWithTimeout(API.tts.root, { method: "POST", headers: h, body: JSON.stringify(body) }, timeout)
-      .then(function (r) {
-        if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
-        return r.json();
-      })
-      .then(function (data) {
-        var done = Promise.resolve();
-        if (data.download_url) {
-          done = loadAuthenticatedMedia(data.download_url, "tts.wav").then(function (res) {
-            revokeBlobSrc(audioEl);
-            audioEl.src = res.objectUrl;
-            dlEl.innerHTML = "";
-            var dlBtn = document.createElement("button");
-            dlBtn.type = "button";
-            dlBtn.className = "btn btn-secondary";
-            dlBtn.textContent = "تحميل الصوت";
-            dlBtn.addEventListener("click", function () {
-              var a = document.createElement("a");
-              a.href = res.objectUrl;
-              a.download = res.filename;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-            });
-            dlEl.appendChild(dlBtn);
-          });
+      var body = { text: text, voice: voice, speed: speed, engine: engine || "auto" };
+      var diacritizeEl = getId("ttsDiacritize");
+      body.diacritize = !!(diacritizeEl && diacritizeEl.checked);
+      if (engine === "omnivoice" && !speakerRef) {
+        errEl.textContent = "اختر بصمة صوتية لـ OmniVoice أو ارفع عينة أولاً.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      if (engine === "habibi" && !refText && !speakerRef) {
+        errEl.textContent = "اختر بصمة صوتية لـ Habibi أو اكتب ref_text المطابق للعينة فقط.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      if (userEmailForTts) body.user_email = userEmailForTts;
+      if (engine === "mms" && seed != null) body.seed = seed;
+      if (speakerRef) body.speaker_ref = speakerRef;
+      if (engine === "habibi" || engine === "auto") {
+        if (dialect) body.dialect = dialect;
+        if (refText) body.ref_text = refText;
+        var chunkEl = getId("ttsMaxChunk");
+        if (chunkEl && chunkEl.value) {
+          var chunkN = parseInt(chunkEl.value, 10);
+          if (!isNaN(chunkN)) body.max_chunk_chars = chunkN;
         }
-        return done.then(function () {
-          if (metaEl) {
-            metaEl.textContent = [
-              "engine_used: " + (data.engine_used || "-"),
-              "requested_voice: " + (data.requested_voice || "-"),
-              "resolved_voice: " + (data.resolved_voice || "-"),
-              "speaker_ref: " + (data.speaker_ref || "-"),
-              "dialect: " + (data.dialect || "-"),
-              "fallback_used: " + (data.fallback_used ? "yes" : "no"),
-              "arabic_detected: " + (data.arabic_detected ? "yes" : "no"),
-            ].join("\n");
+      }
+
+      var h = getHeaders();
+      h["Content-Type"] = "application/json";
+
+      var timeout = getId("timeout") ? getId("timeout").value : 300;
+      if ((engine === "omnivoice" || engine === "auto") && String(timeout).trim() !== "0") {
+        var ttsTimeoutNum = parseInt(String(timeout), 10);
+        if (!isNaN(ttsTimeoutNum) && ttsTimeoutNum > 0 && ttsTimeoutNum < 7200) timeout = 7200;
+      }
+      setButtonBusy(btnTts, true, TTS_MESSAGES.generating);
+      fetchWithTimeout(API.tts.root, { method: "POST", headers: h, body: JSON.stringify(body) }, timeout)
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || j.error || r.statusText); });
+          return r.json();
+        })
+        .then(function (data) {
+          var done = Promise.resolve();
+          if (data.download_url) {
+            done = loadAuthenticatedMedia(data.download_url, "tts.wav").then(function (res) {
+              revokeBlobSrc(audioEl);
+              audioEl.src = res.objectUrl;
+              dlEl.innerHTML = "";
+              var dlBtn = document.createElement("button");
+              dlBtn.type = "button";
+              dlBtn.className = "btn btn-secondary";
+              dlBtn.textContent = "تحميل الصوت";
+              dlBtn.addEventListener("click", function () {
+                var a = document.createElement("a");
+                a.href = res.objectUrl;
+                a.download = res.filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+              });
+              dlEl.appendChild(dlBtn);
+            });
           }
+          return done.then(function () {
+            if (metaEl) {
+              metaEl.textContent = [
+                "engine_used: " + (data.engine_used || "-"),
+                "requested_voice: " + (data.requested_voice || "-"),
+                "resolved_voice: " + (data.resolved_voice || "-"),
+                "speaker_ref: " + (data.speaker_ref || "-"),
+                "dialect: " + (data.dialect || "-"),
+                "fallback_used: " + (data.fallback_used ? "yes" : "no"),
+                "arabic_detected: " + (data.arabic_detected ? "yes" : "no"),
+                "diacritize: " + (data.diacritize ? "yes" : "no"),
+                "max_chunk_chars: " + (data.max_chunk_chars != null ? data.max_chunk_chars : "-"),
+              ].join("\n");
+            }
+          });
+        })
+        .catch(function (e) {
+          errEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
+          errEl.classList.remove("hidden");
+        })
+        .finally(function () {
+          setButtonBusy(btnTts, false);
         });
+    }
+
+    var enginePre = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
+    var speakerPre = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
+    var needsHabibiCheck = (enginePre === "habibi" || enginePre === "auto") && !!speakerPre;
+
+    setButtonBusy(btnTts, true, "تحضير…");
+    suggestTtsDialect(true)
+      .catch(function () { return null; })
+      .then(function () {
+        if (!needsHabibiCheck) return null;
+        return inspectSelectedTtsVoice();
+      })
+      .then(function (inspect) {
+        setButtonBusy(btnTts, false);
+        if (!inspect) {
+          runTtsRequest();
+          return;
+        }
+        var errEl = getId("ttsError");
+        if (inspect.blocking) {
+          errEl.textContent = "أصلح مشاكل البصمة قبل التوليد:\n" + formatVoiceWarnings(inspect.warnings);
+          errEl.classList.remove("hidden");
+          return;
+        }
+        var warns = (inspect.warnings || []).filter(function (w) { return w.level === "warn"; });
+        if (warns.length) {
+          var ok = window.confirm(
+            "تحذيرات على البصمة:\n" + formatVoiceWarnings(warns) + "\n\nالمتابعة بالتوليد؟"
+          );
+          if (!ok) return;
+        }
+        runTtsRequest();
       })
       .catch(function (e) {
+        setButtonBusy(btnTts, false);
+        var errEl = getId("ttsError");
         errEl.textContent = TTS_MESSAGES.errorPrefix + (e.message || String(e));
         errEl.classList.remove("hidden");
-      })
-      .finally(function () {
-        setButtonBusy(btnTts, false);
       });
   });
 

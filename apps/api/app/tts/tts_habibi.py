@@ -8,6 +8,7 @@ import numpy as np
 from app.config import settings
 from app.tts.audio_speed import apply_speed_numpy, trim_ref_text_for_duration
 from app.tts.habibi_infer import run_habibi_inference
+from app.tts.text_utils import strip_arabic_diacritics
 
 logger = logging.getLogger("tts_habibi")
 
@@ -137,6 +138,7 @@ def synthesize_habibi(
     out_path: str = "",
     model_choice: str = "unified",
     dialect: Optional[str] = "UNK",
+    max_chunk_chars: Optional[int] = None,
 ) -> dict:
     model_choice = _normalize_model_choice(model_choice)
     dialect = _normalize_dialect(dialect, model_choice=model_choice)
@@ -167,18 +169,23 @@ def synthesize_habibi(
     import soundfile as sf
 
     with _HABIBI_INFER_LOCK:
-        ref_audio_ready, ref_text_ready = preprocess_ref_audio_text(str(ref_audio), ref_text.strip())
+        # Habibi/F5 vocab does not use tashkeel as vowels — it may "speak" the marks.
+        gen_text = strip_arabic_diacritics(text.strip())
+        ref_plain = strip_arabic_diacritics(ref_text.strip())
+        ref_audio_ready, ref_text_ready = preprocess_ref_audio_text(str(ref_audio), ref_plain)
         try:
             ref_duration_sec = float(sf.info(ref_audio_ready).duration)
         except Exception:
             ref_duration_sec = 0.0
         ref_text_ready = trim_ref_text_for_duration(ref_text_ready, ref_duration_sec)
+        ref_text_ready = strip_arabic_diacritics(ref_text_ready)
 
         final_wave, final_sample_rate = run_habibi_inference(
             ref_audio_ready,
             ref_text_ready,
-            text.strip(),
+            gen_text,
             runtime,
+            max_chunk_chars=max_chunk_chars,
         )
 
         if final_wave is None:

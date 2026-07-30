@@ -308,6 +308,36 @@ body {
   color: var(--text);
 }
 
+.settings-group {
+  margin-bottom: 1.15rem;
+  padding: 0.85rem 0.9rem 0.35rem;
+  border: 1px solid rgba(66, 129, 119, 0.28);
+  border-radius: var(--radius-sm);
+  background: rgba(66, 129, 119, 0.05);
+}
+
+.settings-group-title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--forest-dark, var(--forest));
+}
+
+.settings-group .zone {
+  margin-bottom: 0.85rem;
+}
+
+.tts-speed-preset.active {
+  outline: 2px solid var(--forest);
+  outline-offset: 1px;
+}
+
+#ttsVoiceCheck {
+  white-space: pre-line;
+  margin-top: 0.35rem;
+  color: var(--text);
+}
+
 .file-label {
   display: inline-block;
   padding: 0.75rem 1.5rem;
@@ -609,6 +639,7 @@ textarea {
   border-radius: var(--radius-sm);
   border-right: 3px solid var(--umber);
   font-weight: 600;
+  white-space: pre-line;
 }
 
 /* ===== Row Layout ===== */

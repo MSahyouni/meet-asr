@@ -163,56 +163,88 @@
             <label>الصوت</label>
             <select id="ttsVoice" class="input">
               <option value="omnivoice">omnivoice</option>
-              <option value="habibi_unified">habibi_unified</option>
-              <option value="habibi_specialized">habibi_specialized</option>
+              <option value="habibi_unified">habibi_unified (موحّد — مُفضّل)</option>
+              <option value="habibi_specialized">habibi_specialized (لهجة متخصصة)</option>
               <option value="ar_mms">ar_mms (عربي)</option>
             </select>
           </div>
-          <div class="zone" id="ttsDialectZone">
-            <label>لهجة Habibi (اختياري)</label>
-            <select id="ttsDialect" class="input">
-              <option value="UNK" selected>UNK (auto)</option>
-              <option value="MSA">MSA</option>
-              <option value="SAU">SAU</option>
-              <option value="UAE">UAE</option>
-              <option value="ALG">ALG</option>
-              <option value="IRQ">IRQ</option>
-              <option value="EGY">EGY</option>
-              <option value="MAR">MAR</option>
-              <option value="OMN">OMN</option>
-              <option value="TUN">TUN</option>
-              <option value="LEV">LEV</option>
-              <option value="SDN">SDN</option>
-              <option value="LBY">LBY</option>
-            </select>
+
+          <div id="ttsHabibiSettings" class="settings-group">
+            <h4 class="settings-group-title">إعدادات Habibi</h4>
+            <p class="hint">للهجات العربية والاستنساخ. التشكيل يُزال تلقائياً. اختر لهجة تطابق النص (فصيح → MSA).</p>
+
+            <div class="zone" id="ttsDialectZone">
+              <label>اللهجة</label>
+              <select id="ttsDialect" class="input">
+                <option value="UNK" selected>UNK — تلقائي / غير محدد</option>
+                <option value="MSA">MSA — فصحى</option>
+                <option value="LEV">LEV — شامي / لبناني / سوري</option>
+                <option value="EGY">EGY — مصري</option>
+                <option value="SAU">SAU — سعودي</option>
+                <option value="UAE">UAE — إماراتي</option>
+                <option value="IRQ">IRQ — عراقي</option>
+                <option value="ALG">ALG — جزائري</option>
+                <option value="MAR">MAR — مغربي</option>
+                <option value="OMN">OMN — عماني</option>
+                <option value="TUN">TUN — تونسي</option>
+                <option value="SDN">SDN — سوداني</option>
+                <option value="LBY">LBY — ليبي</option>
+              </select>
+              <div class="hint" id="ttsDialectHint"></div>
+            </div>
+
+            <div class="zone" id="ttsRefTextZone">
+              <label>نص البصمة (ref_text)</label>
+              <textarea id="ttsRefText" rows="2" placeholder="فقط ما يُسمع في ملف البصمة — جملة قصيرة"></textarea>
+              <div class="btn-row" style="margin-top:0.4rem">
+                <button type="button" id="btnTtsExtractRef" class="btn btn-secondary">🎙️ استخرج من البصمة (ASR)</button>
+              </div>
+              <div class="hint">لا تضع هنا النص الكامل للتوليد. طابق العينة حرفياً (5–10 ثوانٍ).</div>
+            </div>
+
+            <div class="zone">
+              <label>حجم الدفعة (جودة النصوص الطويلة): <span id="ttsChunkValue">120</span></label>
+              <input type="range" id="ttsMaxChunk" min="64" max="180" step="2" value="120" class="input">
+              <div class="hint">أصغر = جودة أعلى وبطء أكثر · أكبر = أسرع وقد يقلّ الاستقرار. الافتراضي ~سطرين (120).</div>
+            </div>
+
+            <div class="zone">
+              <label>سرعة مقترحة لـ Habibi</label>
+              <div class="btn-row" id="ttsHabibiSpeedPresets">
+                <button type="button" class="btn btn-secondary tts-speed-preset" data-speed="0.45">بطيء 0.45</button>
+                <button type="button" class="btn btn-secondary tts-speed-preset" data-speed="0.70">هادئ 0.70</button>
+                <button type="button" class="btn btn-secondary tts-speed-preset" data-speed="1.00">عادي 1.0</button>
+              </div>
+              <div class="hint" id="ttsHabibiSpeedHint">اترك 1.0 عادةً. إن بدا سريعاً جرّب 0.45–0.70 — تجنّب أعلى من 1.0 مع Habibi.</div>
+            </div>
+
+            <div class="zone">
+              <label>بصمة الصوت (speaker_ref)</label>
+              <div class="btn-row">
+                <button id="btnTtsRefreshVoices" class="btn btn-secondary" type="button">🔄 تحديث</button>
+                <button id="btnTtsDeleteVoice" class="btn btn-secondary" type="button">🗑️ حذف</button>
+              </div>
+              <select id="ttsVoiceFilesList" class="input"><option value="">— اختر ملف بصمة —</option></select>
+              <input type="file" id="ttsVoiceFiles" multiple accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aac,.opus" class="input">
+              <button id="btnTtsUploadVoices" class="btn btn-secondary" type="button">⬆️ رفع بصمات</button>
+              <div id="ttsVoiceStatus" class="hint"></div>
+              <div id="ttsVoiceCheck" class="hint"></div>
+            </div>
           </div>
-          <div class="zone" id="ttsRefTextZone">
-            <label>ref_text لـ Habibi</label>
-            <textarea id="ttsRefText" rows="3" placeholder="مثال: عطلت عمل جزء مهم من وظيفة هذه اللوزة."></textarea>
-            <div class="hint">لا تكرّر هنا النص الكامل للتوليد. اكتب فقط ما يُسمع في ملف البصمة (جملة قصيرة تنتهي بصمت).</div>
-            <div class="hint">إذا تكرّرت جملة من ref_text في الصوت: قصّر العينة (5–10 ثوانٍ) وطابق النص معها حرفياً.</div>
-          </div>
+
           <div class="zone">
             <label>السرعة: <span id="speedValue">1.0</span>x</label>
             <input type="range" id="ttsSpeed" min="0.25" max="2" step="0.05" value="1" class="input">
-            <div class="hint hidden" id="ttsHabibiSpeedHint">Habibi: 0.5 = أبطأ بمرتين. جرّب 0.35–0.45 إذا بدا الصوت سريعاً.</div>
+          </div>
+          <div class="zone" id="ttsDiacritizeZone">
+            <label><input type="checkbox" id="ttsDiacritize"> تشكيل تلقائي (mishkal)</label>
+            <div class="hint">لـ MMS أساساً. Habibi يتجاهل التشكيل ويزيله.</div>
           </div>
           <div class="zone hidden" id="ttsSeedZone">
             <label>Seed للإيقاع (ar_mms فقط)</label>
             <input type="number" id="ttsSeed" placeholder="رقم عشوائي لتنويع الإيقاع" class="input">
           </div>
-          <div class="zone">
-            <label>بصمات المستخدم (speaker_ref لـ Habibi)</label>
-            <div class="btn-row">
-              <button id="btnTtsRefreshVoices" class="btn btn-secondary" type="button">🔄 تحديث البصمات</button>
-              <button id="btnTtsDeleteVoice" class="btn btn-secondary" type="button">🗑️ حذف المحدد</button>
-            </div>
-            <select id="ttsVoiceFilesList" class="input"><option value="">— اختر ملف بصمة —</option></select>
-            <input type="file" id="ttsVoiceFiles" multiple accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aac,.opus" class="input">
-            <button id="btnTtsUploadVoices" class="btn btn-secondary" type="button">⬆️ رفع بصمات</button>
-          </div>
           <button id="btnTts" class="btn btn-primary">🔊 توليد الصوت</button>
-          <div id="ttsVoiceStatus" class="zone hint"></div>
         </div>
         <div class="col-output">
           <h3>المخرجات</h3>

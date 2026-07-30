@@ -315,6 +315,164 @@ def delete_tts_voice_sample(
         return response_error(500, "delete_failed", str(e))
 
 
+@router.post("/suggest-dialect")
+@limiter.limit("60/minute")
+async def tts_suggest_dialect(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Suggest Habibi dialect from generation text. Body: { text, current? }."""
+    _, auth_error = _require_tts_auth(authorization, x_api_key)
+    if auth_error:
+        return auth_error
+    try:
+        body = await request.json()
+    except Exception as json_error:
+        return response_error(400, "invalid_json", str(json_error))
+    if not isinstance(body, dict):
+        return response_error(400, "invalid_body", "JSON object required")
+    from app.tts.dialect_suggest import suggest_habibi_dialect
+
+    result = suggest_habibi_dialect(
+        text=(body.get("text") or ""),
+        current=(body.get("current") or body.get("dialect") or "UNK"),
+    )
+    return JSONResponse({"ok": True, **result})
+
+
+@router.post("/voice-sample/inspect")
+@limiter.limit("30/minute")
+async def tts_inspect_voice_sample(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Inspect duration/silence/ref_text readiness for a user voice sample."""
+    try:
+        body = await request.json()
+    except Exception as json_error:
+        return response_error(400, "invalid_json", str(json_error))
+    if not isinstance(body, dict):
+        return response_error(400, "invalid_body", "JSON object required")
+
+    user_email = (body.get("user_email") or "").strip() or None
+    resolved_email, auth_error = _require_tts_auth(authorization, x_api_key, user_email)
+    if auth_error:
+        return auth_error
+    user_email = resolved_email
+    speaker_ref = (body.get("speaker_ref") or body.get("file") or "").strip()
+    if not speaker_ref:
+        return response_error(400, "validation_error", "speaker_ref is required")
+    form_ref_text = (body.get("ref_text") or "").strip() or None
+
+    try:
+        from app.tts.voice_profiles import get_user_speaker_ref_text, resolve_user_speaker_path
+        from app.tts.voice_sample_check import inspect_voice_sample
+
+        path = resolve_user_speaker_path(user_email=user_email, speaker_ref=speaker_ref)
+        if not path.exists() or not path.is_file():
+            return response_error(404, "not_found", "voice sample not found")
+        saved_ref = get_user_speaker_ref_text(user_email, path.name)
+        info = inspect_voice_sample(
+            str(path),
+            has_ref_text=bool(saved_ref),
+            ref_text=form_ref_text or saved_ref,
+        )
+        info["user_email"] = user_email
+        info["speaker_ref"] = path.name
+        info["saved_ref_text"] = saved_ref
+        return JSONResponse(info)
+    except ValueError as e:
+        return response_error(400, "validation_error", str(e))
+    except Exception as e:
+        return response_error(500, "inspect_failed", str(e))
+
+
+@router.post("/voice-sample/transcribe-ref")
+@limiter.limit("8/minute")
+async def tts_transcribe_voice_ref(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """
+    Transcribe a short voice sample with Whisper and optionally save as ref_text.
+    Body: { user_email, speaker_ref, save?=true }
+    """
+    try:
+        body = await request.json()
+    except Exception as json_error:
+        return response_error(400, "invalid_json", str(json_error))
+    if not isinstance(body, dict):
+        return response_error(400, "invalid_body", "JSON object required")
+
+    user_email = (body.get("user_email") or "").strip() or None
+    resolved_email, auth_error = _require_tts_auth(authorization, x_api_key, user_email)
+    if auth_error:
+        return auth_error
+    user_email = resolved_email
+    speaker_ref = (body.get("speaker_ref") or body.get("file") or "").strip()
+    if not speaker_ref:
+        return response_error(400, "validation_error", "speaker_ref is required")
+    save = body.get("save", True)
+    if isinstance(save, str):
+        save = save.strip().lower() in ("1", "true", "yes", "on")
+
+    try:
+        from app.asr.whisper import get_model, run_asr
+        from app.config import settings
+        from app.tts.text_utils import strip_arabic_diacritics
+        from app.tts.voice_profiles import (
+            resolve_user_speaker_path,
+            save_user_speaker_ref_text,
+        )
+        from app.tts.voice_sample_check import inspect_voice_sample
+
+        path = resolve_user_speaker_path(user_email=user_email, speaker_ref=speaker_ref)
+        if not path.exists() or not path.is_file():
+            return response_error(404, "not_found", "voice sample not found")
+
+        inspect = inspect_voice_sample(str(path), has_ref_text=True)
+        if inspect.get("duration_sec", 0) > 30:
+            return response_error(
+                400,
+                "validation_error",
+                "العينة أطول من 30 ثانية — قصّها إلى 5–10 ثوانٍ قبل استخراج ref_text",
+            )
+
+        model_name = (getattr(settings, "WHISPER_MODEL", None) or "small").strip() or "small"
+        # Prefer a lighter alias if project uses "heavy"/"normal" names via resolve_model.
+        model = get_model(model_name, device=getattr(settings, "WHISPER_DEVICE", None), compute_type=getattr(settings, "WHISPER_COMPUTE", None))
+        _meta, segments = await asyncio.to_thread(run_asr, str(path), model, "normal", False)
+        ref_text = " ".join((s.get("text") or "").strip() for s in (segments or []) if (s.get("text") or "").strip())
+        ref_text = strip_arabic_diacritics(ref_text)
+        ref_text = " ".join(ref_text.split()).strip()
+        if not ref_text:
+            return response_error(422, "empty_transcript", "لم يُستخرج نص من البصمة — جرّب عينة أوضح")
+
+        saved = False
+        if save:
+            save_user_speaker_ref_text(user_email=user_email, speaker_ref=path.name, ref_text=ref_text)
+            saved = True
+
+        return JSONResponse(
+            {
+                "ok": True,
+                "user_email": user_email,
+                "speaker_ref": path.name,
+                "ref_text": ref_text,
+                "saved": saved,
+                "duration_sec": inspect.get("duration_sec"),
+                "warnings": [w for w in (inspect.get("warnings") or []) if w.get("code") != "missing_ref_text"],
+            }
+        )
+    except ValueError as e:
+        return response_error(400, "validation_error", str(e))
+    except Exception as e:
+        return response_error(500, "transcribe_ref_failed", str(e))
+
+
 @router.post("")
 @router.post("/", include_in_schema=False)
 @limiter.limit("12/minute")
@@ -325,7 +483,7 @@ async def tts(
 ):
     """
     Synthesize speech from text. Returns WAV path and download URL.
-    Body (JSON): { "text", "voice" (optional; alias voice_id), "speed" (optional), "seed" (optional), "engine" (auto|mms|habibi|omnivoice), "speaker_ref" (optional), "ref_text" (required for habibi), "dialect" (optional for habibi), "format" (ignored; always wav) }
+    Body (JSON): { "text", "voice" (optional; alias voice_id), "speed" (optional), "seed" (optional), "engine" (auto|mms|habibi|omnivoice), "speaker_ref" (optional), "ref_text" (required for habibi), "dialect" (optional for habibi), "diacritize" (optional bool; overrides TTS_DIACRITIZE), "format" (ignored; always wav) }
     Max text length: 5000 chars. Rate: 12/minute per IP.
     download_url uses /download (legacy /asr/download still accepted).
     """
@@ -367,6 +525,31 @@ async def tts(
     speaker_ref = (body.get("speaker_ref") or "").strip() or None
     ref_text = (body.get("ref_text") or "").strip() or None
     dialect = (body.get("dialect") or "").strip() or None
+
+    diacritize = None
+    if "diacritize" in body:
+        raw_d = body.get("diacritize")
+        if isinstance(raw_d, bool):
+            diacritize = raw_d
+        elif isinstance(raw_d, (int, float)):
+            diacritize = bool(raw_d)
+        elif raw_d is None:
+            diacritize = None
+        else:
+            s = str(raw_d).strip().lower()
+            if s in ("1", "true", "yes", "on"):
+                diacritize = True
+            elif s in ("0", "false", "no", "off"):
+                diacritize = False
+
+    max_chunk_chars = None
+    raw_chunk = body.get("max_chunk_chars", body.get("habibi_max_chunk"))
+    if raw_chunk is not None and str(raw_chunk).strip() != "":
+        try:
+            max_chunk_chars = max(48, min(220, int(raw_chunk)))
+        except (TypeError, ValueError):
+            max_chunk_chars = None
+
     # format is accepted but we only output wav
 
     # Generate unique path under per-user or global tts output dir.
@@ -391,6 +574,8 @@ async def tts(
             speaker_ref=speaker_ref,
             ref_text=ref_text,
             dialect=dialect,
+            diacritize=diacritize,
+            max_chunk_chars=max_chunk_chars,
         )
     except ValueError as e:
         return response_error(400, "validation_error", str(e))
@@ -443,4 +628,6 @@ async def tts(
         "resolved_voice": result.get("resolved_voice", result.get("voice", voice)),
         "speaker_ref": result.get("speaker_ref"),
         "dialect": result.get("dialect"),
+        "diacritize": bool(result.get("diacritize", False)),
+        "max_chunk_chars": result.get("max_chunk_chars"),
     })
