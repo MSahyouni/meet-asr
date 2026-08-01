@@ -43,10 +43,11 @@
       <div class="grid">
         <div class="col-input">
           <h3>المدخلات</h3>
-          <div class="source-tabs">
-            <button class="src-btn active" data-src="file">رفع ملف/ملفات</button>
-            <button class="src-btn" data-src="mic">تسجيل من الميكروفون</button>
+          <div class="source-tabs" role="tablist" aria-label="مصدر الصوت">
+            <button type="button" class="src-btn active" data-src="file">رفع ملف/ملفات</button>
+            <button type="button" class="src-btn" data-src="mic">تسجيل من الميكروفون</button>
           </div>
+
           <div id="files-zone" class="zone drop-zone">
             <div class="file-control-row">
               <label id="filesInLabel">اختر ملفًا صوتيًا أو أكثر</label>
@@ -56,13 +57,19 @@
             <div class="hint">يمكنك اختيار ملف واحد أو عدة ملفات دفعة واحدة.</div>
             <div id="filesInStatus" class="hint hidden"></div>
           </div>
-          <div id="mic-zone" class="zone hidden">
-            <button id="micBtn" class="btn btn-secondary">بدء التسجيل</button>
-            <span id="micStatus" class="hint">جاهز للتسجيل</span>
+
+          <div id="mic-zone" class="zone mic-zone hidden">
+            <div class="mic-controls">
+              <button type="button" id="micBtn" class="btn btn-primary mic-main-btn">بدء التسجيل</button>
+              <div class="mic-status-wrap">
+                <span id="micStatus" class="hint mic-status">جاهز للتسجيل — التحويل يظهر أثناء الكلام</span>
+              </div>
+            </div>
+            <p class="hint mic-help">شبه-حي: يظهر النص أثناء الكلام. بعد الإيقاف استمع للمعاينة ثم احفظ الصوت أو تجاهله.</p>
           </div>
+
           <details class="accordion">
             <summary>خيارات النموذج</summary>
-            <!-- نموذج Whisper ثابت على heavy -->
             <label>اللهجة <select id="whisperMode"><option value="normal">فصحى</option><option value="whisper" selected>عامية سورية</option></select></label>
             <label>تحسين الصوت <select id="enhance"><option value="off" selected>بدون (أفضل للتفريغ)</option><option value="light">خفيف</option><option value="full">كامل</option></select></label>
             <label>مستوى التحسين <select id="enhanceLevel"><option value="light">light</option><option value="medium" selected>medium</option><option value="strong">strong</option><option value="aggressive">aggressive</option></select></label>
@@ -73,22 +80,53 @@
             <label>عتبة ربط البصمة <input type="number" id="enrollThreshold" min="0.5" max="0.9" step="0.01" value="0.65" class="input input-sm"></label>
             <label>الجهاز <select id="deviceSel"><option value="auto">auto</option><option value="cpu">cpu</option><option value="cuda">cuda</option></select></label>
             <label>الدقة <select id="computeSel"><option value="auto">auto</option><option value="int8">int8</option><option value="float16">float16</option><option value="float32">float32</option></select></label>
+            <p class="hint">خيارات التحسين وتمييز المتكلمين تُطبَّق عند رفع الملفات. التسجيل الحي يستخدم اللهجة والجهاز فقط.</p>
           </details>
-          <div class="btn-row">
-            <button id="btnSend" class="btn btn-primary">بدء التحويل</button>
+
+          <div id="asrBatchActions" class="btn-row">
+            <button type="button" id="btnSend" class="btn btn-primary">بدء التحويل</button>
           </div>
         </div>
+
         <div class="col-output">
           <h3>المخرجات</h3>
-          <textarea id="outText" rows="10" readonly placeholder="النص الكامل..."></textarea>
+
+          <div class="output-block">
+            <label class="output-label" for="outText">النص</label>
+            <textarea id="outText" rows="10" readonly placeholder="النص يظهر هنا أثناء التسجيل أو بعد التحويل..."></textarea>
+          </div>
+
+          <div id="liveAudioBar" class="live-audio-bar hidden">
+            <div class="live-audio-head">
+              <strong>معاينة التسجيل</strong>
+              <span id="liveDurationLabel" class="hint live-duration"></span>
+            </div>
+            <audio id="livePreviewAudio" controls class="audio-player"></audio>
+            <p class="hint live-dismiss-note">التجاهل يحذف الصوت المؤقت من الخادم فوراً ولن يُحفظ ملف.</p>
+            <div class="btn-row live-audio-actions">
+              <button type="button" id="btnLiveSaveAudio" class="btn btn-primary">حفظ الصوت</button>
+              <button type="button" id="btnLiveDismissAudio" class="btn btn-secondary">تجاهل</button>
+            </div>
+            <div id="liveAudioStatus" class="hint"></div>
+          </div>
+
           <details class="accordion segments-panel">
             <summary>المقاطع مع المتكلمين</summary>
             <pre id="outSegments" class="segments-text"></pre>
           </details>
-          <textarea id="outSummary" rows="4" readonly placeholder="الملخص..."></textarea>
-          <input type="text" id="outKeywords" readonly placeholder="الكلمات المفتاحية...">
-          <label>وضع التلخيص <select id="summaryMode"><option value="ultra" selected>ultra</option><option value="lite">lite</option></select></label>
-          <button id="btnSummary" class="btn btn-secondary">تلخيص النص (من النص أعلاه)</button>
+
+          <div class="output-block output-summary-block">
+            <label class="output-label" for="outSummary">التلخيص</label>
+            <textarea id="outSummary" rows="4" readonly placeholder="الملخص..."></textarea>
+            <input type="text" id="outKeywords" readonly placeholder="الكلمات المفتاحية..." class="input">
+            <div class="summary-actions">
+              <label class="inline-label">وضع التلخيص
+                <select id="summaryMode"><option value="ultra" selected>ultra</option><option value="lite">lite</option></select>
+              </label>
+              <button type="button" id="btnSummary" class="btn btn-secondary">تلخيص النص</button>
+            </div>
+          </div>
+
           <div id="dlLinks" class="links"></div>
         </div>
       </div>

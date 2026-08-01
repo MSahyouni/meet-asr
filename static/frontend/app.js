@@ -90,6 +90,12 @@
       deleteSpeaker: "/asr/delete-speaker",
       speakerFiles: "/asr/speaker-files",
       speakerFile: "/asr/speaker-file",
+      liveStart: "/asr/live/start",
+      liveChunk: "/asr/live/chunk",
+      liveFinalize: "/asr/live/finalize",
+      liveSaveAudio: "/asr/live/save-audio",
+      liveSession: "/asr/live/session",
+      liveWarmup: "/asr/live/warmup",
     },
     nlp: {
       summarize: "/nlp/summarize",
@@ -122,6 +128,10 @@
 
   function setActiveSource(srcName) {
     if (!srcName) return;
+    var prev = (qs(".src-btn.active") && qs(".src-btn.active").dataset.src) || "file";
+    if (prev === "mic" && srcName !== "mic" && typeof window._liveAsrDismissIfAny === "function") {
+      window._liveAsrDismissIfAny();
+    }
     qsa(".src-btn").forEach(function (x) { x.classList.remove("active"); });
     var srcBtn = qs('.src-btn[data-src="' + srcName + '"]');
     if (srcBtn) srcBtn.classList.add("active");
@@ -129,14 +139,19 @@
     if (srcName === "file") {
       if (filesZone) filesZone.classList.remove("hidden");
       if (micZone) micZone.classList.add("hidden");
+      var batch = getId("asrBatchActions");
+      if (batch) batch.classList.remove("hidden");
     } else {
       if (filesZone) filesZone.classList.add("hidden");
       if (micZone) micZone.classList.remove("hidden");
+      var batchMic = getId("asrBatchActions");
+      if (batchMic) batchMic.classList.add("hidden");
       var filesIn = getId("filesIn");
       if (filesIn) {
         filesIn.value = "";
         updateMultiFilesStatus();
       }
+      if (typeof window._liveAsrWarmup === "function") window._liveAsrWarmup();
     }
   }
 
@@ -303,6 +318,7 @@
 
   window.addEventListener("beforeunload", function () {
     saveUIState();
+    if (typeof window._liveAsrPurgeBeacon === "function") window._liveAsrPurgeBeacon();
   });
 
   document.addEventListener("visibilitychange", function () {
@@ -377,7 +393,8 @@
   var PROTECTED_CONTROL_IDS = [
     "btnSend", "btnSummary", "micBtn", "btnTts", "btnEnroll", "spkMicBtn",
     "btnRefreshSpeakers", "btnDeleteSpeaker", "btnTtsUploadVoices",
-    "btnTtsRefreshVoices", "btnTtsDeleteVoice", "filesIn"
+    "btnTtsRefreshVoices", "btnTtsDeleteVoice", "filesIn",
+    "btnLiveSaveAudio", "btnLiveDismissAudio"
   ];
 
   function syncAuthGates() {
@@ -474,6 +491,9 @@
     if (ttsUserEmail && session.email) ttsUserEmail.value = session.email;
     syncAuthGates();
     queueUIStateSave();
+    if (session.token && session.email && typeof window._liveAsrWarmup === "function") {
+      window._liveAsrWarmup();
+    }
   }
 
   function setText(id, text) {
@@ -715,11 +735,25 @@
     queuedTranscribe: "تم إرسال مهمة التحويل للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.",
     errNeedMic: "يرجى تسجيل صوت أولًا.",
     errNeedInput: "يرجى اختيار ملف/ملفات صوتية، أو التسجيل من الميكروفون.",
+    errMicUseLive: "مصدر الميكروفون يحوّل مباشرة أثناء التسجيل. اضغط «بدء التسجيل» ثم أوقف عند الانتهاء.",
     sending: "جاري الإرسال...",
-    micSaved: "تم حفظ التسجيل. اضغط 'بدء التحويل'.",
+    micReady: "جاهز للتسجيل — التحويل يظهر أثناء الكلام",
+    micLive: "جارٍ التفريغ…",
+    micFinalizing: "جاري إنهاء التفريغ...",
+    micDone: "انتهى التسجيل. استمع للمعاينة ثم احفظ أو تجاهل.",
     micUnsupported: "هذا المتصفح لا يدعم التسجيل من الميكروفون.",
-    micRecording: "جاري التسجيل... اضغط 'إيقاف التسجيل' عند الانتهاء.",
-    micAccessFailed: "فشل الوصول للميكروفون: "
+    micRecording: "جاري التسجيل شبه-الحي... اضغط «إيقاف التسجيل» عند الانتهاء.",
+    micAccessFailed: "فشل الوصول للميكروفون: ",
+    liveSaveOk: "تم حفظ الصوت على الخادم.",
+    liveDismissed: "تم تجاهل الصوت (حُذف من الخادم ولم يُحفظ).",
+    liveNeedLogin: "يلزم تسجيل الدخول للتسجيل شبه-الحي.",
+    liveStartFailed: "فشل بدء جلسة التسجيل الحي: ",
+    liveChunkFailed: "تعذّر تحديث النص الحي: ",
+    liveSaveFailed: "فشل حفظ الصوت: ",
+    liveWarming: "جاري تجهيز نموذج التفريغ…",
+    liveWarmOk: "جاهز للتسجيل — التحويل يظهر أثناء الكلام",
+    liveSoftStop: "توقف التسجيل بسبب انقطاع الشبكة. النص الظاهر محفوظ محلياً — يمكنك الحفظ أو التجاهل بعد إنهاء الجلسة إن وُجدت.",
+    liveRetrying: "جارٍ إعادة المحاولة…",
   };
 
   var SUMMARY_MESSAGES = {
@@ -960,16 +994,8 @@
     var fd = new FormData();
 
     if (src && src.dataset.src === "mic") {
-      var recBlob = window._lastRecordedBlob;
-      if (!recBlob) {
-        return { error: ASR_MESSAGES.errNeedMic };
-      }
-      fd.append("file", recBlob, "recording.webm");
-      appendTranscribeOptions(fd);
-      return {
-        formData: fd,
-        loadingText: ASR_MESSAGES.loadingMic,
-      };
+      // Mic uses pseudo-live ASR; no separate batch upload unless a leftover blob exists for advanced re-run.
+      return { error: ASR_MESSAGES.errMicUseLive };
     }
 
     var multiErr = validateAudioFilesList(filesIn && filesIn.files, 1);
@@ -1049,37 +1075,506 @@
       });
   });
 
-  // تسجيل الميكروفون
-  var mediaRecorder = null, recordedChunks = [];
-  getId("micBtn").addEventListener("click", function () {
-    var btn = getId("micBtn"), status = getId("micStatus");
+  // تسجيل الميكروفون — شبه-حي (timeslice + /asr/live/*)
+  var LIVE_TIMESLICE_MS = 2500;
+  var LIVE_CHUNK_FAIL_SOFT_STOP = 3;
+  var mediaRecorder = null;
+  var recordedChunks = [];
+  var liveSessionId = null;
+  var liveChunkBusy = false;
+  var liveChunkQueued = false;
+  var liveStopping = false;
+  var livePreviewUrl = null;
+  var liveChunkFailStreak = 0;
+  var liveLastDurationSec = 0;
+  var liveWarmupInFlight = null;
+  var liveWarmupDone = false;
+
+  function liveMimeType() {
+    if (typeof MediaRecorder === "undefined") return "audio/webm";
+    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return "audio/webm;codecs=opus";
+    if (MediaRecorder.isTypeSupported("audio/webm")) return "audio/webm";
+    return "";
+  }
+
+  function setMicStatusBusy(busy, text) {
+    var status = getId("micStatus");
+    if (!status) return;
+    if (typeof text === "string") status.textContent = text;
+    status.classList.toggle("live-status-busy", !!busy);
+  }
+
+  function formatLiveDuration(sec) {
+    var s = Math.max(0, Math.round(Number(sec) || 0));
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return m + ":" + (r < 10 ? "0" : "") + r;
+  }
+
+  function hideLiveAudioBar() {
+    var bar = getId("liveAudioBar");
+    if (bar) bar.classList.add("hidden");
+    var st = getId("liveAudioStatus");
+    if (st) st.textContent = "";
+    var dur = getId("liveDurationLabel");
+    if (dur) dur.textContent = "";
+    var audio = getId("livePreviewAudio");
+    if (audio) {
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    if (livePreviewUrl) {
+      try { URL.revokeObjectURL(livePreviewUrl); } catch (e) {}
+      livePreviewUrl = null;
+    }
+  }
+
+  function showLiveAudioBar(blob, durationSec) {
+    var bar = getId("liveAudioBar");
+    if (!bar) return;
+    bar.classList.remove("hidden");
+    var audio = getId("livePreviewAudio");
+    if (audio && blob) {
+      if (livePreviewUrl) {
+        try { URL.revokeObjectURL(livePreviewUrl); } catch (e) {}
+      }
+      livePreviewUrl = URL.createObjectURL(blob);
+      audio.src = livePreviewUrl;
+    }
+    var dur = getId("liveDurationLabel");
+    var sec = durationSec != null ? durationSec : liveLastDurationSec;
+    if (dur) {
+      dur.textContent = sec > 0
+        ? ("المدة: " + formatLiveDuration(sec))
+        : "";
+    }
+    var st = getId("liveAudioStatus");
+    if (st) st.textContent = "";
+  }
+
+  function deleteLiveSession(sid) {
+    if (!sid) return Promise.resolve();
+    var email = (session && session.email) || "";
+    var url = API.asr.liveSession
+      + "?session_id=" + encodeURIComponent(sid)
+      + "&user_email=" + encodeURIComponent(email);
+    return fetch(url, { method: "DELETE", headers: getHeaders(), keepalive: true })
+      .catch(function () { /* ignore */ });
+  }
+
+  function purgeLiveSessionLocal() {
+    var sid = liveSessionId;
+    liveSessionId = null;
+    liveChunkBusy = false;
+    liveChunkQueued = false;
+    liveStopping = false;
+    liveChunkFailStreak = 0;
+    recordedChunks = [];
+    window._lastRecordedBlob = null;
+    setMicStatusBusy(false);
+    hideLiveAudioBar();
+    var saveBtn = getId("btnLiveSaveAudio");
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      delete saveBtn.dataset.saved;
+    }
+    return sid;
+  }
+
+  window._liveAsrPurgeBeacon = function () {
+    var sid = liveSessionId;
+    if (!sid) return;
+    var email = (session && session.email) || "";
+    var url = API.asr.liveSession
+      + "?session_id=" + encodeURIComponent(sid)
+      + "&user_email=" + encodeURIComponent(email);
+    try {
+      fetch(url, { method: "DELETE", headers: getHeaders(), keepalive: true });
+    } catch (e) {}
+    liveSessionId = null;
+  };
+
+  window._liveAsrDismissIfAny = function () {
     if (mediaRecorder && mediaRecorder.state === "recording") {
-      mediaRecorder.stop();
+      try { mediaRecorder.stop(); } catch (e) {}
+    }
+    var sid = purgeLiveSessionLocal();
+    var btn = getId("micBtn");
+    if (btn) {
       btn.textContent = "بدء التسجيل";
-      status.textContent = ASR_MESSAGES.micSaved;
-      return;
+      btn.classList.add("btn-primary");
+      btn.classList.remove("btn-secondary");
     }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      status.textContent = ASR_MESSAGES.micUnsupported;
-      return;
+    setMicStatusBusy(false, ASR_MESSAGES.micReady);
+    if (sid) deleteLiveSession(sid);
+  };
+
+  window._liveAsrWarmup = function () {
+    if (!isLoggedIn() || liveWarmupDone) return liveWarmupInFlight || Promise.resolve();
+    if (liveWarmupInFlight) return liveWarmupInFlight;
+    var fd = new FormData();
+    fd.append("user_email", session.email || "");
+    var deviceEl = getId("deviceSel");
+    var computeEl = getId("computeSel");
+    var deviceVal = deviceEl ? deviceEl.value : "auto";
+    var computeVal = computeEl ? computeEl.value : "auto";
+    if (deviceVal && deviceVal !== "auto") fd.append("device", deviceVal);
+    if (computeVal && computeVal !== "auto") fd.append("compute", computeVal);
+    var src = qs(".src-btn.active");
+    var onMic = src && src.dataset.src === "mic";
+    if (onMic) setMicStatusBusy(true, ASR_MESSAGES.liveWarming);
+    liveWarmupInFlight = fetchWithTimeout(API.asr.liveWarmup, {
+      method: "POST",
+      headers: getHeaders(),
+      body: fd,
+    }, 180)
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.statusText || "warmup failed");
+        return r.json();
+      })
+      .then(function () {
+        liveWarmupDone = true;
+        if (onMic && !(mediaRecorder && mediaRecorder.state === "recording")) {
+          setMicStatusBusy(false, ASR_MESSAGES.liveWarmOk);
+        }
+      })
+      .catch(function () {
+        if (onMic && !(mediaRecorder && mediaRecorder.state === "recording")) {
+          setMicStatusBusy(false, ASR_MESSAGES.micReady);
+        }
+      })
+      .finally(function () {
+        liveWarmupInFlight = null;
+      });
+    return liveWarmupInFlight;
+  };
+
+  function liveCumulativeBlob() {
+    var mime = liveMimeType() || "audio/webm";
+    return new Blob(recordedChunks, { type: mime.split(";")[0] || "audio/webm" });
+  }
+
+  function softStopLiveRecording(reasonText) {
+    liveStopping = true;
+    liveChunkQueued = false;
+    var btn = getId("micBtn");
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+      try { mediaRecorder.stop(); } catch (e) {}
     }
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(function (stream) {
-        recordedChunks = [];
-        mediaRecorder = new MediaRecorder(stream);
-        mediaRecorder.ondataavailable = function (e) { if (e.data.size) recordedChunks.push(e.data); };
-        mediaRecorder.onstop = function () {
-          stream.getTracks().forEach(function (t) { t.stop(); });
-          window._lastRecordedBlob = new Blob(recordedChunks, { type: "audio/webm" });
-        };
-        mediaRecorder.start();
-        btn.textContent = "إيقاف التسجيل";
-        status.textContent = ASR_MESSAGES.micRecording;
+    if (btn) {
+      btn.textContent = "بدء التسجيل";
+      btn.classList.add("btn-primary");
+      btn.classList.remove("btn-secondary");
+    }
+    setMicStatusBusy(false, reasonText || ASR_MESSAGES.liveSoftStop);
+    var st = getId("liveAudioStatus");
+    if (st) st.textContent = reasonText || ASR_MESSAGES.liveSoftStop;
+  }
+
+  function postLiveChunkOnce(blob, isRetry) {
+    var fd = new FormData();
+    fd.append("session_id", liveSessionId);
+    fd.append("user_email", session.email || "");
+    fd.append("audio", blob, "live.webm");
+    if (isRetry) setMicStatusBusy(true, ASR_MESSAGES.liveRetrying);
+    else setMicStatusBusy(true, ASR_MESSAGES.micLive);
+    return fetchWithTimeout(API.asr.liveChunk, {
+      method: "POST",
+      headers: getHeaders(),
+      body: fd,
+    }, 120)
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (j) {
+            throw new Error(j.detail || j.error || r.statusText);
+          }).catch(function (e) {
+            if (e && e.message) throw e;
+            throw new Error(r.statusText || "chunk failed");
+          });
+        }
+        return r.json();
+      });
+  }
+
+  function postLiveChunk() {
+    // Only one in-flight request; when busy, mark that the latest blob should run next.
+    if (!liveSessionId || liveStopping) return Promise.resolve();
+    if (liveChunkBusy) {
+      liveChunkQueued = true;
+      return Promise.resolve();
+    }
+    if (!recordedChunks.length) return Promise.resolve();
+    liveChunkBusy = true;
+    liveChunkQueued = false;
+    var blob = liveCumulativeBlob();
+    if (!blob.size) {
+      liveChunkBusy = false;
+      return Promise.resolve();
+    }
+
+    return postLiveChunkOnce(blob, false)
+      .catch(function (e) {
+        if (liveStopping || !liveSessionId) throw e;
+        var retryBlob = liveCumulativeBlob();
+        if (!retryBlob.size) throw e;
+        return postLiveChunkOnce(retryBlob, true);
+      })
+      .then(function (data) {
+        liveChunkFailStreak = 0;
+        if (data && typeof data.text === "string") {
+          getId("outText").value = data.text;
+        }
+        if (data && data.duration_sec != null) liveLastDurationSec = Number(data.duration_sec) || liveLastDurationSec;
+        if (!liveStopping) setMicStatusBusy(true, ASR_MESSAGES.micLive);
       })
       .catch(function (e) {
-        status.textContent = ASR_MESSAGES.micAccessFailed + (e.message || String(e));
+        liveChunkFailStreak += 1;
+        setMicStatusBusy(false, ASR_MESSAGES.liveChunkFailed + (e.message || String(e)));
+        if (liveChunkFailStreak >= LIVE_CHUNK_FAIL_SOFT_STOP) {
+          softStopLiveRecording(ASR_MESSAGES.liveSoftStop);
+        }
+      })
+      .finally(function () {
+        liveChunkBusy = false;
+        if (liveChunkQueued && !liveStopping && liveSessionId) {
+          postLiveChunk();
+        } else if (!liveStopping && mediaRecorder && mediaRecorder.state === "recording") {
+          setMicStatusBusy(true, ASR_MESSAGES.micRecording);
+        } else if (!liveStopping) {
+          setMicStatusBusy(false);
+        }
+      });
+  }
+
+  function finalizeLiveSession(blob) {
+    if (!liveSessionId) {
+      setMicStatusBusy(false, ASR_MESSAGES.micReady);
+      return Promise.resolve();
+    }
+    setMicStatusBusy(true, ASR_MESSAGES.micFinalizing);
+    var sid = liveSessionId;
+    var chain = Promise.resolve();
+    if (blob && blob.size) {
+      var fdChunk = new FormData();
+      fdChunk.append("session_id", sid);
+      fdChunk.append("user_email", session.email || "");
+      fdChunk.append("audio", blob, "live.webm");
+      chain = fetchWithTimeout(API.asr.liveChunk, {
+        method: "POST",
+        headers: getHeaders(),
+        body: fdChunk,
+      }, 180).then(function (r) {
+        if (!r.ok) return null;
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (data && typeof data.text === "string") getId("outText").value = data.text;
+        if (data && data.duration_sec != null) liveLastDurationSec = Number(data.duration_sec) || liveLastDurationSec;
+      }).catch(function () { /* finalize still runs */ });
+    }
+    return chain.then(function () {
+      var fd = new FormData();
+      fd.append("session_id", sid);
+      fd.append("user_email", session.email || "");
+      return fetchWithTimeout(API.asr.liveFinalize, {
+        method: "POST",
+        headers: getHeaders(),
+        body: fd,
+      }, 300);
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (j) {
+          throw new Error(j.detail || j.error || r.statusText);
+        });
+      }
+      return r.json();
+    }).then(function (data) {
+      if (data && typeof data.text === "string") getId("outText").value = data.text;
+      if (data && data.duration_sec != null) liveLastDurationSec = Number(data.duration_sec) || liveLastDurationSec;
+      window._lastRecordedBlob = blob || null;
+      showLiveAudioBar(blob, liveLastDurationSec);
+      setMicStatusBusy(false, ASR_MESSAGES.micDone);
+    }).catch(function (e) {
+      setMicStatusBusy(false, ASR_MESSAGES.errorPrefix + (e.message || String(e)));
+      showLiveAudioBar(blob, liveLastDurationSec);
+    });
+  }
+
+  getId("micBtn").addEventListener("click", function () {
+    var btn = getId("micBtn");
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+      liveStopping = true;
+      liveChunkQueued = false;
+      mediaRecorder.stop();
+      btn.textContent = "بدء التسجيل";
+      btn.classList.add("btn-primary");
+      btn.classList.remove("btn-secondary");
+      setMicStatusBusy(true, ASR_MESSAGES.micFinalizing);
+      return;
+    }
+    if (!requireLogin(ASR_MESSAGES.liveNeedLogin)) {
+      setMicStatusBusy(false, ASR_MESSAGES.liveNeedLogin);
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined") {
+      setMicStatusBusy(false, ASR_MESSAGES.micUnsupported);
+      return;
+    }
+
+    var prevSid = purgeLiveSessionLocal();
+    if (prevSid) deleteLiveSession(prevSid);
+
+    var mime = liveMimeType();
+    window._liveAsrWarmup();
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(function (stream) {
+        var fd = new FormData();
+        fd.append("user_email", session.email || "");
+        var whisperModeEl = getId("whisperMode");
+        var deviceEl = getId("deviceSel");
+        var computeEl = getId("computeSel");
+        fd.append("whisper_mode", whisperModeEl ? whisperModeEl.value : "normal");
+        var deviceVal = deviceEl ? deviceEl.value : "auto";
+        var computeVal = computeEl ? computeEl.value : "auto";
+        if (deviceVal && deviceVal !== "auto") fd.append("device", deviceVal);
+        if (computeVal && computeVal !== "auto") fd.append("compute", computeVal);
+        return fetchWithTimeout(API.asr.liveStart, {
+          method: "POST",
+          headers: getHeaders(),
+          body: fd,
+        }, 30).then(function (r) {
+          if (!r.ok) {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            return r.json().then(function (j) {
+              throw new Error(j.detail || j.error || r.statusText);
+            });
+          }
+          return r.json().then(function (data) {
+            return { stream: stream, data: data };
+          });
+        });
+      })
+      .then(function (pack) {
+        var stream = pack.stream;
+        liveSessionId = pack.data && pack.data.session_id;
+        if (!liveSessionId) {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          throw new Error("missing session_id");
+        }
+        recordedChunks = [];
+        liveStopping = false;
+        liveChunkFailStreak = 0;
+        liveLastDurationSec = 0;
+        hideLiveAudioBar();
+        getId("outText").value = "";
+        getId("outSummary").value = "";
+        getId("outKeywords").value = "";
+        getId("dlLinks").innerHTML = "";
+        getId("outSegments").textContent = "";
+
+        var opts = mime ? { mimeType: mime } : undefined;
+        try {
+          mediaRecorder = opts ? new MediaRecorder(stream, opts) : new MediaRecorder(stream);
+        } catch (e) {
+          mediaRecorder = new MediaRecorder(stream);
+        }
+        mediaRecorder.ondataavailable = function (e) {
+          if (e.data && e.data.size) recordedChunks.push(e.data);
+          // Throttle: skip starting a new upload while one is in flight; queue latest only.
+          if (!liveStopping) postLiveChunk();
+        };
+        mediaRecorder.onstop = function () {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          var blob = liveCumulativeBlob();
+          window._lastRecordedBlob = blob;
+          var waitBusy = function (n) {
+            if (!liveChunkBusy || n <= 0) return finalizeLiveSession(blob);
+            return new Promise(function (resolve) {
+              setTimeout(function () { resolve(waitBusy(n - 1)); }, 200);
+            });
+          };
+          waitBusy(25);
+        };
+        mediaRecorder.start(LIVE_TIMESLICE_MS);
+        btn.textContent = "إيقاف التسجيل";
+        btn.classList.remove("btn-primary");
+        btn.classList.add("btn-secondary");
+        setMicStatusBusy(true, ASR_MESSAGES.micRecording);
+      })
+      .catch(function (e) {
+        liveSessionId = null;
+        var msg = ASR_MESSAGES.micAccessFailed + (e.message || String(e));
+        if (String(e.message || "").indexOf("session") >= 0 || String(e.message || "").indexOf("live") >= 0) {
+          msg = ASR_MESSAGES.liveStartFailed + (e.message || String(e));
+        }
+        setMicStatusBusy(false, msg);
       });
   });
+
+  var btnLiveSave = getId("btnLiveSaveAudio");
+  if (btnLiveSave) {
+    btnLiveSave.addEventListener("click", function () {
+      if (!liveSessionId) return;
+      if (!requireLogin(ASR_MESSAGES.liveNeedLogin)) return;
+      var st = getId("liveAudioStatus");
+      setButtonBusy(btnLiveSave, true, "جاري الحفظ...");
+      var fd = new FormData();
+      fd.append("session_id", liveSessionId);
+      fd.append("user_email", session.email || "");
+      fetchWithTimeout(API.asr.liveSaveAudio, {
+        method: "POST",
+        headers: getHeaders(),
+        body: fd,
+      }, 60)
+        .then(function (r) {
+          if (!r.ok) {
+            return r.json().then(function (j) {
+              throw new Error(j.detail || j.error || r.statusText);
+            });
+          }
+          return r.json();
+        })
+        .then(function (data) {
+          if (st) st.textContent = ASR_MESSAGES.liveSaveOk;
+          if (data && data.download_url) {
+            var links = getId("dlLinks");
+            if (links) {
+              var a = document.createElement("a");
+              a.href = data.download_url;
+              a.textContent = "تحميل التسجيل المحفوظ";
+              a.target = "_blank";
+              a.rel = "noopener";
+              links.appendChild(a);
+            }
+          }
+          setMicStatusBusy(false, ASR_MESSAGES.liveSaveOk);
+          btnLiveSave.dataset.saved = "1";
+        })
+        .catch(function (e) {
+          if (st) st.textContent = ASR_MESSAGES.liveSaveFailed + (e.message || String(e));
+        })
+        .finally(function () {
+          setButtonBusy(btnLiveSave, false);
+          if (btnLiveSave.dataset.saved === "1") btnLiveSave.disabled = true;
+        });
+    });
+  }
+
+  var btnLiveDismiss = getId("btnLiveDismissAudio");
+  if (btnLiveDismiss) {
+    btnLiveDismiss.addEventListener("click", function () {
+      var sid = purgeLiveSessionLocal();
+      if (sid) deleteLiveSession(sid);
+      setMicStatusBusy(false, ASR_MESSAGES.liveDismissed);
+      var saveBtn = getId("btnLiveSaveAudio");
+      if (saveBtn) saveBtn.disabled = false;
+    });
+  }
+
+  // Warm Whisper after restore if already on mic / logged in
+  if (isLoggedIn()) {
+    var activeSrc = qs(".src-btn.active");
+    if (activeSrc && activeSrc.dataset.src === "mic") window._liveAsrWarmup();
+  }
 
   // عرض قيمة السرعة + إعدادات Habibi
   var speedSlider = getId("ttsSpeed");

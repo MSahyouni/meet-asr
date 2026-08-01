@@ -2,10 +2,11 @@
 
 from fastapi import APIRouter
 
-from . import transcribe, summarize, nlp, speakers, export, models, jobs, tts
+from . import transcribe, live_asr, summarize, nlp, speakers, export, models, jobs, tts
 
 router = APIRouter()
 router.include_router(transcribe.router, tags=["ASR"])
+router.include_router(live_asr.router, tags=["ASR Live"])
 router.include_router(summarize.router, tags=["Summarization"])
 router.include_router(nlp.router, tags=["NLP"])
 router.include_router(speakers.router, tags=["Speakers"])
