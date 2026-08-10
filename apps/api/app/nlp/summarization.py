@@ -1,4 +1,4 @@
-# nlp/summarization.py — تلخيص ultra فقط (محاضر اجتماعات + map-reduce)
+# nlp/summarization.py — تلخيص Jais-2 فقط (محاضر اجتماعات + map-reduce)
 import os
 import re
 from typing import List, Tuple
@@ -40,17 +40,17 @@ def _release_asr_before_nlp() -> None:
 
 
 def unload_summarizer_pipes(which: str = "all") -> None:
-    """which: all | ultra (lite أُزيل)."""
+    """which: all | jais (أسماء قديمة ultra/lite مقبولة)."""
     global _ULTRA_PIPE, _ULTRA_TOKENIZER
     w = (which or "all").lower()
-    if w in ("all", "ultra", "lite") and _ULTRA_PIPE is not None:
+    if w in ("all", "jais", "jais2", "ultra", "lite") and _ULTRA_PIPE is not None:
         try:
             del _ULTRA_PIPE
         except Exception:
             pass
         _ULTRA_PIPE = None
         _ULTRA_TOKENIZER = None
-        print("[SUM] ultra summarizer unloaded")
+        print("[SUM] jais2 unloaded")
     try:
         from app.infrastructure.gpu_memory import cuda_empty_cache
 
@@ -60,8 +60,12 @@ def unload_summarizer_pipes(which: str = "all") -> None:
 
 
 def warm_ultra_in_background() -> None:
-    """حمّل Jais مسبقاً بعد انتهاء ASR حتى يكون التلخيص التالي أسرع."""
-    flag = os.getenv("SUM_WARM_ULTRA", "1").strip().lower()
+    """حمّل Jais-2 مسبقاً بعد انتهاء ASR حتى يكون التلخيص التالي أسرع."""
+    flag = (
+        os.getenv("SUM_WARM_JAIS")
+        or os.getenv("SUM_WARM_ULTRA")
+        or "1"
+    ).strip().lower()
     if flag not in ("1", "true", "yes", "on"):
         return
     if _ULTRA_PIPE is not None:
@@ -71,22 +75,30 @@ def warm_ultra_in_background() -> None:
 
     def _run() -> None:
         try:
-            print("[SUM] warming ultra summarizer in background…")
+            print("[SUM] warming jais2 in background…")
             _load_ultra_pipe()
-            print("[SUM] ultra warm ready")
+            print("[SUM] jais2 warm ready")
         except Exception as e:
-            print(f"[SUM] ultra warm skipped: {e}")
+            print(f"[SUM] jais2 warm skipped: {e}")
 
-    threading.Thread(target=_run, daemon=True, name="warm-ultra").start()
+    threading.Thread(target=_run, daemon=True, name="warm-jais2").start()
+
+
+def warm_jais_in_background() -> None:
+    warm_ultra_in_background()
 
 
 def schedule_warm_ultra_after_asr() -> None:
-    """حرّر Whisper ثم ابدأ تسخين التلخيص (بعد إنهاء تفريغ)."""
+    """حرّر Whisper ثم ابدأ تسخين Jais-2 (بعد إنهاء تفريغ)."""
     try:
         _release_asr_before_nlp()
     except Exception as e:
         print(f"[SUM] ASR release before warm skipped: {e}")
     warm_ultra_in_background()
+
+
+def schedule_warm_jais_after_asr() -> None:
+    schedule_warm_ultra_after_asr()
 
 
 def _estimate_tokens(text: str) -> int:
@@ -149,7 +161,7 @@ def _summarize_ultra(text: str, stage: str = "final") -> str:
         import torch
 
         max_new_tokens = max(120, int(os.getenv("SUM_ULTRA_MAX_NEW_TOKENS", "280")))
-        prompt_mode = normalize_prompt_mode(settings.ULTRA_PROMPT_MODE)
+        prompt_mode = normalize_prompt_mode(settings.JAIS_PROMPT_MODE)
         tok = _ULTRA_TOKENIZER or getattr(p, "tokenizer", None)
         model = getattr(p, "model", None)
         messages = build_ultra_messages(text, prompt_mode=prompt_mode, stage=stage)
@@ -231,14 +243,14 @@ def _summarize_ultra(text: str, stage: str = "final") -> str:
 
         if summary:
             summary = polish_summary_ar(summary)
-            set_summary_source(f"ultra:{settings.ULTRA_MODEL}")
+            set_summary_source(f"jais2:{settings.JAIS_MODEL}")
         else:
-            print("[ULTRA] summarize produced empty text")
+            print("[SUM] jais2 produced empty text")
         return summary
     except Exception as e:
         import traceback
 
-        print(f"[ULTRA] summarize failed: {type(e).__name__}: {e}")
+        print(f"[SUM] jais2 failed: {type(e).__name__}: {e}")
         traceback.print_exc()
         return ""
 
@@ -264,15 +276,24 @@ def _load_ultra_pipe_unlocked():
             ensure_dtensor_export()
         except Exception:
             pass
-        print("[SUM] Loading ultra Arabic summarizer with Transformers...")
-        allow_download = os.getenv("ULTRA_ALLOW_DOWNLOAD", "1").strip().lower() in ("1", "true", "yes")
-        ultra_subdir = "summarizers/ultra/" + re.sub(r"[^A-Za-z0-9._-]+", "_", settings.ULTRA_MODEL.strip())
-        local_path = ensure_local(settings.ULTRA_MODEL, ultra_subdir, allow_download=allow_download)
+        print("[SUM] Loading Jais-2 summarizer…")
+        allow_download = (
+            os.getenv("JAIS_ALLOW_DOWNLOAD")
+            or os.getenv("ULTRA_ALLOW_DOWNLOAD")
+            or "0"
+        ).strip().lower() in ("1", "true", "yes")
+        slug = re.sub(r"[^A-Za-z0-9._-]+", "_", settings.JAIS_MODEL.strip())
+        # Prefer existing local install under summarizers/ultra/ (no re-download).
+        from pathlib import Path
+
+        ultra_dir = Path(settings.MODELS_DIR) / "summarizers" / "ultra" / slug
+        jais_subdir = f"summarizers/ultra/{slug}" if ultra_dir.exists() else f"summarizers/jais2/{slug}"
+        local_path = ensure_local(settings.JAIS_MODEL, jais_subdir, allow_download=allow_download)
         # Jais-2 ships tokenizer.json only — slow path (use_fast=False) raises NotImplementedError.
         tok = AutoTokenizer.from_pretrained(
             local_path,
             token=settings.HF_TOKEN,
-            trust_remote_code=settings.ULTRA_TRUST_REMOTE,
+            trust_remote_code=settings.JAIS_TRUST_REMOTE,
             use_fast=True,
         )
         _ULTRA_TOKENIZER = tok
@@ -293,7 +314,7 @@ def _load_ultra_pipe_unlocked():
             except Exception:
                 pass
 
-        if settings.ULTRA_4BIT and use_cuda and torch is not None:
+        if settings.JAIS_4BIT and use_cuda and torch is not None:
             try:
                 from transformers import BitsAndBytesConfig
 
@@ -308,16 +329,16 @@ def _load_ultra_pipe_unlocked():
                 model = AutoModelForCausalLM.from_pretrained(
                     local_path,
                     token=settings.HF_TOKEN,
-                    trust_remote_code=settings.ULTRA_TRUST_REMOTE,
+                    trust_remote_code=settings.JAIS_TRUST_REMOTE,
                     quantization_config=bnb_cfg,
                     device_map={"": 0},
                     torch_dtype=torch.bfloat16,
                 )
                 _ULTRA_PIPE = pipeline("text-generation", model=model, tokenizer=tok)
-                print("[SUM] Ultra summarizer loaded (4bit).")
+                print("[SUM] Jais-2 loaded (4bit).")
                 return _ULTRA_PIPE
             except Exception as e:
-                print(f"[ULTRA] 4bit unavailable, fallback to standard load: {e}")
+                print(f"[SUM] Jais-2 4bit unavailable, fallback: {e}")
 
         # Full fp16 8B needs ~16GB+ VRAM; on laptop GPUs keep CPU offload without disk.
         max_memory = None
@@ -332,7 +353,7 @@ def _load_ultra_pipe_unlocked():
         model = AutoModelForCausalLM.from_pretrained(
             local_path,
             token=settings.HF_TOKEN,
-            trust_remote_code=settings.ULTRA_TRUST_REMOTE,
+            trust_remote_code=settings.JAIS_TRUST_REMOTE,
             torch_dtype=(torch.float16 if use_cuda and torch is not None else None),
             device_map="auto" if use_cuda else None,
             max_memory=max_memory,
@@ -348,12 +369,12 @@ def _load_ultra_pipe_unlocked():
                 device=settings.HF_DEVICE_ID,
             )
 
-        print("[SUM] Ultra summarizer loaded.")
+        print("[SUM] Jais-2 loaded.")
         return _ULTRA_PIPE
     except Exception as e:
         import traceback
 
-        print(f"[ULTRA] model load failed: {type(e).__name__}: {e}")
+        print(f"[SUM] jais2 model load failed: {type(e).__name__}: {e}")
         traceback.print_exc()
         return None
 
@@ -368,13 +389,13 @@ def _summarize_ultra_long(text: str) -> str:
         return ""
 
     if len(chunks) == 1:
-        print(f"[SUM] ultra -> single chunk (~{_estimate_tokens(chunks[0])} tok)")
+        print(f"[SUM] jais2 -> single chunk (~{_estimate_tokens(chunks[0])} tok)")
         return _summarize_ultra(chunks[0], stage="final")
 
-    print(f"[SUM] ultra map-reduce -> {len(chunks)} parts (max_tokens={max_tokens})")
+    print(f"[SUM] jais2 map-reduce -> {len(chunks)} parts (max_tokens={max_tokens})")
     partials: List[str] = []
     for i, chunk in enumerate(chunks):
-        print(f"[SUM] ultra part {i + 1}/{len(chunks)} (~{_estimate_tokens(chunk)} tok)")
+        print(f"[SUM] jais2 part {i + 1}/{len(chunks)} (~{_estimate_tokens(chunk)} tok)")
         part = _summarize_ultra(chunk, stage="partial")
         if part:
             partials.append(part)
@@ -404,34 +425,34 @@ def _summarize_ultra_long(text: str) -> str:
 
 
 def _normalize_summary_mode(mode: str) -> str:
-    """ultra فقط. off يعطّل. أي قيمة قديمة (lite/light) تُحوَّل إلى ultra."""
-    m = (mode or "ultra").strip().lower()
-    if m in ("", "ultra", "best", "lite", "light"):
-        return "ultra" if m != "" else "ultra"
-    if m == "off":
+    """Jais-2 فقط. off يعطّل. أسماء قديمة (ultra/lite) تُقبل للتوافق وتُعامل كـ jais."""
+    m = (mode or "jais").strip().lower()
+    if m in ("off", "none", "0", "false"):
         return "off"
-    raise HTTPException(status_code=400, detail=f"unsupported summary_mode: {mode} (ultra only)")
+    if m in ("", "jais", "jais2", "jais-2", "ultra", "best", "lite", "light"):
+        return "jais"
+    raise HTTPException(status_code=400, detail=f"unsupported summary_mode: {mode} (jais only)")
 
 
-def summarize(text: str, mode: str = "ultra") -> Tuple[str, str]:
+def summarize(text: str, mode: str = "jais") -> Tuple[str, str]:
     if not text:
         set_summary_source("off")
         return ("", "")
 
-    m = _normalize_summary_mode(mode if mode is not None else "ultra")
+    m = _normalize_summary_mode(mode if mode is not None else "jais")
     if m == "off":
         set_summary_source("off")
         return ("", "")
 
     clean = advanced_clean_text(text, preserve_speakers=True)
-    print(f"[SUM] ultra -> {settings.ULTRA_MODEL} (prompt={normalize_prompt_mode(settings.ULTRA_PROMPT_MODE)})")
+    print(f"[SUM] jais2 -> {settings.JAIS_MODEL} (prompt={normalize_prompt_mode(settings.JAIS_PROMPT_MODE)})")
     ctx = rag_retrieve(clean, k=3)
     body = f"السياق المسترجع:\n{ctx}\n\nالنص:\n{clean}" if ctx else clean
     summary_text = _summarize_ultra_long(body)
     if summary_text:
         summary_text = polish_summary_ar(summary_text)
     if not summary_text:
-        print("[SUM] ultra failed (no lite fallback)")
+        print("[SUM] jais2 failed")
         set_summary_source("off")
 
     keywords = extract_keywords(clean) if summary_text else ""

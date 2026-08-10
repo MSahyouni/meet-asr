@@ -87,6 +87,12 @@ def test_extract_keywords_hides_weak():
 
     weak = "نبدا بسم الله اليوم كلام موضوعنا هو في على من"
     assert extract_keywords(weak) == ""
+    # نفس نمط نتيجة القبول الحي: حشو حوار + لواصق
+    chatty = (
+        "سنبدأ الآن بالتسجيل واختبار السيرفر والأخرى، "
+        "نريد أن نتأكد من أن البرنامج يعمل وننظف الملفات الغير لازمة"
+    )
+    assert extract_keywords(chatty) == ""
     strong = (
         "مناقشة ميزانية المشروع والجدول الزمني للتطوير "
         "مع اعتماد خطة التسليم والمراجعة الفنية للمنتج"
@@ -96,21 +102,33 @@ def test_extract_keywords_hides_weak():
     assert len([p for p in kws.split(",") if p.strip()]) >= 3
 
 
+def test_acceptance_asr_polish():
+    from app.nlp.text_utils import polish_transcript_ar
+
+    out = polish_transcript_ar("ملف أو مدلفون وتفريغ الناس وتلخيص الناس واختبار سموك")
+    assert "مدلفون" not in out
+    assert "مايكروفون" in out
+    assert "تفريغ النص" in out
+    assert "تلخيص النص" in out
+    assert "اختبار دخان" in out
+
+
 def test_summary_source_contextvar():
-    set_summary_source("ultra:test")
-    assert get_summary_source() == "ultra:test"
+    set_summary_source("jais2:test")
+    assert get_summary_source() == "jais2:test"
     set_summary_source("off")
     assert get_summary_source() == "off"
 
 
-def test_normalize_summary_mode_ultra_only():
+def test_normalize_summary_mode_jais_only():
     from app.nlp.summarization import _normalize_summary_mode
     from fastapi import HTTPException
     import pytest
 
-    assert _normalize_summary_mode("ultra") == "ultra"
-    assert _normalize_summary_mode("lite") == "ultra"
-    assert _normalize_summary_mode("light") == "ultra"
+    assert _normalize_summary_mode("jais") == "jais"
+    assert _normalize_summary_mode("ultra") == "jais"  # legacy alias
+    assert _normalize_summary_mode("lite") == "jais"  # legacy alias
+    assert _normalize_summary_mode("light") == "jais"
     assert _normalize_summary_mode("off") == "off"
     with pytest.raises(HTTPException):
         _normalize_summary_mode("garbage")

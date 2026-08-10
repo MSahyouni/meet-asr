@@ -2,16 +2,22 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 echo "== env =="
-grep -E '^(ULTRA_|SUM_|DOWNLOAD_|HF_HUB)' .env || true
+grep -E '^(JAIS_|ULTRA_|SUM_|DOWNLOAD_|HF_HUB)' .env 2>/dev/null || true
 echo "== model =="
-du -sh data/models/summarizers/ultra/inceptionai_Jais-2-8B-Chat 2>/dev/null || echo missing
+du -sh data/models/summarizers/ultra/inceptionai_Jais-2-8B-Chat \
+       data/models/summarizers/jais2/inceptionai_Jais-2-8B-Chat 2>/dev/null || echo missing
 .venv/bin/python - <<'PY'
 from pathlib import Path
 import json
-root = Path("data/models/summarizers/ultra/inceptionai_Jais-2-8B-Chat")
-if not root.exists():
+cands = [
+    Path("data/models/summarizers/ultra/inceptionai_Jais-2-8B-Chat"),
+    Path("data/models/summarizers/jais2/inceptionai_Jais-2-8B-Chat"),
+]
+root = next((p for p in cands if p.exists()), None)
+if root is None:
     print("no_jais_dir")
     raise SystemExit
+print("path", root)
 idx = root / "model.safetensors.index.json"
 if idx.exists():
     files = sorted(set(json.loads(idx.read_text())["weight_map"].values()))

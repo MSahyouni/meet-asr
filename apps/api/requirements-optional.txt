@@ -1,21 +1,9 @@
 # Optional packages — NOT installed by `pip install -r requirements.txt`.
-# Core ASR/NLP/MMS TTS works without these. Install only what you need.
+# Core ASR/NLP works without these. For Habibi TTS:
 #
 #   ./.venv/bin/pip install -r apps/api/requirements-optional.txt
 #
-# Or install individually:
-
-# Arabic tashkeel before TTS (set TTS_DIACRITIZE=1 in .env)
-mishkal
-
 # Dialectal Arabic voice clone (engine=habibi). Requires voice sample + ref_text.
-# Keep transformers pinned: habibi-tts/f5-tts may otherwise pull transformers 5.x
-# which breaks torch==2.4.0 (ImportError: DTensor).
+# Note: this project also uses transformers>=5 for Jais-2 ultra; do not pin an older
+# transformers here or summarization will break.
 habibi-tts
-transformers==4.43.0
-
-# OmniVoice is intentionally NOT pip-installed into the API venv.
-# Use a separate tool venv to avoid dependency conflicts:
-#   ./scripts/download_omnivoice.sh
-#   python3 -m venv .tools/omnivoice/.venv
-#   .tools/omnivoice/.venv/bin/pip install -U pip omnivoice

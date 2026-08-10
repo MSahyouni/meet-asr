@@ -1,4 +1,4 @@
-"""Inspect Habibi/OmniVoice reference audio samples before synthesis."""
+"""Inspect Habibi reference audio samples before synthesis."""
 from __future__ import annotations
 
 import logging

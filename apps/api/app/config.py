@@ -132,21 +132,21 @@ class Settings:
         # --- NLP & Summarization Models ---
         self.HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
         
-        # Legacy mT5 path kept for optional tooling; summarization is ultra-only.
-        _sum_mt5_dir = self.MODELS_DIR / "summarizers" / "mT5_XLSum"
-        self.SUMMARIZER_MODEL = _resolve_model_ref(
-            self.BASE_DIR,
-            os.getenv("SUMMARIZER_MODEL", ""),
-            _sum_mt5_dir,
-            "csebuetnlp/mT5_multilingual_XLSum",
-        )
+        # --- Summarization: Jais-2 only (no lite/ultra product modes) ---
+        def _env_first(*keys: str, default: str = "") -> str:
+            for key in keys:
+                val = os.getenv(key)
+                if val is not None and str(val).strip() != "":
+                    return str(val).strip()
+            return default
 
-        # Ultra summarizer. Prefer Jais-2-8B when HF gated access is granted.
-        self.ULTRA_MODEL = os.getenv("ULTRA_MODEL", "inceptionai/Jais-2-8B-Chat")
-        self.ULTRA_4BIT = os.getenv("ULTRA_4BIT", "1").lower() in ("1", "true", "yes")
-        self.ULTRA_TRUST_REMOTE = os.getenv("ULTRA_TRUST_REMOTE", "1").lower() in ("1", "true")
-        self.ULTRA_PROMPT_MODE = os.getenv("ULTRA_PROMPT_MODE", "meeting").lower()
-        self.HF_DEVICE_ID = int(os.getenv("HF_DEVICE_ID", "-1")) # Transformers pipeline device
+        self.JAIS_MODEL = _env_first("JAIS_MODEL", "ULTRA_MODEL", default="inceptionai/Jais-2-8B-Chat")
+        self.JAIS_4BIT = _env_first("JAIS_4BIT", "ULTRA_4BIT", default="1").lower() in ("1", "true", "yes")
+        self.JAIS_TRUST_REMOTE = _env_first("JAIS_TRUST_REMOTE", "ULTRA_TRUST_REMOTE", default="1").lower() in (
+            "1", "true", "yes",
+        )
+        self.JAIS_PROMPT_MODE = _env_first("JAIS_PROMPT_MODE", "ULTRA_PROMPT_MODE", default="meeting").lower()
+        self.HF_DEVICE_ID = int(os.getenv("HF_DEVICE_ID", "-1"))
 
         # --- Punctuation & NER ---
         _punct_dir = self.MODELS_DIR / "punctuation" / "arabic_punct"
@@ -182,17 +182,9 @@ class Settings:
         )
         os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", self.MODELS_DIR.as_posix())
 
-        # --- TTS — optional diacritization before TTS (P2: CAMeL / Farasa) ---
+        # --- TTS Habibi (only engine) ---
         self.TTS_DIACRITIZE = os.getenv("TTS_DIACRITIZE", "0").lower() in ("1", "true", "yes")
-        # --- TTS Arabic preprocessing (normalize, numbers-to-words, punctuation) ---
         self.TTS_PREPROCESS_ENABLED = os.getenv("TTS_PREPROCESS_ENABLED", "1").lower() in ("1", "true", "yes")
-        # --- TTS MMS for Arabic — use facebook/mms-tts-ara when text is Arabic (offline, transformers) ---
-        self.TTS_MMS_ENABLED = os.getenv("TTS_MMS_ENABLED", "1").lower() in ("1", "true", "yes")
-        # OmniVoice CLI timeout (seconds). First run may download ~3GB; use 0 for no limit.
-        try:
-            self.OMNIVOICE_TIMEOUT_SEC = int(os.getenv("OMNIVOICE_TIMEOUT_SEC", "7200"))
-        except ValueError:
-            self.OMNIVOICE_TIMEOUT_SEC = 7200
 
         # --- Output cleanup (P2-3) — delete files under outputs/ older than N hours ---
         self.CLEANUP_MAX_AGE_HOURS = max(1, int(os.getenv("CLEANUP_MAX_AGE_HOURS", "24")))

@@ -22,7 +22,7 @@ class ASRResponse(BaseModel):
 
 class TTSRequest(BaseModel):
     text: str = Field(..., title="Text to synthesize")
-    voice: str = Field("ar_mms", title="Voice ID")
+    voice: str = Field("habibi_unified", title="Voice ID")
     speed: float = Field(1.0, title="Speech speed")
 
 
@@ -33,7 +33,7 @@ class TTSResponse(BaseModel):
 
 class SummarizationRequest(BaseModel):
     text: str = Field(..., title="Text to summarize")
-    mode: str = Field("ultra", title="Summarization mode (ultra only)")
+    mode: str = Field("jais", title="Summarization engine (jais only; off to disable)")
 
 
 class SummarizationResponse(BaseModel):

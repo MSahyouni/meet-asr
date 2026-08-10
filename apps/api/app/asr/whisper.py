@@ -42,7 +42,7 @@ def get_model(name: str, device: Optional[str] = None, compute_type: Optional[st
     try:
         from app.nlp.summarization import unload_summarizer_pipes
 
-        unload_summarizer_pipes("ultra")
+        unload_summarizer_pipes("jais")
     except Exception:
         pass
 

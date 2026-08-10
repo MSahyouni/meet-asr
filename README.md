@@ -4,7 +4,7 @@
 
 - ASR: تفريغ صوتي + تمييز متحدثين.
 - NLP: تلخيص + كلمات مفتاحية + NER.
-- TTS: MMS عربي + Habibi + OmniVoice (استنساخ بصمة عربي + لهجات).
+- TTS: Habibi فقط (استنساخ بصمة + لهجات عربية).
 - Auth + Users + Dashboard + Billing.
 - تشغيل محلي أو Docker، مع دعم CPU/GPU.
 
@@ -52,12 +52,12 @@ meet-asr/
 ├─ apps/
 │  └─ api/                    # FastAPI backend (main.py, routers, features)
 ├─ static/frontend/           # واجهة HTML/CSS/JS المدمجة
-├─ scripts/                   # سكربتات (OmniVoice، Docker، setup_env، migrate_to_dot_venv)
+├─ scripts/                   # سكربتات (setup_env، smoke، Docker، migrate_to_dot_venv)
 ├─ tests/                     # pytest (unit + integration markers)
 ├─ docker/                    # Dockerfile.api
 ├─ nabra/                     # Flutter app (اختياري)
 ├─ data/                      # نماذج، مخرجات، أصوات، SQLite (gitignored)
-├─ .tools/                    # أدوات منفصلة (OmniVoice inference venv)
+├─ .tools/                    # أدوات محلية اختيارية (إن وُجدت)
 ├─ .github/workflows/         # CI (ci.yml — unit + security + integration)
 ├─ .venv/                     # بيئة Python المفضّلة (أنشئها عبر run.sh أو migrate)
 ├─ README.md
@@ -130,23 +130,21 @@ python -m venv .venv
 pip install -U pip
 pip install -r apps/api/requirements.txt
 
-# اختياري: Habibi + mishkal (OmniVoice عبر سكربت منفصل)
+# اختياري: Habibi TTS
 # ./.venv/bin/pip install -r apps/api/requirements-optional.txt
 
 cd apps/api
 python -m uvicorn api:app --host 0.0.0.0 --port 8000
 ```
 
-### حزم اختيارية (TTS extras)
-الـ API الأساسي (Whisper / MMS / تلخيص) يعمل بعد `requirements.txt` فقط. الميزات التالية **اختيارية** ولن تُثبَّت تلقائيًا:
+### حزم اختيارية (TTS Habibi)
+الـ API الأساسي (Whisper / تلخيص) يعمل بعد `requirements.txt`. لـ TTS ثبّت Habibi:
 
 | الميزة | التثبيت | ملاحظة |
 |--------|---------|--------|
-| **mishkal** | `./.venv/bin/pip install mishkal` ثم `TTS_DIACRITIZE=1` | تشكيل عربي قبل TTS |
-| **Habibi** | `./.venv/bin/pip install habibi-tts` | لهجات + يحتاج عينة صوت و`ref_text` |
-| **OmniVoice** | `./scripts/download_omnivoice.sh` + venv تحت `.tools/omnivoice/` | بيئة منفصلة عن API (~3.2 GB) |
+| **Habibi** | `./.venv/bin/pip install habibi-tts` | المحرك الوحيد — يحتاج عينة صوت و`ref_text` |
 
-ملف مجمّع: `apps/api/requirements-optional.txt` (بدون OmniVoice — يبقى في `.tools/`).
+ملف مجمّع: `apps/api/requirements-optional.txt`.
 
 ### التشغيل اليدوي على Linux
 ```bash
@@ -182,7 +180,7 @@ python -m uvicorn api:app --host 0.0.0.0 --port 8000
 Copy-Item apps/api/.env.example apps/api/.env
 ```
 
-أو توليد إعدادات تطوير جاهزة (يكتشف CUDA وmishkal وOmniVoice تلقائيًا):
+أو توليد إعدادات تطوير جاهزة (يكتشف CUDA تلقائيًا):
 ```bash
 chmod +x scripts/setup_env.sh
 ./scripts/setup_env.sh          # لا يستبدل ملفات موجودة
@@ -193,8 +191,8 @@ chmod +x scripts/setup_env.sh
 - `ASR_ENV`, `ASR_ALLOWED_ORIGINS`
 - `JWT_SECRET`, `JWT_EXPIRES_SECONDS`, `JWT_ISSUER`, `JWT_AUDIENCE`, `ADMIN_EMAILS`
 - `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE`
-- `TTS_MMS_ENABLED`, `TTS_PREPROCESS_ENABLED`, `TTS_DIACRITIZE`
-- `OMNIVOICE_TIMEOUT_SEC`, `OMNIVOICE_INFER_BIN`
+- `TTS_PREPROCESS_ENABLED` (Habibi فقط)
+- `JAIS_MODEL`, `JAIS_4BIT`, `JAIS_PROMPT_MODE`, `JAIS_ALLOW_DOWNLOAD`, `SUM_WARM_JAIS`
 - `RAG_ENABLE`, `RAG_EMB_MODEL`
 
 ملاحظات:
@@ -225,7 +223,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 - يستخدم ملف الإنتاج ربطًا مباشرًا للمجلد `./data` داخل الحاوية (`/app/data`) لضمان حفظ النماذج والمخرجات.
 - تم ضبط `shm_size` و `ulimits` في ملف الإنتاج لتحسين الاستقرار مع أحمال الذكاء الاصطناعي.
 - أول تشغيل يمكن أن يكون أبطأ بسبب تنزيل النماذج المطلوبة.
-- بعد اكتمال تنزيل نموذج `ultra` بنجاح، يمكن قفل الأوفلاين بتغيير `ULTRA_ALLOW_DOWNLOAD=0` في `.env` ثم إعادة تشغيل الخدمة.
+- بعد اكتمال تنزيل نموذج Jais-2 بنجاح، يمكن قفل الأوفلاين بتغيير `JAIS_ALLOW_DOWNLOAD=0` في `.env` ثم إعادة تشغيل الخدمة.
 
 ### سكربت مختصر
 ```powershell
@@ -253,55 +251,20 @@ powershell -ExecutionPolicy Bypass -File scripts/docker.ps1 -Action down -Env de
 - `POST /ner` / `POST /nlp/ner`
 - التلخيص يعتمد دالة endpoint واحدة (`summarize_after`) وتُعرَض عبر المسارين للتوافق والتنظيم.
 - `summarize` يقبل FormData و JSON.
-- الوضع الافتراضي للتلخيص أصبح `ultra` لأعلى جودة عربية.
-- عند أول طلب `ultra` يتم تنزيل النموذج إلى `data/models/summarizers/ultra/` ثم الاعتماد عليه محليًا.
+- التلخيص يعتمد Jais-2 فقط (بدون أوضاع lite/ultra).
+- عند أول طلب تلخيص يُحمَّل النموذج من `data/models/summarizers/` ثم يُعتمد محليًا.
 
-### TTS
-- `POST /tts` (تحويل نص إلى WAV)
-- `GET /tts/voices`
-- وضع `engine=auto` يعطي أولوية لـ **OmniVoice** عند وجود بصمة للمستخدم (لا يحتاج `ref_text`)، ثم **Habibi** عند توفر `ref_text`، ثم fallback تلقائي إلى MMS عربي.
-
-#### OmniVoice (استنساخ بصمة ~3.2 GB)
-- `engine=omnivoice` — استنساخ صوت بدون `ref_text` (اختياري لتحسين الجودة).
-- يُشغَّل كأداة CLI داخل بيئة منفصلة لتفادي تعارض المتطلبات مع الـ API.
-- **تنزيل النموذج مسبقًا (موصى به):**
-  ```bash
-  chmod +x scripts/download_omnivoice.sh scripts/cleanup_omnivoice_cache.sh
-  ./scripts/download_omnivoice.sh          # ~3.2 GB، قابل للاستئناف
-  ./scripts/cleanup_omnivoice_cache.sh     # حذف بقايا .incomplete بعد الاكتمال
-  ```
-- يستخدم نفس سياسة إعادة المحاولة `download_retry` مثل Whisper/NLP.
-- تثبيت أداة الاستنتاج (مرة واحدة):
-  ```bash
-  python3 -m venv .tools/omnivoice/.venv
-  .tools/omnivoice/.venv/bin/pip install -U pip omnivoice
-  export OMNIVOICE_INFER_BIN="$PWD/.tools/omnivoice/.venv/bin/omnivoice-infer"
-  ```
-
-#### تشكيل عربي قبل TTS (`TTS_DIACRITIZE`)
-- يحسّن نطق النصوص العربية **غير المشكّلة** قبل التوليد.
-- التفعيل:
-  ```bash
-  ./.venv/bin/pip install mishkal   # داخل بيئة المشروع — لا تستخدم pip النظام
-  # في apps/api/.env:
-  TTS_DIACRITIZE=1
-  ```
-- يُطبَّق على محركات TTS عند التفعيل؛ قد يبطئ التوليد قليلاً.
-
-#### Habibi (لهجات عربية)
-- `engine=habibi` (Unified/Specialized لهجات عربية متعددة) ويتطلب:
-  - تثبيت اختياري: `./.venv/bin/pip install habibi-tts`
-  - `user_email` + عينة صوت مرفوعة مسبقًا
-  - `ref_text` (نص مطابق لعينة الصوت المرجعية) — يمكن حفظه مرة واحدة عند رفع العينة عبر `POST /tts/voice-sample`
-  - `dialect` اختياري (`UNK|MSA|SAU|UAE|ALG|IRQ|EGY|MAR|OMN|TUN|LEV|SDN|LBY`)
-- النصوص الطويلة: تقطيع عربي صارم (~سطرين/دفعة) مع المسار الرسمي لـ Habibi (نفس عيّنة المتحدث لكل دفعة + crossfade). اضبط `HABIBI_MAX_CHUNK_CHARS` عند الحاجة.
-- بصمات المستخدم (Habibi/OmniVoice):
-  - `POST /tts/voice-sample`
-  - `POST /tts/voice-samples` (يدعم أيضًا `ref_texts_json` كخريطة JSON: اسم_الملف -> ref_text، و`default_ref_text` احتياطي)
-  - `GET /tts/voice-samples`
-  - `GET /tts/voice-file`
+### TTS (Habibi فقط)
+- `POST /tts` (تحويل نص إلى WAV) — `engine=habibi` (أو `auto`→habibi)
+- `GET /tts/voices` — `habibi_unified` / `habibi_specialized`
+- يتطلب: `user_email` + بصمة صوت + `ref_text` مطابق للبصمة
+- `dialect` اختياري (`UNK|MSA|SAU|UAE|ALG|IRQ|EGY|MAR|OMN|TUN|LEV|SDN|LBY`)
+- النصوص الطويلة: تقطيع عبر `HABIBI_MAX_CHUNK_CHARS`
+- بصمات المستخدم:
+  - `POST /tts/voice-sample` / `POST /tts/voice-samples`
+  - `GET /tts/voice-samples` / `GET /tts/voice-file`
   - `DELETE /tts/voice-sample`
-- حفظ بصمات المستخدم في: `data/voices/<sanitized_user_email>/`.
+- الحفظ في: `data/voices/<sanitized_user_email>/`.
 
 ### Auth / Users / Dashboard / Billing
 - Auth: `register`, `login`, `logout`, `logout-all`, `sessions/status`, `me/permissions`.

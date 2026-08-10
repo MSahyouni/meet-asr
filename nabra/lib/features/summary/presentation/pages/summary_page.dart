@@ -45,7 +45,7 @@ class _SummaryPageState extends ConsumerState<SummaryPage> {
       final result = await AppInjector.summaryRepository.summarize(
         text: widget.text,
         apiBaseUrl: widget.apiUrl,
-        model: 'ultra',
+        model: 'jais',
         authorization: token,
       );
       setState(() {

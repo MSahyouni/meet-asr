@@ -91,82 +91,44 @@ def test_tts_validation_text_empty_raises():
     from app.tts_core import TTSCore
     core = TTSCore()
     with pytest.raises(ValueError, match="cannot be empty"):
-        core.synthesize("", voice="ar_mms", speed=1.0, out_path="")
+        core.synthesize("", voice="habibi_unified", speed=1.0, out_path="")
 
 
 def test_tts_validation_text_too_long_raises():
     from app.tts_core import TTSCore, TTS_TEXT_MAX_LEN
     core = TTSCore()
     with pytest.raises(ValueError, match="exceeds maximum"):
-        core.synthesize("x" * (TTS_TEXT_MAX_LEN + 1), voice="ar_mms", speed=1.0, out_path="")
+        core.synthesize("x" * (TTS_TEXT_MAX_LEN + 1), voice="habibi_unified", speed=1.0, out_path="")
 
 
 def test_tts_validation_speed_out_of_range_raises():
     from app.tts_core import TTSCore
     core = TTSCore()
     with pytest.raises(ValueError, match="Speed must be"):
-        core.synthesize("hello", voice="ar_mms", speed=3.0, out_path="")
+        core.synthesize("hello", voice="habibi_unified", speed=3.0, out_path="")
     with pytest.raises(ValueError, match="Speed must be"):
-        core.synthesize("hello", voice="ar_mms", speed=0.1, out_path="")
+        core.synthesize("hello", voice="habibi_unified", speed=0.1, out_path="")
 
 
 def test_tts_validation_speed_valid_not_value_error():
     from app.tts_core import TTSCore
     core = TTSCore()
-    # Speed 0.5 and 2.0 are in range; must not raise ValueError for speed (may raise RuntimeError if model not loaded)
     for speed in (0.5, 1.0, 2.0):
         try:
-            core.synthesize("x", voice="ar_mms", speed=speed, out_path="")
+            core.synthesize("x", voice="habibi_unified", speed=speed, out_path="", user_email="u@example.com")
         except ValueError as e:
             assert "Speed must be" not in str(e), f"speed={speed} should be valid"
         except RuntimeError:
-            pass  # model not loaded is ok in unit test
+            pass
 
 
-def test_omnivoice_ready_when_snapshot_exists_despite_stale_incomplete(tmp_path, monkeypatch):
-    from app.config import settings
-    from app.infrastructure import omnivoice_download as ov_dl
-    from app.tts import tts_omnivoice as ov
-
-    monkeypatch.setattr(settings, "HF_DIR", tmp_path)
-    monkeypatch.setattr(ov_dl, "OMNIVOICE_MODEL_MIN_BYTES", 100)
-
-    legacy = tmp_path / "models--k2-fsa--OmniVoice"
-    snap = legacy / "snapshots" / "abc123"
-    snap.mkdir(parents=True)
-    (snap / "model.safetensors").write_bytes(b"x" * 200)
-
-    stale_hub = tmp_path / "hub" / "models--k2-fsa--OmniVoice" / "blobs"
-    stale_hub.mkdir(parents=True)
-    stale_blob = stale_hub / "orphan.incomplete"
-    stale_blob.write_bytes(b"y" * 50)
-
-    ready, status = ov._omnivoice_download_status()
-    assert ready is True
-    assert status == "جاهز"
-    assert not stale_blob.exists()
-
-
-def test_cleanup_omnivoice_stale_incomplete(tmp_path, monkeypatch):
-    from app.config import settings
-    from app.infrastructure import omnivoice_download as ov_dl
-
-    monkeypatch.setattr(settings, "HF_DIR", tmp_path)
-    monkeypatch.setattr(ov_dl, "OMNIVOICE_MODEL_MIN_BYTES", 100)
-
-    legacy = tmp_path / "models--k2-fsa--OmniVoice"
-    snap = legacy / "snapshots" / "abc123"
-    snap.mkdir(parents=True)
-    (snap / "model.safetensors").write_bytes(b"x" * 200)
-
-    blobs = tmp_path / "hub" / "models--k2-fsa--OmniVoice" / "blobs"
-    blobs.mkdir(parents=True)
-    stale = blobs / "old.incomplete"
-    stale.write_bytes(b"z" * 20)
-
-    removed = ov_dl.cleanup_omnivoice_stale_incomplete()
-    assert removed == 1
-    assert not stale.exists()
+def test_removed_engines_rejected():
+    from app.tts_core import TTSCore
+    core = TTSCore()
+    with pytest.raises(ValueError, match="أُزيل"):
+        core.synthesize("مرحبا", voice="habibi_unified", speed=1.0, engine="mms", user_email="u@example.com")
+    with pytest.raises(ValueError, match="أُزيل"):
+        core.synthesize("مرحبا", voice="habibi_unified", speed=1.0, engine="omnivoice", user_email="u@example.com")
 
 
 def test_maybe_diacritize_disabled_by_default():
@@ -242,9 +204,10 @@ def test_list_voices_returns_non_empty():
     voices = list_voices()
     assert isinstance(voices, list)
     assert len(voices) > 0
-    assert "ar_mms" in voices
     assert "habibi_unified" in voices
-    assert "omnivoice" in voices
+    assert "habibi_specialized" in voices
+    assert "ar_mms" not in voices
+    assert "omnivoice" not in voices
 
 
 def test_list_voices_detailed_includes_ready_flags():
@@ -252,21 +215,19 @@ def test_list_voices_detailed_includes_ready_flags():
 
     detailed = list_voices_detailed()
     assert isinstance(detailed, list)
-    assert len(detailed) >= 3
+    assert len(detailed) >= 2
     for item in detailed:
         assert "id" in item
         assert "engine" in item
         assert "ready" in item
         assert isinstance(item["ready"], bool)
+        assert item["engine"] == "habibi"
     engines = list_engine_status()
-    assert {e["engine"] for e in engines} >= {"omnivoice", "habibi", "mms"}
+    assert {e["engine"] for e in engines} == {"habibi"}
 
 
-def test_auto_with_ar_mms_voice_still_attempts_omnivoice(monkeypatch, tmp_path):
-    """engine=auto must try cloning even when voice defaults/legacy is ar_mms."""
+def test_habibi_requires_sample_and_ref_text(monkeypatch, tmp_path):
     from app import tts_core as tc
-
-    called = {"omnivoice": False}
 
     monkeypatch.setattr(
         tc,
@@ -274,43 +235,65 @@ def test_auto_with_ar_mms_voice_still_attempts_omnivoice(monkeypatch, tmp_path):
         lambda user_email, speaker_ref=None: "voice.wav",
     )
     monkeypatch.setattr(tc, "_preprocess_text", lambda t: t)
-    monkeypatch.setattr(tc, "maybe_diacritize", lambda t: t)
 
-    def _fake_omnivoice(**kwargs):
-        called["omnivoice"] = True
+    class _FakePath:
+        name = "voice.wav"
+
+        def __str__(self):
+            return str(tmp_path / "voice.wav")
+
+    (tmp_path / "voice.wav").write_bytes(b"RIFF")
+
+    def _fake_resolve(user_email, speaker_ref=None):
+        return _FakePath()
+
+    called = {"habibi": False}
+
+    def _fake_habibi(**kwargs):
+        called["habibi"] = True
         return {
             "audio_path": str(tmp_path / "out.wav"),
             "sample_rate": 24000,
             "duration_sec": 0.1,
-            "voice": "omnivoice",
+            "voice": "habibi_unified",
+            "dialect": "LEV",
         }
 
-    monkeypatch.setattr(
-        "app.tts.tts_omnivoice.synthesize_omnivoice",
-        _fake_omnivoice,
-    )
-    monkeypatch.setattr(
-        "app.tts.voice_profiles.resolve_user_speaker_path",
-        lambda user_email, speaker_ref=None: tmp_path / "voice.wav",
-    )
-    monkeypatch.setattr(
-        "app.tts.voice_profiles.get_user_speaker_ref_text",
-        lambda user_email, speaker_ref: None,
-    )
-    (tmp_path / "voice.wav").write_bytes(b"RIFF")
+    monkeypatch.setattr("app.tts.voice_profiles.resolve_user_speaker_path", _fake_resolve)
+    monkeypatch.setattr("app.tts.voice_profiles.get_user_speaker_ref_text", lambda *a, **k: "")
+    monkeypatch.setattr("app.tts.tts_habibi.synthesize_habibi", _fake_habibi)
 
     core = tc.TTSCore()
+    with pytest.raises(ValueError, match="ref_text"):
+        core.synthesize(
+            "مرحبا",
+            voice="habibi_unified",
+            speed=1.0,
+            out_path=str(tmp_path / "out.wav"),
+            engine="habibi",
+            user_email="user@example.com",
+            speaker_ref="voice.wav",
+            ref_text="",
+        )
+
+    monkeypatch.setattr(
+        "app.tts.voice_profiles.get_user_speaker_ref_text",
+        lambda *a, **k: "نص البصمة",
+    )
     result = core.synthesize(
         "مرحبا",
-        voice="ar_mms",
+        voice="legacy_ignored",
         speed=1.0,
         out_path=str(tmp_path / "out.wav"),
         engine="auto",
         user_email="user@example.com",
         speaker_ref="voice.wav",
+        ref_text="نص البصمة",
+        dialect="LEV",
     )
-    assert called["omnivoice"] is True
-    assert result["engine_used"] == "omnivoice"
+    assert called["habibi"] is True
+    assert result["engine_used"] == "habibi"
+    assert result["resolved_voice"] == "habibi_unified"
 
 
 def test_voice_sample_save_does_not_overwrite(tmp_path, monkeypatch):

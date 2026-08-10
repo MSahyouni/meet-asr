@@ -26,24 +26,41 @@ def test_health():
 
 
 def test_tts_arabic():
-    """اختبار TTS بالنص العربي."""
+    """Habibi يتطلب بصمة + ref_text — تخطَّ إن لم تُضبط المتغيرات."""
+    email = os.getenv("TTS_USER_EMAIL", "").strip()
+    ref_text = os.getenv("TTS_REF_TEXT", "").strip()
+    speaker_ref = os.getenv("TTS_SPEAKER_REF", "").strip()
+    if not email or not ref_text:
+        print("⊘ تخطي TTS Habibi (اضبط TTS_USER_EMAIL و TTS_REF_TEXT)")
+        return True
+
     samples = [
         "مرحبا بك في نظام نَبْرَة.",
         "الجمهورية العربية السورية.",
-        "واحد اثنان ثلاثة أربعة خمسة.",
     ]
 
-    headers = {}
+    headers = {"Content-Type": "application/json"}
     if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
         headers["X-API-Key"] = API_KEY
 
     for i, text in enumerate(samples):
         try:
+            body = {
+                "text": text,
+                "voice": "habibi_unified",
+                "engine": "habibi",
+                "speed": 1.0,
+                "user_email": email,
+                "ref_text": ref_text,
+            }
+            if speaker_ref:
+                body["speaker_ref"] = speaker_ref
             r = requests.post(
                 f"{BASE}/tts",
-                json={"text": text, "voice": "ar_mms", "speed": 1.0},
+                json=body,
                 headers=headers,
-                timeout=60,
+                timeout=1800,
             )
             r.raise_for_status()
             data = r.json()

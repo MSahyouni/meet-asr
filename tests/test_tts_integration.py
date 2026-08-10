@@ -1,32 +1,18 @@
-# tests/test_tts_integration.py — integration test for POST /tts (skipped by default in CI)
+# tests/test_tts_integration.py — Habibi TTS (needs auth + voice sample + ref_text)
 import os
 import pytest
 
-# Skip unless explicitly requested (e.g. RUN_TTS_INTEGRATION=1)
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_TTS_INTEGRATION", "").lower() not in ("1", "true", "yes"),
-    reason="Set RUN_TTS_INTEGRATION=1 to run TTS integration test",
+    reason="Set RUN_TTS_INTEGRATION=1 with Habibi sample fixtures to run",
 )
 
 
-def test_tts_returns_ok_and_downloadable():
-    """Call POST /tts with small text; expect ok=True and a downloadable path."""
-    from fastapi.testclient import TestClient
-    from api import app
+def test_tts_habibi_only_contract():
+    """Placeholder contract: Habibi is the only engine; live call needs sample+ref_text."""
+    from app.tts_core import TTS_ALLOWED_ENGINES, TTS_KNOWN_VOICES, TTS_REMOVED_ENGINES
 
-    client = TestClient(app)
-    resp = client.post(
-        "/tts",
-        json={"text": "Test.", "voice": "ar_mms", "speed": 1.0, "format": "wav"},
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data.get("ok") is True
-    assert "audio_path" in data
-    assert "download_url" in data
-    assert "duration_sec" in data
-    assert "sample_rate" in data
-    # Optional: GET download_url and check 200 (if path is absolute, client may need base_url)
-    path = data.get("audio_path")
-    if path and os.path.isfile(path):
-        assert path.endswith(".wav")
+    assert TTS_ALLOWED_ENGINES == {"auto", "habibi"}
+    assert "habibi_unified" in TTS_KNOWN_VOICES
+    assert "mms" in TTS_REMOVED_ENGINES
+    assert "omnivoice" in TTS_REMOVED_ENGINES

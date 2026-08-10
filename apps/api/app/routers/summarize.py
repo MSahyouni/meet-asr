@@ -1,4 +1,4 @@
-# routers/summarize.py
+# routers/summarize.py — تلخيص Jais-2 فقط
 import pathlib
 import asyncio
 from typing import Optional
@@ -24,13 +24,12 @@ async def summarize_after(
     text: Optional[str] = Form(None),
     path: Optional[str] = Form(None),
     user_email: Optional[str] = Form(None),
-    summary_mode: str = Form("ultra"),
+    summary_mode: Optional[str] = Form(None),
     async_mode: bool = Form(False),
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     fake_file: Optional[UploadFile] = File(None),
 ):
-    # دعم JSON إذا لم يكن FormData
     content_type = request.headers.get("content-type", "").lower()
     if "application/json" in content_type and not text:
         try:
@@ -38,17 +37,16 @@ async def summarize_after(
             text = json_body.get("text") or json_body.get("model_text")
             path = path or json_body.get("path")
             user_email = user_email or json_body.get("user_email")
-            summary_mode = json_body.get("summary_mode", "ultra")
+            if "summary_mode" in json_body:
+                summary_mode = json_body.get("summary_mode")
             async_mode = json_body.get("async_mode", False)
             if "x_api_key" in json_body:
                 x_api_key = json_body.get("x_api_key")
         except Exception:
-            pass  # استمر مع القيم الحالية
+            pass
 
-    # ultra فقط (lite أُزيل؛ القيم القديمة تُحوَّل تلقائياً داخل nlp)
-    summary_mode = (summary_mode or "ultra").strip().lower()
-    if summary_mode in ("lite", "light", "best", ""):
-        summary_mode = "ultra"    
+    # Jais-2 فقط. summary_mode اختياري: off يعطّل؛ أي قيمة أخرى → jais
+    summary_mode = (summary_mode or "jais").strip().lower() or "jais"
     auth_error = check_api_key(x_api_key)
     if auth_error:
         return auth_error
@@ -98,7 +96,7 @@ async def summarize_after(
                     user_email=user_email,
                     activity_type=ActivityType.NLP,
                     description="summarize completed",
-                    metadata={"mode": "sync", "summary_mode": summary_mode},
+                    metadata={"mode": "sync", "engine": "jais2"},
                 )
             except Exception:
                 pass
@@ -118,18 +116,18 @@ async def summarize_after(
         resume={
             "job_type": "summary",
             "summary_body": body,
-            "summary_mode": summary_mode,
+            "summary_mode": "jais",
             "out_base_path": str(out_base_path),
         },
     )
-    asyncio.create_task(run_summary_job_impl(job_id, body, out_base_path, summary_mode, user_email=user_email))
+    asyncio.create_task(run_summary_job_impl(job_id, body, out_base_path, "jais", user_email=user_email))
     if user_email:
         try:
             DashboardService.record_activity(
                 user_email=user_email,
                 activity_type=ActivityType.NLP,
                 description="summarize queued",
-                metadata={"mode": "async", "summary_mode": summary_mode, "job_id": job_id},
+                metadata={"mode": "async", "engine": "jais2", "job_id": job_id},
             )
         except Exception:
             pass

@@ -24,11 +24,11 @@ class AnalysisPage extends ConsumerStatefulWidget {
 class _AnalysisPageState extends ConsumerState<AnalysisPage> {
   bool _loading = false;
   String _transcript = '';
-  String _summaryModel = 'ultra';
+  String _summaryModel = 'jais';
   bool _autoStarted = false;
 
   final _models = const {
-    'ultra': 'Ultra Model (محضر اجتماعات)',
+    'jais': 'Jais-2 (محضر اجتماعات)',
   };
 
   @override
@@ -158,7 +158,7 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Text(
-                    _models['ultra']!,
+                    _models['jais']!,
                     textAlign: TextAlign.right,
                     style: AppTheme.text(
                       color: AppColors.goldSoft,

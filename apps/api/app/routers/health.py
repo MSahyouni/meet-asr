@@ -183,11 +183,13 @@ def rag_health():
     })
 
 
-@router.get("/ultra-health")
-def ultra_health():
+@router.get("/jais-health")
+@router.get("/ultra-health")  # توافق قديم
+def jais_health():
     return {
-        "ultra_model": settings.ULTRA_MODEL,
-        "ultra_4bit": settings.ULTRA_4BIT,
-        "trust_remote": settings.ULTRA_TRUST_REMOTE,
-        "prompt_mode": settings.ULTRA_PROMPT_MODE,
+        "engine": "jais2",
+        "model": settings.JAIS_MODEL,
+        "jais_4bit": settings.JAIS_4BIT,
+        "trust_remote": settings.JAIS_TRUST_REMOTE,
+        "prompt_mode": settings.JAIS_PROMPT_MODE,
     }

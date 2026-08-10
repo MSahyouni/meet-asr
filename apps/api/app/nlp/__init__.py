@@ -14,6 +14,8 @@ from .summarization import (
     unload_summarizer_pipes,
     warm_ultra_in_background,
     schedule_warm_ultra_after_asr,
+    warm_jais_in_background,
+    schedule_warm_jais_after_asr,
 )
 from .rag import rag_retrieve
 
@@ -37,6 +39,8 @@ __all__ = [
     "unload_summarizer_pipes",
     "warm_ultra_in_background",
     "schedule_warm_ultra_after_asr",
+    "warm_jais_in_background",
+    "schedule_warm_jais_after_asr",
     "rag_retrieve",
     "_FAISS_OK",
     "faiss",

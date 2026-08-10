@@ -5,16 +5,19 @@ asr:
     size: "large-v3"
     device: "auto"
 
-# TTS Engines
+# TTS Engines (Habibi only)
 tts:
-  mms:
-    model_id: "facebook/mms-tts-ara"
-    
+  habibi:
+    model_id: "SWivid/Habibi-TTS"
+    voices:
+      - habibi_unified
+      - habibi_specialized
+
 # NLP Models
 nlp:
-  summarizer: 
-    model_id: "csebuetnlp/mT5_multilingual_XLSum"
-    mode: "lite"
-    
+  summarizer:
+    model_id: "inceptionai/Jais-2-8B-Chat"
+    mode: "jais"
+
   embeddings:
     model_id: "intfloat/multilingual-e5-base"

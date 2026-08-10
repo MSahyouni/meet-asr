@@ -11,27 +11,22 @@
   }
 
   function updateTtsEngineUi() {
-    var engine = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
-    var showHabibiFields = engine === "habibi" || engine === "auto";
-    var showMmsSeed = engine === "mms";
-    var showDiacritize = engine === "mms" || engine === "auto";
-    setZoneVisible("ttsHabibiSettings", showHabibiFields);
-    setZoneVisible("ttsDialectZone", showHabibiFields);
-    setZoneVisible("ttsRefTextZone", showHabibiFields);
-    setZoneVisible("ttsHabibiSpeedHint", showHabibiFields);
-    setZoneVisible("ttsSeedZone", showMmsSeed);
-    setZoneVisible("ttsDiacritizeZone", showDiacritize);
+    setZoneVisible("ttsHabibiSettings", true);
+    setZoneVisible("ttsDialectZone", true);
+    setZoneVisible("ttsRefTextZone", true);
+    setZoneVisible("ttsHabibiSpeedHint", true);
+    setZoneVisible("ttsSeedZone", false);
+    setZoneVisible("ttsDiacritizeZone", false);
 
     var voiceEl = getId("ttsVoice");
-    if (voiceEl && engine === "habibi") {
+    if (voiceEl) {
       var v = voiceEl.value || "";
       if (v !== "habibi_unified" && v !== "habibi_specialized") {
         voiceEl.value = "habibi_unified";
       }
     }
-    if (voiceEl && engine === "mms") {
-      voiceEl.value = "ar_mms";
-    }
+    var engineEl = getId("ttsEngine");
+    if (engineEl) engineEl.value = "habibi";
   }
 
   function setTtsSpeed(value) {
@@ -177,7 +172,7 @@
 
       [
         "apiKey", "timeout", "whisperMode", "enhance", "enhanceLevel", "punctuate", "maxSpeakers", "enrollThreshold",
-        "deviceSel", "computeSel", "summaryMode", "ttsEngine", "ttsUserEmail", "ttsText", "ttsVoice",
+        "deviceSel", "computeSel", "ttsEngine", "ttsUserEmail", "ttsText", "ttsVoice",
         "ttsSpeed", "ttsSeed", "ttsDialect", "ttsRefText", "ttsVoiceFilesList", "ttsMaxChunk",
         "spkName", "spkList", "spkFilesList",
         "authEmail", "authFullName", "profileFullName", "profileBio", "profileAvatar"
@@ -775,7 +770,7 @@
 
   var SUMMARY_MESSAGES = {
     needText: "أدخل نصًا أولًا أو قم بالتحويل الصوتي.",
-    loading: "جاري التلخيص بنموذج Ultra…",
+    loading: "جاري التلخيص بـ Jais-2…",
     busy: "جاري التلخيص...",
     queued: "تم إرسال التلخيص للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.",
     bgProcessing: "التلخيص مستمر...",
@@ -885,13 +880,26 @@
     var stop = {
       هو: 1, هي: 1, ان: 1, بانه: 1, اليوم: 1, كلام: 1, موضوعنا: 1,
       بتحويل: 1, اللي: 1, الي: 1, هذا: 1, هذه: 1, على: 1, من: 1, في: 1,
-      مع: 1, عن: 1, ما: 1, لا: 1, لم: 1, إن: 1, أن: 1, نبدا: 1, بسم: 1,
-      الله: 1, الرحمن: 1, الرحيم: 1, الاساسي: 1, البرنامج: 1, تفريغه: 1
+      مع: 1, عن: 1, ما: 1, لا: 1, لم: 1, إن: 1, أن: 1, نبدا: 1, سنبدا: 1,
+      بسم: 1, الله: 1, الرحمن: 1, الرحيم: 1, الاساسي: 1, البرنامج: 1,
+      تفريغه: 1, نريد: 1, الناس: 1, ناس: 1, يجب: 1, جميع: 1, تسجيل: 1,
+      اختبار: 1, تفريغ: 1, تلخيص: 1, سيرفر: 1, السيرفر: 1, ادخال: 1,
+      اخري: 1, اخرى: 1, والاخري: 1, واختبار: 1, بالتسجيل: 1, وادخال: 1
     };
+    function stripClitics(kw) {
+      var n = String(kw || "");
+      if (n.charAt(0) === "و" && n.length > 4) n = n.slice(1);
+      if (n.indexOf("بال") === 0 && n.length > 5) return n.slice(3);
+      if (n.indexOf("ال") === 0 && n.length > 4) n = n.slice(2);
+      return n;
+    }
     var chips = String(raw)
       .split(/[,،]/)
       .map(function (part) { return part.trim(); })
+      .map(stripClitics)
       .filter(function (kw) { return kw && kw.length >= 4 && !stop[kw]; });
+    // أزل التكرار بعد التطبيع
+    chips = chips.filter(function (kw, i) { return chips.indexOf(kw) === i; });
     chips.forEach(function (kw) {
       var chip = document.createElement("span");
       chip.className = "keyword-chip";
@@ -1204,7 +1212,7 @@
       setSummaryText(SUMMARY_MESSAGES.needText, { isStatus: true, isError: true });
       return;
     }
-    var mode = "ultra";
+    var mode = "jais";
     var fd = new FormData();
     fd.append("text", text);
     fd.append("summary_mode", mode);
@@ -2141,16 +2149,13 @@
     }
 
     function runTtsRequest() {
-      var voice = getId("ttsVoice").value || "omnivoice";
-      var engine = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
+      var voice = getId("ttsVoice").value || "habibi_unified";
+      var engine = "habibi";
       var speed = parseFloat(getId("ttsSpeed").value) || 1;
-      var seedEl = getId("ttsSeed");
-      var seed = seedEl && seedEl.value ? parseInt(seedEl.value, 10) : undefined;
       var dialect = (getId("ttsDialect") && getId("ttsDialect").value || "UNK").trim().toUpperCase();
       var refText = (getId("ttsRefText") && getId("ttsRefText").value || "").trim();
       var speakerRef = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
       var userEmailForTts = getTtsUserEmail();
-      if (isNaN(seed)) seed = undefined;
 
       var errEl = getId("ttsError");
       errEl.classList.add("hidden");
@@ -2160,39 +2165,35 @@
       dlEl.innerHTML = "";
       if (metaEl) metaEl.textContent = "";
 
-      var body = { text: text, voice: voice, speed: speed, engine: engine || "auto" };
-      var diacritizeEl = getId("ttsDiacritize");
-      body.diacritize = !!(diacritizeEl && diacritizeEl.checked);
-      if (engine === "omnivoice" && !speakerRef) {
-        errEl.textContent = "اختر بصمة صوتية لـ OmniVoice أو ارفع عينة أولاً.";
+      if (!speakerRef) {
+        errEl.textContent = "اختر بصمة صوتية لـ Habibi أو ارفع عينة أولاً.";
         errEl.classList.remove("hidden");
         return;
       }
-      if (engine === "habibi" && !refText && !speakerRef) {
-        errEl.textContent = "اختر بصمة صوتية لـ Habibi أو اكتب ref_text المطابق للعينة فقط.";
+      if (!refText) {
+        errEl.textContent = "اكتب ref_text المطابق لنص البصمة فقط (أو استخرجه عبر ASR).";
         errEl.classList.remove("hidden");
         return;
       }
+
+      var body = { text: text, voice: voice, speed: speed, engine: engine, diacritize: false };
       if (userEmailForTts) body.user_email = userEmailForTts;
-      if (engine === "mms" && seed != null) body.seed = seed;
-      if (speakerRef) body.speaker_ref = speakerRef;
-      if (engine === "habibi" || engine === "auto") {
-        if (dialect) body.dialect = dialect;
-        if (refText) body.ref_text = refText;
-        var chunkEl = getId("ttsMaxChunk");
-        if (chunkEl && chunkEl.value) {
-          var chunkN = parseInt(chunkEl.value, 10);
-          if (!isNaN(chunkN)) body.max_chunk_chars = chunkN;
-        }
+      body.speaker_ref = speakerRef;
+      body.ref_text = refText;
+      if (dialect) body.dialect = dialect;
+      var chunkEl = getId("ttsMaxChunk");
+      if (chunkEl && chunkEl.value) {
+        var chunkN = parseInt(chunkEl.value, 10);
+        if (!isNaN(chunkN)) body.max_chunk_chars = chunkN;
       }
 
       var h = getHeaders();
       h["Content-Type"] = "application/json";
 
       var timeout = getId("timeout") ? getId("timeout").value : 300;
-      if ((engine === "omnivoice" || engine === "auto") && String(timeout).trim() !== "0") {
+      if (String(timeout).trim() !== "0") {
         var ttsTimeoutNum = parseInt(String(timeout), 10);
-        if (!isNaN(ttsTimeoutNum) && ttsTimeoutNum > 0 && ttsTimeoutNum < 7200) timeout = 7200;
+        if (!isNaN(ttsTimeoutNum) && ttsTimeoutNum > 0 && ttsTimeoutNum < 1800) timeout = 1800;
       }
       setButtonBusy(btnTts, true, TTS_MESSAGES.generating);
       fetchWithTimeout(API.tts.root, { method: "POST", headers: h, body: JSON.stringify(body) }, timeout)
@@ -2247,9 +2248,9 @@
         });
     }
 
-    var enginePre = (getId("ttsEngine") && getId("ttsEngine").value || "auto").trim();
+    var enginePre = "habibi";
     var speakerPre = (getId("ttsVoiceFilesList") && getId("ttsVoiceFilesList").value || "").trim();
-    var needsHabibiCheck = (enginePre === "habibi" || enginePre === "auto") && !!speakerPre;
+    var needsHabibiCheck = !!speakerPre;
 
     setButtonBusy(btnTts, true, "تحضير…");
     suggestTtsDialect(true)

@@ -1,4 +1,4 @@
-# routers/tts.py — POST /tts (MMS / Habibi)
+# routers/tts.py — POST /tts (Habibi فقط)
 import asyncio
 import json
 import pathlib
@@ -483,7 +483,7 @@ async def tts(
 ):
     """
     Synthesize speech from text. Returns WAV path and download URL.
-    Body (JSON): { "text", "voice" (optional; alias voice_id), "speed" (optional), "seed" (optional), "engine" (auto|mms|habibi|omnivoice), "speaker_ref" (optional), "ref_text" (required for habibi), "dialect" (optional for habibi), "diacritize" (optional bool; overrides TTS_DIACRITIZE), "format" (ignored; always wav) }
+    Body (JSON): { "text", "voice" (habibi_unified|habibi_specialized), "speed", "engine" (habibi|auto), "speaker_ref", "ref_text" (required), "dialect", "max_chunk_chars", "format" (ignored; always wav) }
     Max text length: 5000 chars. Rate: 12/minute per IP.
     download_url uses /download (legacy /asr/download still accepted).
     """
@@ -506,41 +506,21 @@ async def tts(
     from app.tts_core import TTS_TEXT_MAX_LEN
     if len(text) > TTS_TEXT_MAX_LEN:
         return response_error(400, "validation_error", f"text length exceeds maximum ({TTS_TEXT_MAX_LEN} characters)")
-    engine = (body.get("engine") or "auto").strip().lower() or "auto"
+    engine = (body.get("engine") or "habibi").strip().lower() or "habibi"
     # Accept voice_id as Flutter/legacy alias for voice.
     voice = (body.get("voice") or body.get("voice_id") or "").strip()
     if not voice:
-        # Align defaults with engine: auto prefers clone-capable voice id; mms → ar_mms.
-        voice = "ar_mms" if engine == "mms" else "omnivoice"
+        voice = "habibi_unified"
     try:
         speed = float(body.get("speed", 1.0))
     except (TypeError, ValueError):
         speed = 1.0
-    seed = body.get("seed")
-    if seed is not None:
-        try:
-            seed = int(seed)
-        except (TypeError, ValueError):
-            seed = None
+    seed = None
     speaker_ref = (body.get("speaker_ref") or "").strip() or None
     ref_text = (body.get("ref_text") or "").strip() or None
     dialect = (body.get("dialect") or "").strip() or None
 
-    diacritize = None
-    if "diacritize" in body:
-        raw_d = body.get("diacritize")
-        if isinstance(raw_d, bool):
-            diacritize = raw_d
-        elif isinstance(raw_d, (int, float)):
-            diacritize = bool(raw_d)
-        elif raw_d is None:
-            diacritize = None
-        else:
-            s = str(raw_d).strip().lower()
-            if s in ("1", "true", "yes", "on"):
-                diacritize = True
-            elif s in ("0", "false", "no", "off"):
-                diacritize = False
+    diacritize = False
 
     max_chunk_chars = None
     raw_chunk = body.get("max_chunk_chars", body.get("habibi_max_chunk"))
@@ -621,7 +601,7 @@ async def tts(
         "download_url": download_url,
         "duration_sec": result["duration_sec"],
         "sample_rate": result["sample_rate"],
-        "engine_used": result.get("engine_used", "mms_arabic"),
+        "engine_used": result.get("engine_used", "habibi"),
         "arabic_detected": bool(result.get("arabic_detected", False)),
         "fallback_used": bool(result.get("fallback_used", False)),
         "requested_voice": result.get("requested_voice", voice),

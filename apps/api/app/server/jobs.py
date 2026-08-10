@@ -306,7 +306,7 @@ def schedule_resumed_jobs(pending: List[Dict[str, Any]], get_core: Callable[[], 
             elif job_type == "summary":
                 body = str(item.get("summary_body") or "")
                 out_base = pathlib.Path(str(item.get("out_base_path")))
-                mode = str(item.get("summary_mode") or "ultra")
+                mode = str(item.get("summary_mode") or "jais")
                 asyncio.create_task(
                     run_summary_job(job_id, body, out_base, mode, user_email=user_email)
                 )

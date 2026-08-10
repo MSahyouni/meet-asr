@@ -1,4 +1,4 @@
-# tts_core.py — TTS engines: MMS + Habibi + OmniVoice
+# tts_core.py — TTS: Habibi فقط (استنساخ لهجة + بصمة صوت)
 import logging
 import pathlib
 from functools import lru_cache
@@ -9,9 +9,6 @@ from app.config import settings
 logger = logging.getLogger("tts_core")
 
 
-# ---------------------------------------------------------------------------
-# P2 — تشكيل عربي قبل TTS (mishkal when TTS_DIACRITIZE=1)
-# ---------------------------------------------------------------------------
 @lru_cache(maxsize=512)
 def _preprocess_text_cached(text: str) -> str:
     from app.tts.text_utils import preprocess_for_tts
@@ -30,10 +27,8 @@ def _preprocess_text(text: str) -> str:
 
 def maybe_diacritize(text: str, enabled: Optional[bool] = None) -> str:
     """
-    Optional Arabic diacritics (تشكيل) before TTS.
-
-    - enabled=None → follow env TTS_DIACRITIZE
-    - enabled=True/False → per-request override (UI / API)
+    Optional Arabic diacritics (تشكيل) — kept for API compatibility.
+    Habibi strips tashkeel internally; prefer leaving this off.
     """
     use = bool(enabled) if enabled is not None else bool(getattr(settings, "TTS_DIACRITIZE", False))
     if not use:
@@ -44,43 +39,26 @@ def maybe_diacritize(text: str, enabled: Optional[bool] = None) -> str:
     except ImportError:
         return text
 
-# Limits and defaults
+
 TTS_TEXT_MAX_LEN = 5000
 TTS_SPEED_MIN = 0.25
 TTS_SPEED_MAX = 2.0
-TTS_DEFAULT_VOICE = "ar_mms"
-TTS_ALLOWED_ENGINES = {"auto", "mms", "habibi", "omnivoice"}
-TTS_REMOVED_ENGINES = {"xtts", "xtts_v2"}
+TTS_DEFAULT_VOICE = "habibi_unified"
+TTS_ALLOWED_ENGINES = {"auto", "habibi"}
+TTS_REMOVED_ENGINES = {"xtts", "xtts_v2", "mms", "omnivoice"}
 
-# Static list of supported voices/models after cleanup.
 TTS_KNOWN_VOICES = [
-    "habibi_unified", "habibi_specialized",
-    "omnivoice",
-    "ar_mms",
+    "habibi_unified",
+    "habibi_specialized",
 ]
 
-# voice id -> engine family (for status / routing hints)
 TTS_VOICE_ENGINE = {
-    "omnivoice": "omnivoice",
     "habibi_unified": "habibi",
     "habibi_specialized": "habibi",
-    "ar_mms": "mms",
 }
 
 
-def _use_mms_for_arabic(text: str) -> bool:
-    """True if we should route to MMS-TTS (Arabic text + MMS enabled)."""
-    if not getattr(settings, "TTS_MMS_ENABLED", True):
-        return False
-    try:
-        from app.tts.lang_detect import is_arabic
-        return is_arabic(text)
-    except ImportError:
-        return False
-
-
 def _resolve_user_speaker_ref_if_available(user_email: Optional[str], speaker_ref: Optional[str]) -> Optional[str]:
-    """Return a valid speaker_ref filename if available for the user; otherwise None."""
     if not (user_email or "").strip():
         return None
     try:
@@ -108,9 +86,8 @@ def _format_habibi_runtime_error(exc: Exception) -> str:
     )
     if any(marker in lowered for marker in network_markers):
         return (
-            "Habibi model download failed بسبب مشكلة شبكة/ DNS عند الوصول إلى Hugging Face. "
-            "تحقق من الاتصال ثم أعد المحاولة (التنزيل يُستكمل تلقائيًا من الجزء السابق). "
-            "مؤقتًا استخدم engine=auto أو engine=mms. "
+            "فشل تنزيل نموذج Habibi بسبب شبكة/DNS مع Hugging Face. "
+            "تحقق من الاتصال ثم أعد المحاولة (التنزيل يُستكمل تلقائياً). "
             f"Original error: {raw}"
         )
     return f"Habibi failed: {raw}"
@@ -120,13 +97,25 @@ def _habibi_model_choice(requested_voice: str) -> str:
     voice = (requested_voice or "").strip().lower()
     if voice in ("habibi_unified", "habibi_specialized"):
         return voice
+    # توافق قديم: أي صوت غير معروف → الموحّد
     return "habibi_unified"
 
 
+def _normalize_engine(engine: str) -> str:
+    e = (engine or "habibi").strip().lower() or "habibi"
+    if e in TTS_REMOVED_ENGINES:
+        raise ValueError(
+            f"محرك {e} أُزيل من المشروع. استخدم engine=habibi مع بصمة صوت و ref_text."
+        )
+    if e == "auto":
+        return "habibi"
+    if e not in TTS_ALLOWED_ENGINES:
+        raise ValueError(f"engine must be one of: {', '.join(sorted(TTS_ALLOWED_ENGINES))}")
+    return e
+
+
 class TTSCore:
-    """
-    TTS engines: OmniVoice (voice clone, optional ref_text) + Habibi (dialectal Arabic + voice clone) + MMS-TTS Arabic.
-    """
+    """Habibi فقط: لهجات عربية + استنساخ بصمة (يتطلب عينة صوت + ref_text)."""
 
     def __init__(self, lang_code: Optional[str] = None):
         self.lang_code = (lang_code or "ar").strip() or "ar"
@@ -138,7 +127,7 @@ class TTSCore:
         speed: float = 1.0,
         out_path: str = "",
         seed: Optional[int] = None,
-        engine: str = "auto",
+        engine: str = "habibi",
         user_email: Optional[str] = None,
         speaker_ref: Optional[str] = None,
         ref_text: Optional[str] = None,
@@ -146,16 +135,6 @@ class TTSCore:
         diacritize: Optional[bool] = None,
         max_chunk_chars: Optional[int] = None,
     ) -> dict:
-        """
-        Convert text to speech and save as WAV.
-        Engines: mms (Arabic), habibi (dialectal Arabic + voice clone).
-
-        diacritize: None = env TTS_DIACRITIZE; True/False = per-request override.
-
-        Returns:
-            dict with keys: audio_path, sample_rate, duration_sec, voice
-        """
-        # Normalize and validate text
         text = (text or "").strip()
         if not text:
             raise ValueError("Text cannot be empty.")
@@ -164,7 +143,6 @@ class TTSCore:
                 f"Text length ({len(text)}) exceeds maximum ({TTS_TEXT_MAX_LEN} characters)."
             )
 
-        # Validate speed
         try:
             speed_f = float(speed)
         except (TypeError, ValueError):
@@ -174,230 +152,76 @@ class TTSCore:
                 f"Speed must be between {TTS_SPEED_MIN} and {TTS_SPEED_MAX}, got {speed_f}."
             )
         speed = speed_f
-        engine_requested = (engine or "auto").strip().lower()
-        if engine_requested in TTS_REMOVED_ENGINES:
-            raise ValueError(
-                "محرك xtts_v2 أُزيل من المشروع. "
-                "استخدم engine=habibi مع بصمة + ref_text، أو engine=mms للعربي بدون استنساخ."
-            )
-        if engine_requested not in TTS_ALLOWED_ENGINES:
-            raise ValueError(f"engine must be one of: {', '.join(sorted(TTS_ALLOWED_ENGINES))}")
+        _ = seed  # ignored (Habibi-only)
+        _ = diacritize  # Habibi strips tashkeel; ignore mishkal
 
-        diacritize_enabled = (
-            bool(diacritize)
-            if diacritize is not None
-            else bool(getattr(settings, "TTS_DIACRITIZE", False))
-        )
-
-        # Route Arabic through OmniVoice / Habibi / MMS.
-        # Note: voice=ar_mms must NOT skip cloning in engine=auto — only engine=mms forces MMS.
+        engine_requested = _normalize_engine(engine)
         requested_voice = (voice or "").strip() or TTS_DEFAULT_VOICE
-        requested_voice_lc = requested_voice.lower()
-        prefer_mms_voice = requested_voice_lc in ("ar_mms",)
-        arabic_detected = _use_mms_for_arabic(text) or prefer_mms_voice
-        auto_fallback_used = False
+        text_h = _preprocess_text(text)
 
-        # 1) OmniVoice (explicit or auto with uploaded voice sample)
-        if engine_requested in ("auto", "omnivoice"):
-            run_omnivoice = engine_requested == "omnivoice"
-            omnivoice_speaker_ref = None
-            if engine_requested == "auto":
-                # Prefer clone when a sample exists, even if UI defaulted voice to ar_mms.
-                omnivoice_speaker_ref = _resolve_user_speaker_ref_if_available(
-                    user_email=user_email, speaker_ref=speaker_ref
-                )
-                run_omnivoice = bool(omnivoice_speaker_ref)
+        if not (user_email or "").strip():
+            raise ValueError("Habibi requires user_email and uploaded voice sample")
 
-            if run_omnivoice:
-                text_o = _preprocess_text(text)
-                text_o = maybe_diacritize(text_o, enabled=diacritize_enabled)
-                if not (user_email or "").strip():
-                    if engine_requested == "omnivoice":
-                        raise ValueError("OmniVoice requires user_email and uploaded voice sample")
-                else:
-                    try:
-                        from app.tts.voice_profiles import get_user_speaker_ref_text, resolve_user_speaker_path
-                        from app.tts.tts_omnivoice import synthesize_omnivoice
+        from app.tts.voice_profiles import get_user_speaker_ref_text, resolve_user_speaker_path
+        from app.tts.tts_habibi import synthesize_habibi
 
-                        ref_audio = resolve_user_speaker_path(
-                            user_email=user_email,
-                            speaker_ref=omnivoice_speaker_ref or speaker_ref,
-                        )
-                        # OmniVoice supports omitting ref_text (it will auto-transcribe ref_audio).
-                        resolved_ref_text = (ref_text or "").strip() or (
-                            get_user_speaker_ref_text(user_email, ref_audio.name) or ""
-                        )
-                        resolved_ref_text = resolved_ref_text.strip() or None
-
-                        result = synthesize_omnivoice(
-                            text=text_o,
-                            ref_audio_path=str(ref_audio),
-                            ref_text=resolved_ref_text,
-                            speed=speed,
-                            out_path=out_path,
-                        )
-                        result.update({
-                            "engine_used": "omnivoice",
-                            "arabic_detected": arabic_detected,
-                            "fallback_used": False,
-                            "requested_voice": requested_voice,
-                            "resolved_voice": "omnivoice",
-                            "speaker_ref": ref_audio.name,
-                            "diacritize": diacritize_enabled,
-                        })
-                        return result
-                    except (ImportError, RuntimeError, FileNotFoundError, ValueError) as e:
-                        if engine_requested == "omnivoice":
-                            raise ValueError(f"OmniVoice failed: {e}") from e
-                        auto_fallback_used = True
-                        logger.warning("Auto OmniVoice failed, falling back to built-in engines: %s", e)
-                    except Exception as e:
-                        if engine_requested == "omnivoice":
-                            logger.exception("OmniVoice runtime error: %s", e)
-                            raise RuntimeError(f"OmniVoice failed: {e}") from e
-                        auto_fallback_used = True
-                        logger.warning("Auto OmniVoice failed, falling back: %s", e)
-
-        # 2) Habibi (explicit or auto with sample + ref_text)
-        if engine_requested in ("auto", "habibi"):
-            run_habibi = engine_requested == "habibi"
-            habibi_speaker_ref = None
-            if engine_requested == "auto":
-                habibi_speaker_ref = _resolve_user_speaker_ref_if_available(
-                    user_email=user_email, speaker_ref=speaker_ref
-                )
-                run_habibi = bool(habibi_speaker_ref)
-            if run_habibi:
-                # Habibi cannot use mishkal/tashkeel (reads marks as letters).
-                # Stripping happens inside synthesize_habibi for gen + ref_text.
-                text_h = _preprocess_text(text)
-                if not (user_email or "").strip():
-                    if engine_requested == "habibi":
-                        raise ValueError("Habibi requires user_email and uploaded voice sample")
-                    run_habibi = False
-                else:
-                    try:
-                        from app.tts.voice_profiles import get_user_speaker_ref_text, resolve_user_speaker_path
-                        from app.tts.tts_habibi import synthesize_habibi
-
-                        ref_audio = resolve_user_speaker_path(
-                            user_email=user_email,
-                            speaker_ref=habibi_speaker_ref or speaker_ref,
-                        )
-                        resolved_ref_text = (
-                            (ref_text or "").strip()
-                            or get_user_speaker_ref_text(user_email, ref_audio.name)
-                        )
-                        if not (resolved_ref_text or "").strip():
-                            if engine_requested == "habibi":
-                                raise ValueError(
-                                    "Habibi requires ref_text matching the voice sample only "
-                                    "(not the full text to generate). Add it in the form or when uploading the sample."
-                                )
-                            run_habibi = False
-                        else:
-                            requested_model = _habibi_model_choice(requested_voice)
-                            result = synthesize_habibi(
-                                text=text_h,
-                                ref_audio_path=str(ref_audio),
-                                ref_text=resolved_ref_text,
-                                speed=speed,
-                                out_path=out_path,
-                                model_choice=requested_model,
-                                dialect=dialect or "UNK",
-                                max_chunk_chars=max_chunk_chars,
-                            )
-                            result.update({
-                                "engine_used": "habibi",
-                                "arabic_detected": True,
-                                "fallback_used": False,
-                                "requested_voice": requested_voice,
-                                "resolved_voice": result.get("voice", requested_model),
-                                "speaker_ref": ref_audio.name,
-                                "dialect": result.get("dialect", (dialect or "UNK").upper()),
-                                "diacritize": False,
-                                "max_chunk_chars": max_chunk_chars,
-                            })
-                            return result
-                    except (ImportError, RuntimeError, FileNotFoundError, ValueError) as e:
-                        if engine_requested == "habibi":
-                            raise ValueError(f"Habibi failed: {e}") from e
-                        auto_fallback_used = True
-                        logger.warning("Auto Habibi failed, falling back to built-in engines: %s", e)
-                    except Exception as e:
-                        if engine_requested == "habibi":
-                            logger.exception("Habibi runtime error: %s", e)
-                            raise RuntimeError(_format_habibi_runtime_error(e)) from e
-                        auto_fallback_used = True
-                        logger.warning("Auto Habibi failed, falling back: %s", e)
-
-        if engine_requested == "mms":
-            text = _preprocess_text(text)
-            text = maybe_diacritize(text, enabled=diacritize_enabled)
-            try:
-                from app.tts.tts_mms import synthesize_mms
-                result = synthesize_mms(text=text, voice="ar_mms", speed=speed, out_path=out_path, seed=seed)
-                result.update({
-                    "engine_used": "mms_arabic",
-                    "arabic_detected": arabic_detected,
-                    "fallback_used": False,
-                    "requested_voice": requested_voice,
-                    "resolved_voice": "ar_mms",
-                    "diacritize": diacritize_enabled,
-                })
-                return result
-            except (ImportError, RuntimeError) as e:
-                raise ValueError(f"MMS failed: {e}") from e
-
-        if arabic_detected:
-            text = _preprocess_text(text)
-            text = maybe_diacritize(text, enabled=diacritize_enabled)
-            fallback_used = auto_fallback_used
-            try:
-                from app.tts.tts_mms import synthesize_mms
-                result = synthesize_mms(text=text, voice="ar_mms", speed=speed, out_path=out_path, seed=seed)
-                result.update({
-                    "engine_used": "mms_arabic",
-                    "arabic_detected": True,
-                    "fallback_used": fallback_used,
-                    "requested_voice": requested_voice,
-                    "resolved_voice": "ar_mms",
-                    "diacritize": diacritize_enabled,
-                })
-                return result
-            except (ImportError, RuntimeError) as e:
-                logger.warning("MMS-TTS failed: %s", e)
-                raise ValueError(
-                    f"Arabic TTS failed: {e}. Ensure transformers>=4.33 and torch are installed."
-                ) from e
-
-        raise ValueError(
-            "No available non-Arabic fallback engine. "
-            "Use engine=habibi with speaker profile + ref_text, or engine=mms for Arabic text."
+        habibi_speaker_ref = _resolve_user_speaker_ref_if_available(
+            user_email=user_email, speaker_ref=speaker_ref
         )
+        try:
+            ref_audio = resolve_user_speaker_path(
+                user_email=user_email,
+                speaker_ref=habibi_speaker_ref or speaker_ref,
+            )
+        except Exception as e:
+            raise ValueError(f"Habibi requires an uploaded voice sample: {e}") from e
+
+        resolved_ref_text = (
+            (ref_text or "").strip()
+            or get_user_speaker_ref_text(user_email, ref_audio.name)
+            or ""
+        ).strip()
+        if not resolved_ref_text:
+            raise ValueError(
+                "Habibi requires ref_text matching the voice sample only "
+                "(not the full text to generate). Add it in the form or when uploading the sample."
+            )
+
+        requested_model = _habibi_model_choice(requested_voice)
+        try:
+            result = synthesize_habibi(
+                text=text_h,
+                ref_audio_path=str(ref_audio),
+                ref_text=resolved_ref_text,
+                speed=speed,
+                out_path=out_path,
+                model_choice=requested_model,
+                dialect=dialect or "UNK",
+                max_chunk_chars=max_chunk_chars,
+            )
+        except (ImportError, RuntimeError, FileNotFoundError, ValueError) as e:
+            raise ValueError(f"Habibi failed: {e}") from e
+        except Exception as e:
+            logger.exception("Habibi runtime error: %s", e)
+            raise RuntimeError(_format_habibi_runtime_error(e)) from e
+
+        result.update({
+            "engine_used": "habibi",
+            "arabic_detected": True,
+            "fallback_used": False,
+            "requested_voice": requested_voice,
+            "resolved_voice": result.get("voice", requested_model),
+            "speaker_ref": ref_audio.name,
+            "dialect": result.get("dialect", (dialect or "UNK").upper()),
+            "diacritize": False,
+            "max_chunk_chars": max_chunk_chars,
+            "engine_requested": engine_requested,
+        })
+        return result
 
 
 def list_voices() -> list:
-    """
-    Return list of available TTS voice IDs.
-    Uses static TTS_KNOWN_VOICES for enabled engines only.
-    """
     return list(TTS_KNOWN_VOICES)
-
-
-def _engine_status_omnivoice() -> dict:
-    try:
-        from app.tts.tts_omnivoice import omnivoice_readiness
-
-        ready, status, infer_bin = omnivoice_readiness()
-        return {
-            "engine": "omnivoice",
-            "ready": bool(ready),
-            "status": status,
-            "infer_bin": infer_bin,
-        }
-    except Exception as e:
-        return {"engine": "omnivoice", "ready": False, "status": str(e)}
 
 
 def _engine_status_habibi() -> dict:
@@ -415,34 +239,15 @@ def _engine_status_habibi() -> dict:
         return {"engine": "habibi", "ready": False, "status": str(e)}
 
 
-def _engine_status_mms() -> dict:
-    if not getattr(settings, "TTS_MMS_ENABLED", True):
-        return {"engine": "mms", "ready": False, "status": "معطّل عبر TTS_MMS_ENABLED=0"}
-    try:
-        import importlib.util
-
-        if importlib.util.find_spec("transformers") is None:
-            return {"engine": "mms", "ready": False, "status": "transformers غير مثبت"}
-        return {"engine": "mms", "ready": True, "status": "جاهز"}
-    except Exception as e:
-        return {"engine": "mms", "ready": False, "status": str(e)}
-
-
 def list_engine_status() -> list[dict]:
-    """Return readiness for each TTS engine family."""
-    return [
-        _engine_status_omnivoice(),
-        _engine_status_habibi(),
-        _engine_status_mms(),
-    ]
+    return [_engine_status_habibi()]
 
 
 def list_voices_detailed() -> list[dict]:
-    """Voice IDs with per-engine readiness (for GET /tts/voices)."""
     by_engine = {item["engine"]: item for item in list_engine_status()}
     detailed = []
     for voice_id in TTS_KNOWN_VOICES:
-        engine = TTS_VOICE_ENGINE.get(voice_id, "unknown")
+        engine = TTS_VOICE_ENGINE.get(voice_id, "habibi")
         info = by_engine.get(engine) or {}
         detailed.append(
             {
@@ -456,24 +261,10 @@ def list_voices_detailed() -> list[dict]:
 
 
 def get_tts_core(lang_code: Optional[str] = None) -> TTSCore:
-    """Return a TTSCore instance (shared pipeline via module singleton)."""
     return TTSCore(lang_code=lang_code)
 
 
 if __name__ == "__main__":
-    # Small snippet: generate one WAV to outputs/tts/ (no model reload on second call)
     import sys
-    core = get_tts_core()
-    text = sys.argv[1] if len(sys.argv) > 1 else "Hello, this is a test."
-    out_dir = pathlib.Path(settings.OUTPUTS_DIR) / "tts"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = str(out_dir / "tts_sample.wav")
-    try:
-        result = core.synthesize(text, voice=TTS_DEFAULT_VOICE, speed=1.0, out_path=out_path)
-        print("OK:", result)
-        # Second call reuses the same pipeline (no reload)
-        result2 = core.synthesize("Second sentence.", voice=TTS_DEFAULT_VOICE, speed=1.0, out_path="")
-        print("OK (no reload):", result2)
-    except Exception as e:
-        print("Error:", e, file=sys.stderr)
-        sys.exit(1)
+    print("Habibi-only TTS. Use the API with voice sample + ref_text.", file=sys.stderr)
+    sys.exit(2)

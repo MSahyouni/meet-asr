@@ -43,10 +43,8 @@ numba==0.60.0
 llvmlite==0.43.0
 scipy>=1.11.4,<1.14
 
-# ==== Optional TTS extras (NOT installed by default) ====
-# mishkal / habibi-tts / OmniVoice — see apps/api/requirements-optional.txt
+# ==== Optional TTS (Habibi) — see apps/api/requirements-optional.txt ====
 #   ./.venv/bin/pip install -r apps/api/requirements-optional.txt
-# OmniVoice stays in a separate .tools/omnivoice venv (scripts/download_omnivoice.sh)
 
 # ==== Utilities ====
 PyYAML==6.0.3
