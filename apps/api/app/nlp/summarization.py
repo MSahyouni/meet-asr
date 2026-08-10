@@ -76,7 +76,10 @@ def warm_ultra_in_background() -> None:
     def _run() -> None:
         try:
             print("[SUM] warming jais2 in background…")
-            _load_ultra_pipe()
+            pipe = _load_ultra_pipe()
+            if pipe is None:
+                print("[SUM] jais2 warm failed (model not loaded)")
+                return
             print("[SUM] jais2 warm ready")
         except Exception as e:
             print(f"[SUM] jais2 warm skipped: {e}")
@@ -295,6 +298,7 @@ def _load_ultra_pipe_unlocked():
             token=settings.HF_TOKEN,
             trust_remote_code=settings.JAIS_TRUST_REMOTE,
             use_fast=True,
+            fix_mistral_regex=True,
         )
         _ULTRA_TOKENIZER = tok
 

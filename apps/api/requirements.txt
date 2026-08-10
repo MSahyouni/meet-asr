@@ -14,19 +14,23 @@ faster-whisper==1.2.0
 pyannote.audio==3.1.1
 speechbrain==1.0.0
 --extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.4.0
-torchaudio==2.4.0
+torch==2.5.1
+torchaudio==2.5.1
 pytorch-lightning==2.4.0 # Dependency for Pyannote
 
 # ==== Summarization & NLP (Transformers) ====
+# Jais-2 needs transformers>=5 + tokenizers>=0.20 (tokenizer.json merges format)
 sentencepiece==0.2.1
-transformers==4.43.0
-# إصدارات متوافقة مع split_torch_state_dict_into_shards (مطلوب لـ accelerate)
-huggingface-hub>=0.35.1,<0.37
-accelerate>=0.33.0,<0.35
+transformers>=5.14.0,<6
+tokenizers>=0.22.0
+# transformers 5.x requires huggingface-hub>=1.5
+huggingface-hub>=1.5.0,<2.0
+# transformers 5.x needs accelerate>=1.1 for device_map
+accelerate>=1.1.0,<2
 protobuf==3.20.3
-safetensors==0.6.2
-sentence-transformers==2.7.0
+safetensors>=0.4.3,<1.0
+# 2.7.x pins transformers<5 — use a release that accepts transformers 5
+sentence-transformers>=3.4.0,<6
 faiss-cpu==1.8.0
 scikit-learn>=1.2,<1.6
 joblib==1.4.2

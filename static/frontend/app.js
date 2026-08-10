@@ -11,13 +11,8 @@
   }
 
   function updateTtsEngineUi() {
-    setZoneVisible("ttsHabibiSettings", true);
-    setZoneVisible("ttsDialectZone", true);
-    setZoneVisible("ttsRefTextZone", true);
-    setZoneVisible("ttsHabibiSpeedHint", true);
-    setZoneVisible("ttsSeedZone", false);
-    setZoneVisible("ttsDiacritizeZone", false);
-
+    var engineEl = getId("ttsEngine");
+    if (engineEl) engineEl.value = "habibi";
     var voiceEl = getId("ttsVoice");
     if (voiceEl) {
       var v = voiceEl.value || "";
@@ -25,8 +20,15 @@
         voiceEl.value = "habibi_unified";
       }
     }
-    var engineEl = getId("ttsEngine");
-    if (engineEl) engineEl.value = "habibi";
+    var hint = getId("ttsAccountHint");
+    if (hint) {
+      var email = (session && session.email) || "";
+      hint.textContent = email
+        ? ("البصمات مرتبطة بحسابك: " + email)
+        : "سجّل الدخول من تبويب الحساب لاستخدام البصمات.";
+    }
+    var emailEl = getId("ttsUserEmail");
+    if (emailEl && session && session.email) emailEl.value = session.email;
   }
 
   function setTtsSpeed(value) {
@@ -181,7 +183,7 @@
         if (el) state.values[id] = el.value;
       });
 
-      ["diarize", "autoK", "ttsDiacritize"].forEach(function (id) {
+      ["diarize", "autoK"].forEach(function (id) {
         var el = getId(id);
         if (el) state.checks[id] = !!el.checked;
       });
@@ -496,6 +498,7 @@
     if (profileEmail) profileEmail.value = session.email;
     if (dashEmail) dashEmail.value = session.email;
     if (ttsUserEmail && session.email) ttsUserEmail.value = session.email;
+    if (typeof updateTtsEngineUi === "function") updateTtsEngineUi();
     syncAuthGates();
     queueUIStateSave();
     if (session.token && session.email && typeof window._liveAsrWarmup === "function") {
@@ -752,6 +755,7 @@
     micReady: "جاهز للتسجيل — التحويل يظهر أثناء الكلام",
     micLive: "جارٍ التفريغ…",
     micFinalizing: "جاري إنهاء التفريغ...",
+    micDiarizing: "جاري تمييز المتكلمين وإنهاء التفريغ...",
     micDone: "انتهى التسجيل. استمع للمعاينة ثم احفظ أو تجاهل.",
     micUnsupported: "هذا المتصفح لا يدعم التسجيل من الميكروفون.",
     micRecording: "جاري التسجيل شبه-الحي... اضغط «إيقاف التسجيل» عند الانتهاء.",
@@ -1540,7 +1544,8 @@
       setMicStatusBusy(false, ASR_MESSAGES.micReady);
       return Promise.resolve();
     }
-    setMicStatusBusy(true, ASR_MESSAGES.micFinalizing);
+    var wantDiarize = getId("diarize") ? !!getId("diarize").checked : true;
+    setMicStatusBusy(true, wantDiarize ? ASR_MESSAGES.micDiarizing : ASR_MESSAGES.micFinalizing);
     var sid = liveSessionId;
     var chain = Promise.resolve();
     if (blob && blob.size) {
@@ -1564,11 +1569,20 @@
       var fd = new FormData();
       fd.append("session_id", sid);
       fd.append("user_email", session.email || "");
+      fd.append("diarize", wantDiarize ? "true" : "false");
+      fd.append("auto_k", getId("autoK") && getId("autoK").checked ? "true" : "false");
+      fd.append("max_speakers", getId("maxSpeakers") ? getId("maxSpeakers").value : "2");
+      fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
+      var timeoutEl = getId("timeout");
+      var finTimeout = timeoutEl ? Number(timeoutEl.value) : 900;
+      if (!isFinite(finTimeout) || finTimeout < 0) finTimeout = 900;
+      if (finTimeout === 0) finTimeout = 3600;
+      finTimeout = Math.max(finTimeout, wantDiarize ? 300 : 120);
       return fetchWithTimeout(API.asr.liveFinalize, {
         method: "POST",
         headers: getHeaders(),
         body: fd,
-      }, 300);
+      }, finTimeout);
     }).then(function (r) {
       if (!r.ok) {
         return r.json().then(function (j) {
@@ -1579,6 +1593,9 @@
     }).then(function (data) {
       if (data && typeof data.text === "string") getId("outText").value = data.text;
       if (data && data.duration_sec != null) liveLastDurationSec = Number(data.duration_sec) || liveLastDurationSec;
+      if (data && Array.isArray(data.segments) && data.segments.length && getId("outSegments")) {
+        getId("outSegments").textContent = segText(data.segments);
+      }
       window._lastRecordedBlob = blob || null;
       showLiveAudioBar(blob, liveLastDurationSec);
       setMicStatusBusy(false, ASR_MESSAGES.micDone);
@@ -1597,7 +1614,8 @@
       btn.textContent = "بدء التسجيل";
       btn.classList.add("btn-primary");
       btn.classList.remove("btn-secondary");
-      setMicStatusBusy(true, ASR_MESSAGES.micFinalizing);
+      var wantDiarizeStop = getId("diarize") ? !!getId("diarize").checked : true;
+      setMicStatusBusy(true, wantDiarizeStop ? ASR_MESSAGES.micDiarizing : ASR_MESSAGES.micFinalizing);
       return;
     }
     if (!requireLogin(ASR_MESSAGES.liveNeedLogin)) {

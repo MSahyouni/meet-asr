@@ -266,6 +266,106 @@ def _transcribe_wav(wav_path: pathlib.Path, sess: LiveSession) -> str:
     return text
 
 
+def _format_diarized_text(seg_rows: list) -> str:
+    """Compact speaker-labeled transcript for the live text box + summarizer."""
+    from app.asr.common import to_ar_speaker
+    from app.asr.process import _clean_utterance, _renumber_speakers
+
+    blocks: list[str] = []
+    cur_spk = None
+    cur_parts: list[str] = []
+
+    def flush() -> None:
+        nonlocal cur_spk, cur_parts
+        if not cur_parts:
+            return
+        spk = to_ar_speaker(cur_spk or "")
+        body = " ".join(cur_parts).strip()
+        if body:
+            blocks.append(f"({spk})\n{body}")
+        cur_parts = []
+
+    for s in seg_rows or []:
+        txt = _clean_utterance((s.get("text") or "").strip())
+        if not txt:
+            continue
+        spk = s.get("speaker") or ""
+        if cur_spk is None:
+            cur_spk = spk
+        if spk != cur_spk:
+            flush()
+            cur_spk = spk
+        cur_parts.append(txt)
+    flush()
+    return _renumber_speakers("\n\n".join(blocks)).strip()
+
+
+def _transcribe_and_diarize(
+    wav_path: pathlib.Path,
+    sess: LiveSession,
+    *,
+    auto_k: bool = True,
+    max_speakers: int = 2,
+    enroll_threshold: float = 0.65,
+) -> tuple[str, list]:
+    """Full-pass ASR + Pyannote (+ enrolled speaker map) for live finalize."""
+    from app.asr.whisper import get_model, run_asr
+    from app.asr.diarization import diarize_with_pyannote, map_speakers_to_segments
+    from app.asr import diarization as diarization_mod
+    from app.asr.speakers import map_generic_to_enrolled_speakers
+    from app.asr.common import to_ar_speaker
+
+    model_name = (getattr(settings, "WHISPER_MODEL", None) or "light").strip() or "light"
+    model = get_model(model_name, device=sess.device, compute_type=sess.compute_type)
+    _header, whisper_segments = run_asr(
+        str(wav_path),
+        model,
+        whisper_mode=sess.whisper_mode,
+        multi_speaker=True,
+    )
+
+    # Free Whisper VRAM before loading pyannote on laptop GPUs.
+    try:
+        from app.asr import release_asr_gpu
+
+        release_asr_gpu(reason="live_diarize")
+    except Exception:
+        pass
+
+    pyannote_ok = bool(getattr(diarization_mod, "_PYANNOTE_AVAILABLE", False))
+    if pyannote_ok:
+        num_spk = 0 if auto_k else max(1, int(max_speakers or 2))
+        try:
+            speaker_turns = diarize_with_pyannote(str(wav_path), num_speakers=num_spk)
+        except Exception as e:
+            logger.warning("live diarization failed, plain transcript: %s", e)
+            speaker_turns = []
+            pyannote_ok = False
+    else:
+        speaker_turns = []
+
+    seg_rows = map_speakers_to_segments(whisper_segments or [], speaker_turns)
+    try:
+        seg_rows = map_generic_to_enrolled_speakers(
+            str(wav_path),
+            seg_rows,
+            float(enroll_threshold),
+            user_email=sess.user_email,
+        )
+    except Exception as e:
+        logger.warning("live speaker enrollment map failed: %s", e)
+
+    for s in seg_rows:
+        s["speaker"] = to_ar_speaker(s.get("speaker", ""))
+
+    text = _format_diarized_text(seg_rows)
+    if not text:
+        # Fallback if segments empty
+        parts = [(s.get("text") or "").strip() for s in (whisper_segments or []) if (s.get("text") or "").strip()]
+        text = " ".join(parts).strip()
+    return text, seg_rows
+
+
 def ingest_cumulative_audio(sess: LiveSession, audio_bytes: bytes, filename: str = "chunk.webm") -> Dict[str, Any]:
     """Overwrite session source with cumulative client blob, convert, ASR, update texts.
 
@@ -340,7 +440,14 @@ def ingest_cumulative_audio(sess: LiveSession, audio_bytes: bytes, filename: str
         }
 
 
-def finalize_session(sess: LiveSession) -> Dict[str, Any]:
+def finalize_session(
+    sess: LiveSession,
+    *,
+    diarize: bool = True,
+    auto_k: bool = True,
+    max_speakers: int = 2,
+    enroll_threshold: float = 0.65,
+) -> Dict[str, Any]:
     with sess.lock:
         if not sess.wav_path.exists() and not list(sess.dir.glob("latest.*")):
             raise ValueError("no audio in session")
@@ -359,7 +466,28 @@ def finalize_session(sess: LiveSession) -> Dict[str, Any]:
                 except OSError:
                     pass
 
-        text = _transcribe_wav(sess.wav_path, sess)
+        segments: list = []
+        diarized = False
+        if diarize:
+            try:
+                text, segments = _transcribe_and_diarize(
+                    sess.wav_path,
+                    sess,
+                    auto_k=auto_k,
+                    max_speakers=max_speakers,
+                    enroll_threshold=enroll_threshold,
+                )
+                diarized = bool(segments) and any(
+                    (s.get("speaker") or "").strip() for s in segments
+                )
+            except Exception as e:
+                logger.warning("live diarized finalize failed, falling back: %s", e)
+                text = _transcribe_wav(sess.wav_path, sess)
+                segments = []
+                diarized = False
+        else:
+            text = _transcribe_wav(sess.wav_path, sess)
+
         sess.committed_text = text
         sess.partial_text = ""
         import soundfile as sf
@@ -380,6 +508,8 @@ def finalize_session(sess: LiveSession) -> Dict[str, Any]:
             "text": text,
             "committed_text": text,
             "partial_text": "",
+            "segments": segments,
+            "diarized": diarized,
             "audio_available": sess.wav_path.exists(),
             "duration_sec": round(duration, 3),
             "saved": sess.saved,
