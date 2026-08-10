@@ -1,5 +1,5 @@
-import 'package:flutter_app/features/auth/domain/entities/user_entity.dart';
-import 'package:flutter_app/features/auth/domain/repositories/auth_repository.dart';
+import 'package:nabra/features/auth/domain/entities/user_entity.dart';
+import 'package:nabra/features/auth/domain/repositories/auth_repository.dart';
 
 class LoginUseCase {
   final AuthRepository repository;

@@ -2,17 +2,17 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:flutter_app/core/di/injector.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
-import 'package:flutter_app/core/theme/app_theme.dart';
-import 'package:flutter_app/core/widgets/app_snackbar.dart';
-import 'package:flutter_app/core/widgets/nabra_scaffold.dart';
-import 'package:flutter_app/core/widgets/outlined_action_tile.dart';
-import 'package:flutter_app/core/widgets/primary_button.dart';
-import 'package:flutter_app/core/widgets/staggered_entrance.dart';
-import 'package:flutter_app/features/asr/data/repositories/asr_repository_impl.dart';
-import 'package:flutter_app/features/auth/presentation/providers/auth_provider.dart';
-import 'package:flutter_app/services/text_saver.dart';
+import 'package:nabra/core/di/injector.dart';
+import 'package:nabra/core/theme/app_colors.dart';
+import 'package:nabra/core/theme/app_theme.dart';
+import 'package:nabra/core/widgets/app_snackbar.dart';
+import 'package:nabra/core/widgets/nabra_scaffold.dart';
+import 'package:nabra/core/widgets/outlined_action_tile.dart';
+import 'package:nabra/core/widgets/primary_button.dart';
+import 'package:nabra/core/widgets/staggered_entrance.dart';
+import 'package:nabra/features/asr/data/repositories/asr_repository_impl.dart';
+import 'package:nabra/features/auth/presentation/providers/auth_provider.dart';
+import 'package:nabra/services/text_saver.dart';
 
 class AnalysisPage extends ConsumerStatefulWidget {
   const AnalysisPage({super.key});

@@ -1,5 +1,5 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/app_theme.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:nabra/core/theme/app_theme.dart';
 
 /// بطاقة إجراء: أيقونة يسار · نص ثم سهم يمين مباشرة.
 class OutlinedActionTile extends StatelessWidget {

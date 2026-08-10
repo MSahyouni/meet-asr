@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/app.dart';
+import 'package:nabra/app.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();

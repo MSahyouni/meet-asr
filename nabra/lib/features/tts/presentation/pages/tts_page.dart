@@ -2,16 +2,16 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:flutter_app/core/di/injector.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
-import 'package:flutter_app/core/theme/app_theme.dart';
-import 'package:flutter_app/core/widgets/app_snackbar.dart';
-import 'package:flutter_app/core/widgets/app_text_field.dart';
-import 'package:flutter_app/core/widgets/nabra_scaffold.dart';
-import 'package:flutter_app/core/widgets/primary_button.dart';
-import 'package:flutter_app/core/widgets/staggered_entrance.dart';
-import 'package:flutter_app/features/auth/presentation/providers/auth_provider.dart';
-import 'package:flutter_app/services/audio_download_service.dart';
+import 'package:nabra/core/di/injector.dart';
+import 'package:nabra/core/theme/app_colors.dart';
+import 'package:nabra/core/theme/app_theme.dart';
+import 'package:nabra/core/widgets/app_snackbar.dart';
+import 'package:nabra/core/widgets/app_text_field.dart';
+import 'package:nabra/core/widgets/nabra_scaffold.dart';
+import 'package:nabra/core/widgets/primary_button.dart';
+import 'package:nabra/core/widgets/staggered_entrance.dart';
+import 'package:nabra/features/auth/presentation/providers/auth_provider.dart';
+import 'package:nabra/services/audio_download_service.dart';
 
 class TtsPage extends ConsumerStatefulWidget {
   final String apiUrl;

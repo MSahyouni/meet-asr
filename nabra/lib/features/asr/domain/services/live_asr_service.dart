@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'package:flutter_app/core/di/injector.dart';
-import 'package:flutter_app/core/error/failures.dart';
+import 'package:nabra/core/di/injector.dart';
+import 'package:nabra/core/error/failures.dart';
 
 /// تفريغ مباشر على مستوى Flutter عبر إرسال مقاطع صوتية متتالية.
 /// جاهز للربط لاحقاً بـ WebSocket/streaming عندما يصبح الـ backend جاهزاً.

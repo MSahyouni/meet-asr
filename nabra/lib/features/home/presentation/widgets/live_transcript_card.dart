@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_app/core/theme/app_theme.dart';
-import 'package:flutter_app/core/widgets/app_snackbar.dart';
-import 'package:flutter_app/features/asr/presentation/providers/live_transcript_provider.dart';
+import 'package:nabra/core/theme/app_theme.dart';
+import 'package:nabra/core/widgets/app_snackbar.dart';
+import 'package:nabra/features/asr/presentation/providers/live_transcript_provider.dart';
 
 /// بطاقة النص المباشر — نفس أسلوب بطاقات الرئيسية.
 class LiveTranscriptCard extends ConsumerWidget {

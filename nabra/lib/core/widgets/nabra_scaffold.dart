@@ -1,6 +1,6 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_app/core/widgets/geometric_background.dart';
-import 'package:flutter_app/core/widgets/nabra_header.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:nabra/core/widgets/geometric_background.dart';
+import 'package:nabra/core/widgets/nabra_header.dart';
 
 class NabraScaffold extends StatelessWidget {
   final String title;

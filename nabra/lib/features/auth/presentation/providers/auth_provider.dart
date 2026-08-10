@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_app/core/constants/api_constants.dart';
-import 'package:flutter_app/core/di/injector.dart';
-import 'package:flutter_app/features/auth/presentation/providers/auth_state.dart';
+import 'package:nabra/core/constants/api_constants.dart';
+import 'package:nabra/core/di/injector.dart';
+import 'package:nabra/features/auth/presentation/providers/auth_state.dart';
 
 final authProvider =
     NotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);

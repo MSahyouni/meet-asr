@@ -1,4 +1,4 @@
-import 'package:flutter_app/features/auth/domain/entities/user_entity.dart';
+import 'package:nabra/features/auth/domain/entities/user_entity.dart';
 
 abstract class AuthRepository {
   Future<UserEntity> login({

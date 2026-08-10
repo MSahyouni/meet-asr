@@ -1,5 +1,5 @@
 import 'package:equatable/equatable.dart';
-import 'package:flutter_app/features/auth/domain/entities/user_entity.dart';
+import 'package:nabra/features/auth/domain/entities/user_entity.dart';
 
 class AuthState extends Equatable {
   final UserEntity? user;

@@ -5,13 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
-import 'package:flutter_app/core/error/failures.dart';
-import 'package:flutter_app/core/theme/app_theme.dart';
-import 'package:flutter_app/core/utils/pcm_wav.dart';
-import 'package:flutter_app/core/widgets/app_snackbar.dart';
-import 'package:flutter_app/features/asr/domain/services/live_asr_service.dart';
-import 'package:flutter_app/features/asr/presentation/providers/live_transcript_provider.dart';
-import 'package:flutter_app/features/auth/presentation/providers/auth_provider.dart';
+import 'package:nabra/core/error/failures.dart';
+import 'package:nabra/core/theme/app_theme.dart';
+import 'package:nabra/core/utils/pcm_wav.dart';
+import 'package:nabra/core/widgets/app_snackbar.dart';
+import 'package:nabra/features/asr/domain/services/live_asr_service.dart';
+import 'package:nabra/features/asr/presentation/providers/live_transcript_provider.dart';
+import 'package:nabra/features/auth/presentation/providers/auth_provider.dart';
 
 /// شريط تسجيل سفلي مع تفريغ مباشر بدون فقدان صوت:
 /// الميكروفون يبقى مفتوحاً (PCM stream)، والمقاطع تُقطَّع من الذاكرة فقط.

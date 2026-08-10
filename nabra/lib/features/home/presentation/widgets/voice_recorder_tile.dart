@@ -2,9 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
-import 'package:flutter_app/core/theme/app_theme.dart';
-import 'package:flutter_app/core/widgets/app_snackbar.dart';
-import 'package:flutter_app/core/widgets/outlined_action_tile.dart';
+import 'package:nabra/core/theme/app_theme.dart';
+import 'package:nabra/core/widgets/app_snackbar.dart';
+import 'package:nabra/core/widgets/outlined_action_tile.dart';
 
 class VoiceRecorderTile extends StatefulWidget {
   final ValueChanged<File>? onRecordedFile;

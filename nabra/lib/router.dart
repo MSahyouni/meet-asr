@@ -1,2 +1,2 @@
-/// Legacy export — use `package:flutter_app/app.dart` instead.
-export 'package:flutter_app/app.dart' show appRouter;
+/// Legacy export — use `package:nabra/app.dart` instead.
+export 'package:nabra/app.dart' show appRouter;
