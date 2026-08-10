@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/services/auth_service.dart';
-import 'package:flutter_app/services/session_service.dart';
+import 'package:nabra/services/auth_service.dart';
+import 'package:nabra/services/session_service.dart';
 
 class AuthController {
   //create account handler

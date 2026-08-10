@@ -1,5 +1,4 @@
 import 'package:equatable/equatable.dart';
-import 'package:flutter_app/core/constants/api_constants.dart';
 import 'package:flutter_app/features/auth/domain/entities/user_entity.dart';
 
 class AuthState extends Equatable {
@@ -11,7 +10,7 @@ class AuthState extends Equatable {
 
   const AuthState({
     this.user,
-    this.apiBaseUrl = ApiConstants.defaultBaseUrl,
+    this.apiBaseUrl = '',
     this.loading = false,
     this.error,
     this.successMessage,

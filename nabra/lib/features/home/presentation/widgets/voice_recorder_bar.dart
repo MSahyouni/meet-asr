@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:flutter_app/core/error/failures.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/utils/pcm_wav.dart';
 import 'package:flutter_app/core/widgets/app_snackbar.dart';
@@ -161,6 +162,10 @@ class _VoiceRecorderBarState extends ConsumerState<VoiceRecorderBar>
 
     try {
       file = await _writeWavTemp(pcm);
+      if (auth.user?.accessToken == null ||
+          auth.user!.accessToken!.trim().isEmpty) {
+        throw const Failure('يجب تسجيل الدخول أولاً لاستخدام التفريغ المباشر');
+      }
       final text = await _liveAsr.transcribeChunk(
         file: file,
         apiBaseUrl: auth.apiBaseUrl,
@@ -172,13 +177,14 @@ class _VoiceRecorderBarState extends ConsumerState<VoiceRecorderBar>
         live.appendText('');
       }
     } catch (e) {
-      final firstTime = live.markOffline(
-        'التفريغ المباشر غير جاهز من الخادم',
-      );
+      final msg = e is Failure
+          ? e.message
+          : 'التفريغ المباشر غير جاهز من الخادم';
+      final firstTime = live.markOffline(msg);
       if (firstTime && mounted) {
         AppSnackbar.show(
           context,
-          message: 'التفريغ المباشر غير جاهز من الخادم',
+          message: msg,
           isError: true,
           duration: const Duration(seconds: 6),
         );

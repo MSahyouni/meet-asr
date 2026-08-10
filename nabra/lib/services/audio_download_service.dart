@@ -56,6 +56,7 @@ import 'package:path_provider/path_provider.dart';
 class AudioDownloadService {
   static Future<String> downloadAudio({
     required String audioUrl,
+    String? authorization,
     String folderName = "My Generated Audios",
   }) async {
     // الحصول على مسار التخزين الخارجي للتطبيق
@@ -80,8 +81,15 @@ class AudioDownloadService {
 
     final file = File('${directory.path}/$fileName');
 
-    // تنزيل الصوت
-    final response = await http.get(Uri.parse(audioUrl));
+    final headers = <String, String>{};
+    final token = authorization?.trim();
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] =
+          token.startsWith('Bearer ') ? token : 'Bearer $token';
+    }
+
+    // تنزيل الصوت (يتطلب JWT على /download)
+    final response = await http.get(Uri.parse(audioUrl), headers: headers);
 
     if (response.statusCode == 200) {
       await file.writeAsBytes(response.bodyBytes);

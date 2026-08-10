@@ -1,6 +1,6 @@
 // import 'package:audioplayers/audioplayers.dart';
 // import 'package:flutter/material.dart';
-// import 'package:flutter_app/services/audio_download_service.dart';
+// import 'package:nabra/services/audio_download_service.dart';
 // import 'package:gap/gap.dart';
 
 // class TtsAudioPlayer extends StatefulWidget {
@@ -164,7 +164,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // import 'package:flutter/material.dart';
-// import 'package:flutter_app/services/audio_download_service.dart';
+// import 'package:nabra/services/audio_download_service.dart';
 // import 'package:gap/gap.dart';
 
 // class TtsDownloadButton extends StatefulWidget {
@@ -269,10 +269,10 @@
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/services/audio_download_service.dart';
-import 'package:flutter_app/widgets/tts_audio_slide.dart';
-import 'package:flutter_app/widgets/tts_play_button.dart';
-import 'package:flutter_app/widgets/tts_stop_button.dart';
+import 'package:nabra/services/audio_download_service.dart';
+import 'package:nabra/widgets/tts_audio_slide.dart';
+import 'package:nabra/widgets/tts_play_button.dart';
+import 'package:nabra/widgets/tts_stop_button.dart';
 import 'package:gap/gap.dart';
 
 class TtsDownloadButton extends StatefulWidget {

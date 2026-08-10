@@ -25,7 +25,7 @@ final GoRouter appRouter = GoRouter(
         final extra = state.extra as Map<String, dynamic>?;
         return SummaryPage(
           text: extra?['text']?.toString() ?? '',
-          model: extra?['model']?.toString() ?? 'jais',
+          model: extra?['model']?.toString() ?? 'ultra',
           apiUrl: extra?['apiUrl']?.toString() ?? '',
         );
       },

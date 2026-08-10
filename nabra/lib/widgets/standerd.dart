@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/widgets/get_drawer.dart';
+import 'package:nabra/widgets/get_drawer.dart';
 import 'package:gap/gap.dart';
 
 class Standerd extends StatelessWidget {

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/services/tts_services.dart';
-import 'package:flutter_app/widgets/staggered_fade_slide.dart';
-import 'package:flutter_app/widgets/tts_audio_download.dart';
+import 'package:nabra/services/tts_services.dart';
+import 'package:nabra/widgets/staggered_fade_slide.dart';
+import 'package:nabra/widgets/tts_audio_download.dart';
 
-import 'package:flutter_app/widgets/tts_convert_button.dart';
-import 'package:flutter_app/widgets/tts_input_section.dart';
-import 'package:flutter_app/widgets/tts_voices_dropdown.dart';
+import 'package:nabra/widgets/tts_convert_button.dart';
+import 'package:nabra/widgets/tts_input_section.dart';
+import 'package:nabra/widgets/tts_voices_dropdown.dart';
 import 'package:gap/gap.dart';
 
 class Tts extends StatefulWidget {

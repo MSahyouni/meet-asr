@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/widgets/animated_lift_text_filed.dart';
-import 'package:flutter_app/widgets/divider.dart';
-import 'package:flutter_app/widgets/field_lable.dart';
-import 'package:flutter_app/widgets/log_in_button.dart';
+import 'package:nabra/widgets/animated_lift_text_filed.dart';
+import 'package:nabra/widgets/divider.dart';
+import 'package:nabra/widgets/field_lable.dart';
+import 'package:nabra/widgets/log_in_button.dart';
 import 'package:gap/gap.dart';
 
 class LoginCard extends StatelessWidget {

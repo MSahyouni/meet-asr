@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/services/session_service.dart';
+import 'package:nabra/services/session_service.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 

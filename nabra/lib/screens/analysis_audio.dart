@@ -1,13 +1,13 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/services/text_saver.dart';
-import 'package:flutter_app/widgets/animated_list_item.dart';
+import 'package:nabra/services/text_saver.dart';
+import 'package:nabra/widgets/animated_list_item.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 //  استيراد الأنيميشن اللي عندك
-import 'package:flutter_app/widgets/staggered_fade_slide.dart';
+import 'package:nabra/widgets/staggered_fade_slide.dart';
 
 class AnalysisAudioScreen extends StatefulWidget {
   const AnalysisAudioScreen({super.key});

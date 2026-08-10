@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_app/core/di/injector.dart';
@@ -45,7 +45,7 @@ class _SummaryPageState extends ConsumerState<SummaryPage> {
       final result = await AppInjector.summaryRepository.summarize(
         text: widget.text,
         apiBaseUrl: widget.apiUrl,
-        model: 'jais',
+        model: widget.model == 'light' ? 'light' : 'ultra',
         authorization: token,
       );
       setState(() {

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/widgets/duildttsmodeldropdown.dart';
+import 'package:nabra/widgets/duildttsmodeldropdown.dart';
 
 class TtsVoiceDropdown extends StatelessWidget {
   final String? selectedVoice;

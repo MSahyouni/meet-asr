@@ -11,7 +11,7 @@ class LiveAsrService {
     required File file,
     required String apiBaseUrl,
     String? authorization,
-    String model = 'medium',
+    String model = 'light',
   }) async {
     try {
       final result = await AppInjector.asrRepository
@@ -20,8 +20,9 @@ class LiveAsrService {
             apiBaseUrl: apiBaseUrl,
             authorization: authorization,
             model: model,
+            diarize: false,
           )
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 180));
       return result.text.trim();
     } on Failure {
       rethrow;

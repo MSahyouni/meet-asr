@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/controllers/auth_controller.dart';
-import 'package:flutter_app/widgets/log_in_card.dart';
-import 'package:gap/gap.dart';
+import 'package:nabra/controllers/auth_controller.dart';
+import 'package:nabra/widgets/log_in_card.dart';
 import 'package:go_router/go_router.dart';
 
 class LoginScreen extends StatefulWidget {

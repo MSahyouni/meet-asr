@@ -2,10 +2,8 @@ import 'package:flutter_app/core/constants/api_constants.dart';
 
 abstract final class UrlUtils {
   static String normalizeBase(String raw) {
-    var base = raw.trim().replaceAll(RegExp(r'/+$'), '');
-    if (base.isEmpty) return ApiConstants.defaultBaseUrl;
+    var base = ApiConstants.resolveBaseUrl(raw);
 
-    // Strip known feature suffixes if the user pasted a full endpoint.
     const suffixes = [
       '/asr/transcribe',
       '/transcribe',
@@ -27,12 +25,11 @@ abstract final class UrlUtils {
   }
 
   static String join(String base, String path) {
-    final root = normalizeBase(base);
-    final p = path.startsWith('/') ? path : '/$path';
-    return '$root$p';
+    return ApiConstants.apiUri(base, path).toString();
   }
 
-  /// Resolve relative download URLs like `/download?path=...` against API root.
+  static Uri uri(String base, String path) => ApiConstants.apiUri(base, path);
+
   static String resolveDownloadUrl(String apiBase, String downloadUrl) {
     final url = downloadUrl.trim();
     if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -44,8 +41,7 @@ abstract final class UrlUtils {
   }
 
   static String summarizeEndpoint(String apiBaseOrTranscribeUrl) {
-    final root = normalizeBase(apiBaseOrTranscribeUrl);
-    return '$root${ApiConstants.nlpSummarize}';
+    return join(apiBaseOrTranscribeUrl, ApiConstants.nlpSummarize);
   }
 
   static String transcribeEndpoint(String apiBase) {

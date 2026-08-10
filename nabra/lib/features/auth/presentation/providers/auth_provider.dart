@@ -8,17 +8,19 @@ final authProvider =
 
 class AuthNotifier extends Notifier<AuthState> {
   @override
-  AuthState build() => const AuthState();
+  AuthState build() => AuthState(apiBaseUrl: ApiConstants.defaultBaseUrl);
 
   Future<void> bootstrap() async {
     final user = await AppInjector.sessionLocal.readSession();
-    final api = await AppInjector.sessionLocal.readApiBaseUrl();
+    final api = ApiConstants.resolveBaseUrl(
+      await AppInjector.sessionLocal.readApiBaseUrl(),
+    );
+    await AppInjector.sessionLocal.saveApiBaseUrl(api);
     state = state.copyWith(user: user, apiBaseUrl: api, clearMessages: true);
   }
 
   Future<void> setApiBaseUrl(String url) async {
-    final trimmed =
-        url.trim().isEmpty ? ApiConstants.defaultBaseUrl : url.trim();
+    final trimmed = ApiConstants.resolveBaseUrl(url);
     await AppInjector.sessionLocal.saveApiBaseUrl(trimmed);
     state = state.copyWith(apiBaseUrl: trimmed);
   }
@@ -30,9 +32,9 @@ class AuthNotifier extends Notifier<AuthState> {
   }) async {
     state = state.copyWith(loading: true, clearMessages: true);
     try {
-      final api = baseUrl?.trim().isNotEmpty == true
-          ? baseUrl!.trim()
-          : state.apiBaseUrl;
+      final api = ApiConstants.resolveBaseUrl(
+        baseUrl?.trim().isNotEmpty == true ? baseUrl! : state.apiBaseUrl,
+      );
       final user = await AppInjector.loginUseCase(
         email: email,
         password: password,
@@ -60,9 +62,9 @@ class AuthNotifier extends Notifier<AuthState> {
   }) async {
     state = state.copyWith(loading: true, clearMessages: true);
     try {
-      final api = baseUrl?.trim().isNotEmpty == true
-          ? baseUrl!.trim()
-          : state.apiBaseUrl;
+      final api = ApiConstants.resolveBaseUrl(
+        baseUrl?.trim().isNotEmpty == true ? baseUrl! : state.apiBaseUrl,
+      );
       await AppInjector.registerUseCase(
         fullName: fullName,
         email: email,

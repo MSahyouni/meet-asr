@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/controllers/auth_controller.dart';
-import 'package:flutter_app/widgets/auth_card.dart';
-import 'package:flutter_app/widgets/auth_gradientbutton.dart';
-import 'package:flutter_app/widgets/labeled_filed.dart';
-import 'package:flutter_app/widgets/soft_text_filed.dart';
+import 'package:nabra/controllers/auth_controller.dart';
+import 'package:nabra/widgets/auth_card.dart';
+import 'package:nabra/widgets/auth_gradientbutton.dart';
+import 'package:nabra/widgets/labeled_filed.dart';
+import 'package:nabra/widgets/soft_text_filed.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 

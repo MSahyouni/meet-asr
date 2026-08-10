@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:flutter_app/model/voice_model.dart';
+import 'package:nabra/model/voice_model.dart';
 import 'package:http/http.dart' as http;
 
 

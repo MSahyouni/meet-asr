@@ -2,9 +2,9 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/screens/buildVoiceRecorderSection.dart';
-import 'package:flutter_app/widgets/staggered_fade_slide.dart';
-import 'package:flutter_app/widgets/standerd.dart';
+import 'package:nabra/screens/buildVoiceRecorderSection.dart';
+import 'package:nabra/widgets/staggered_fade_slide.dart';
+import 'package:nabra/widgets/standerd.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:voice_note_kit/player/utils/audio_player_controller.dart';

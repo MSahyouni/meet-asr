@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -24,11 +24,12 @@ class AnalysisPage extends ConsumerStatefulWidget {
 class _AnalysisPageState extends ConsumerState<AnalysisPage> {
   bool _loading = false;
   String _transcript = '';
-  String _summaryModel = 'jais';
+  String _summaryModel = 'light';
   bool _autoStarted = false;
 
   final _models = const {
-    'jais': 'Jais-2 (محضر اجتماعات)',
+    'light': 'Light Model (سريع وأخف)',
+    'ultra': 'Ultra Model (أدق وأقوى)',
   };
 
   @override
@@ -104,11 +105,11 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
           EntranceItem(
             index: 0,
             child: OutlinedActionTile(
-              label: _loading
-                  ? 'جاري التحويل...'
-                  : (_transcript.isEmpty
-                      ? 'إرسال وتحويل الصوت إلى نص'
-                      : 'إعادة التحويل'),
+            label: _loading
+                ? 'جاري التحويل... قد يستغرق وقتاً على CPU'
+                : (_transcript.isEmpty
+                    ? 'إرسال وتحويل الصوت إلى نص'
+                    : 'إعادة التحويل'),
               icon: Icons.play_arrow_rounded,
               onTap: _loading
                   ? null
@@ -150,19 +151,34 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
                 ),
                 const SizedBox(height: 10),
                 Container(
-                  width: double.infinity,
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                   decoration: BoxDecoration(
                     color: AppColors.primary,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Text(
-                    _models['jais']!,
-                    textAlign: TextAlign.right,
-                    style: AppTheme.text(
-                      color: AppColors.goldSoft,
-                      fontSize: 14,
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _summaryModel,
+                      isExpanded: true,
+                      dropdownColor: AppTheme.primaryLight,
+                      iconEnabledColor: Colors.white,
+                      style: AppTheme.text(
+                        color: AppColors.goldSoft,
+                        fontSize: 14,
+                      ),
+                      items: _models.entries
+                          .map(
+                            (e) => DropdownMenuItem(
+                              value: e.key,
+                              child:
+                                  Text(e.value, textAlign: TextAlign.right),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => _summaryModel = v);
+                      },
                     ),
                   ),
                 ),
@@ -244,6 +260,8 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
           file: file,
           apiBaseUrl: apiUrl,
           authorization: token,
+          model: 'light',
+          diarize: false,
         );
         if (files.length > 1) {
           buffer.writeln('— ${file.path.split(Platform.pathSeparator).last} —');
