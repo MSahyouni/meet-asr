@@ -8,6 +8,7 @@ import 'package:record/record.dart';
 import 'package:nabra/core/error/failures.dart';
 import 'package:nabra/core/theme/app_theme.dart';
 import 'package:nabra/core/utils/pcm_wav.dart';
+import 'package:nabra/core/utils/recording_saver.dart';
 import 'package:nabra/core/widgets/app_snackbar.dart';
 import 'package:nabra/features/asr/domain/services/live_asr_service.dart';
 import 'package:nabra/features/asr/presentation/providers/live_transcript_provider.dart';
@@ -216,19 +217,24 @@ class _VoiceRecorderBarState extends ConsumerState<VoiceRecorderBar>
         await _transcribePcm(remaining);
       }
 
-      // ملف الجلسة الكاملة للمستخدم (إن وُجدت بايتات)
+      // ملف الجلسة الكاملة — الحفظ في المستندات اختياري
       final session = _sessionPcm.takeBytes();
+      File? sessionFile;
       if (session.isNotEmpty) {
-        final fullFile = await _writeWavTemp(session, prefix: 'session');
-        widget.onRecordedFile?.call(fullFile);
+        sessionFile = await _writeWavTemp(session, prefix: 'session');
       }
 
       final offline = ref.read(liveTranscriptProvider).status ==
           LiveTranscriptStatus.offline;
       ref.read(liveTranscriptProvider.notifier).stopSession();
       if (!mounted) return;
-      // لا نستبدل رسالة الفشل برسالة نجاح
-      if (!offline) {
+
+      if (sessionFile != null) {
+        final saved = await _offerSaveRecording(sessionFile);
+        if (saved != null) {
+          widget.onRecordedFile?.call(saved);
+        }
+      } else if (!offline) {
         AppSnackbar.show(context, message: 'تم إنهاء التسجيل');
       }
     } catch (e) {
@@ -236,6 +242,109 @@ class _VoiceRecorderBarState extends ConsumerState<VoiceRecorderBar>
       if (!mounted) return;
       AppSnackbar.show(context, message: 'خطأ في الإيقاف: $e', isError: true);
     }
+  }
+
+  /// يسأل المستخدم إن أراد حفظ التسجيل في Documents/myrecording.
+  /// يعيد الملف المحفوظ، أو null إن رفض أو فشل الحفظ.
+  Future<File?> _offerSaveRecording(File sessionFile) async {
+    final shouldSave = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusField),
+          ),
+          title: Text(
+            'حفظ التسجيل؟',
+            textAlign: TextAlign.right,
+            style: AppTheme.text(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          content: Text(
+            'يمكنك حفظ الصوت في مدير الملفات ضمن المستندات / myrecording، أو تجاهله.',
+            textAlign: TextAlign.right,
+            style: AppTheme.text(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.textSecondary,
+              height: 1.5,
+            ),
+          ),
+          actionsAlignment: MainAxisAlignment.spaceBetween,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(
+                'تجاهل',
+                style: AppTheme.text(
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textMuted,
+                ),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                foregroundColor: AppTheme.textOnPrimary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusField),
+                ),
+              ),
+              child: Text(
+                'حفظ',
+                style: AppTheme.text(
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textOnPrimary,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldSave != true) {
+      await _deleteQuietly(sessionFile);
+      if (mounted) {
+        AppSnackbar.show(context, message: 'تم إنهاء التسجيل دون حفظ');
+      }
+      return null;
+    }
+
+    try {
+      final saved = await RecordingSaver.saveToMyRecording(sessionFile);
+      await _deleteQuietly(sessionFile);
+      if (mounted) {
+        AppSnackbar.show(
+          context,
+          message: 'تم حفظ التسجيل في المستندات / myrecording',
+          duration: const Duration(seconds: 4),
+        );
+      }
+      return saved;
+    } catch (e) {
+      await _deleteQuietly(sessionFile);
+      if (mounted) {
+        AppSnackbar.show(
+          context,
+          message: 'تعذّر حفظ التسجيل: $e',
+          isError: true,
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
   }
 
   @override
