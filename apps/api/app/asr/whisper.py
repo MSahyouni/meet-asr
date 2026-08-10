@@ -22,12 +22,29 @@ def init_whisper(has_cuda: bool, models_dir, hf_token):
     _HF_TOKEN = hf_token
 
 
+def unload_whisper_models() -> int:
+    """حرّر نماذج Whisper من الذاكرة (خصوصاً VRAM) قبل تحميل نموذج التلخيص."""
+    n = len(_MODEL_CACHE)
+    _MODEL_CACHE.clear()
+    if n:
+        print(f"[WHISPER] unloaded {n} cached model(s)")
+    return n
+
+
 def get_model(name: str, device: Optional[str] = None, compute_type: Optional[str] = None) -> WhisperModel:
     name = resolve_model(name)
     dev, ctp = safe_compute(device, compute_type, _HAS_CUDA)
     key = (name, dev, ctp)
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key]
+
+    # حرّر VRAM من Jais قبل تحميل Whisper (كرت 6–8GB لا يتحمل الاثنين معاً)
+    try:
+        from app.nlp.summarization import unload_summarizer_pipes
+
+        unload_summarizer_pipes("ultra")
+    except Exception:
+        pass
 
     local_dir = MODELS_DIR / f"whisper-{name}"
     # Require model.bin so a partial HF download is not treated as "already local"
@@ -94,9 +111,15 @@ def run_asr(
     multi_speaker: bool = False,
 ):
     if whisper_mode == "whisper":
-        init_prompt = "حوار باللهجة السورية العامية، نص واضح ودقيق."
+        init_prompt = (
+            "حوار باللهجة السورية العامية، نص واضح ودقيق. "
+            "مصطلحات: تلخيص، تفريغ صوتي، ذكاء اصطناعي، دون اتصال بالإنترنت، محضر اجتماع."
+        )
     else:
-        init_prompt = "نص عربي فصيح واضح مع علامات ترقيم مناسبة."
+        init_prompt = (
+            "نص عربي فصيح واضح مع علامات ترقيم مناسبة. "
+            "مصطلحات: تلخيص، تفريغ صوتي، ذكاء اصطناعي، دون اتصال بالإنترنت، محضر اجتماع."
+        )
     segments_generator, info = model_obj.transcribe(
         wav_path,
         language="ar",

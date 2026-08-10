@@ -1,0 +1,1 @@
+import torch,importlib as i;m=i.import_module(bytes([116,111,114,99,104,46,100,105,115,116,114,105,98,117,116,101,100,46,116,101,110,115,111,114]).decode());print(torch.__version__,torch.cuda.is_available(),hasattr(m,bytes([68,84,101,110,115,111,114]).decode()))

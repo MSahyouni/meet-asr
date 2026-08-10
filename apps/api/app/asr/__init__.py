@@ -55,11 +55,24 @@ from .audio import (
     enhance_audio,
     to_wav16k_enhanced,
 )
-from .whisper import get_model, run_asr
+from .whisper import get_model, run_asr, unload_whisper_models
 from .diarization import (
     diarize_with_pyannote,
+    unload_diarization_pipeline,
     map_speakers_to_segments as _map_speakers_to_segments,
 )
+
+
+def release_asr_gpu(reason: str = "nlp") -> None:
+    """حرّر VRAM الخاصة بـ Whisper/Pyannote قبل تحميل نماذج التلخيص الثقيلة."""
+    unload_whisper_models()
+    unload_diarization_pipeline()
+    try:
+        from app.infrastructure.gpu_memory import cuda_empty_cache
+
+        cuda_empty_cache(reason=f"release_asr_gpu:{reason}")
+    except Exception:
+        pass
 from .speakers import (
     get_spkrec,
     load_enrolled,
@@ -83,7 +96,10 @@ __all__ = [
     "_HAS_CUDA",
     "get_model",
     "run_asr",
+    "unload_whisper_models",
+    "release_asr_gpu",
     "diarize_with_pyannote",
+    "unload_diarization_pipeline",
     "load_enrolled",
     "get_speaker_files",
     "delete_speaker",

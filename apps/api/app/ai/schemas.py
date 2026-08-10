@@ -33,7 +33,7 @@ class TTSResponse(BaseModel):
 
 class SummarizationRequest(BaseModel):
     text: str = Field(..., title="Text to summarize")
-    mode: str = Field("lite", title="Summarization mode (lite/ultra)")
+    mode: str = Field("ultra", title="Summarization mode (ultra only)")
 
 
 class SummarizationResponse(BaseModel):

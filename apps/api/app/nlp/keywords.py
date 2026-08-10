@@ -1,15 +1,24 @@
-# nlp/keywords.py — TF-IDF واستخراج الكلمات المفتاحية
+# nlp/keywords.py — استخراج كلمات مفتاحية مفيدة (بدون حشو)
 import sys
 import types
+from collections import Counter
 from typing import List, Tuple
 
 import joblib
 import numpy as np
 
 from ..config import settings
-from .text_utils import tokenize_ar, keywords_ar
+from .text_utils import _AR_STOP, normalize_ar, tokenize_ar
 
 _TFIDF = {"vec": None, "vocab": None}
+
+# كلمات عامة إضافية لا تفيد كـ keywords لاجتماع/منتج
+_KW_EXTRA_STOP = {
+    "نبدا", "نبدأ", "بسم", "الله", "الرحمن", "الرحيم", "الاساسي", "الاساس",
+    "بتحويل", "تفريغه", "البرنامج", "برنامج", "اليوم", "الان", "الآن",
+    "بعد", "قبل", "خلال", "عند", "عندما", "حيث", "يكون", "تكون", "كانت",
+    "عمل", "عملنا", "سنقوم", "نقوم", "يعني", "ايضا", "أيضا", "فقط",
+}
 
 
 def _split_tokens(s: str) -> List[str]:
@@ -51,9 +60,29 @@ def score_sentences_by_tfidf(sentences: List[str]) -> List[Tuple[str, float]]:
         return [(s, 0.0) for s in sentences]
 
 
-def extract_keywords(text: str, top_k: int = 10) -> str:
+def _useful_keyword(token: str) -> bool:
+    t = (token or "").strip()
+    if len(t) < 4:
+        return False
+    n = normalize_ar(t)
+    if n in _AR_STOP or t in _AR_STOP:
+        return False
+    if n in _KW_EXTRA_STOP or t in _KW_EXTRA_STOP:
+        return False
+    # أرقام أو رموز فقط
+    if not any("\u0621" <= c <= "\u064A" for c in t):
+        return False
+    return True
+
+
+def extract_keywords(text: str, top_k: int = 8) -> str:
+    """أرجع كلمات مفتاحية مفيدة فقط؛ فارغ إذا الجودة ضعيفة."""
     if not text:
         return ""
+
+    top_k = max(3, min(int(top_k or 8), 10))
+    candidates: list[str] = []
+
     if _ensure_tfidf() and _TFIDF["vec"] is not None:
         try:
             vec = _TFIDF["vec"]
@@ -63,9 +92,27 @@ def extract_keywords(text: str, top_k: int = 10) -> str:
             row = X.toarray()[0] if hasattr(X, "toarray") else np.array([])
             if row.size and len(feats):
                 order = row.argsort()[::-1]
-                kws = [feats[i] for i in order if len(feats[i]) >= 3][: max(1, top_k)]
-                if kws:
-                    return ", ".join(kws)
+                for i in order:
+                    feat = feats[i]
+                    if float(row[i]) <= 0:
+                        break
+                    if _useful_keyword(feat):
+                        candidates.append(feat)
+                    if len(candidates) >= top_k:
+                        break
         except Exception as e:
             print(f"[TFIDF_KW] failed: {e}")
-    return keywords_ar(text, k=top_k)
+
+    if len(candidates) < 3:
+        # fallback: تكرار بعد فلترة صارمة
+        counted = Counter(tokenize_ar(text))
+        for w, _n in counted.most_common(40):
+            if _useful_keyword(w) and w not in candidates:
+                candidates.append(w)
+            if len(candidates) >= top_k:
+                break
+
+    # أخفِ النتيجة إذا كانت ضعيفة جداً
+    if len(candidates) < 3:
+        return ""
+    return ", ".join(candidates[:top_k])

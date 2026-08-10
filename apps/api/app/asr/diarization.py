@@ -27,6 +27,20 @@ def init_diarization(hf_token, has_cuda: bool):
     _HAS_CUDA = has_cuda
 
 
+def unload_diarization_pipeline() -> bool:
+    """أنزل pipeline البايانوت من GPU/الذاكرة قبل مراحل NLP الثقيلة."""
+    global _PYANNOTE_PIPELINE
+    if _PYANNOTE_PIPELINE is None:
+        return False
+    try:
+        del _PYANNOTE_PIPELINE
+    except Exception:
+        pass
+    _PYANNOTE_PIPELINE = None
+    print("[PYANNOTE] pipeline unloaded")
+    return True
+
+
 def _load_pyannote_pipeline():
     global _PYANNOTE_PIPELINE
     if not _PYANNOTE_AVAILABLE:

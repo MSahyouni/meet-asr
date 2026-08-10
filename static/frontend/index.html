@@ -40,9 +40,17 @@
     </div>
 
     <div id="asr-panel" class="panel active">
-      <div class="grid">
-        <div class="col-input">
-          <h3>المدخلات</h3>
+      <div class="asr-flow">
+
+        <section class="asr-step asr-step-input" aria-labelledby="asrInputTitle">
+          <div class="asr-step-head">
+            <span class="asr-step-num" aria-hidden="true">1</span>
+            <div>
+              <h3 id="asrInputTitle">المدخلات</h3>
+              <p class="asr-step-sub">ارفع ملفاً أو سجّل من الميكروفون</p>
+            </div>
+          </div>
+
           <div class="source-tabs" role="tablist" aria-label="مصدر الصوت">
             <button type="button" class="src-btn active" data-src="file">رفع ملف/ملفات</button>
             <button type="button" class="src-btn" data-src="mic">تسجيل من الميكروفون</button>
@@ -68,32 +76,24 @@
             <p class="hint mic-help">شبه-حي: يظهر النص أثناء الكلام. بعد الإيقاف استمع للمعاينة ثم احفظ الصوت أو تجاهله.</p>
           </div>
 
-          <details class="accordion">
-            <summary>خيارات النموذج</summary>
-            <label>اللهجة <select id="whisperMode"><option value="normal">فصحى</option><option value="whisper" selected>عامية سورية</option></select></label>
-            <label>تحسين الصوت <select id="enhance"><option value="off" selected>بدون (أفضل للتفريغ)</option><option value="light">خفيف</option><option value="full">كامل</option></select></label>
-            <label>مستوى التحسين <select id="enhanceLevel"><option value="light">light</option><option value="medium" selected>medium</option><option value="strong">strong</option><option value="aggressive">aggressive</option></select></label>
-            <label>إضافة ترقيم <input type="checkbox" id="punctuate" checked></label>
-            <label>تمييز المتكلمين <input type="checkbox" id="diarize" checked></label>
-            <label>تقدير عدد المتكلمين تلقائياً <input type="checkbox" id="autoK" checked></label>
-            <label>عدد المتكلمين <select id="maxSpeakers"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
-            <label>عتبة ربط البصمة <input type="number" id="enrollThreshold" min="0.5" max="0.9" step="0.01" value="0.65" class="input input-sm"></label>
-            <label>الجهاز <select id="deviceSel"><option value="auto">auto</option><option value="cpu">cpu</option><option value="cuda">cuda</option></select></label>
-            <label>الدقة <select id="computeSel"><option value="auto">auto</option><option value="int8">int8</option><option value="float16">float16</option><option value="float32">float32</option></select></label>
-            <p class="hint">خيارات التحسين وتمييز المتكلمين تُطبَّق عند رفع الملفات. التسجيل الحي يستخدم اللهجة والجهاز فقط.</p>
-          </details>
-
-          <div id="asrBatchActions" class="btn-row">
+          <div id="asrBatchActions" class="btn-row asr-primary-actions">
             <button type="button" id="btnSend" class="btn btn-primary">بدء التحويل</button>
           </div>
-        </div>
+        </section>
 
-        <div class="col-output">
-          <h3>المخرجات</h3>
+        <section class="asr-step asr-step-transcript" aria-labelledby="asrTranscriptTitle">
+          <div class="asr-step-head">
+            <span class="asr-step-num" aria-hidden="true">2</span>
+            <div>
+              <h3 id="asrTranscriptTitle">النص المفرَّغ</h3>
+              <p class="asr-step-sub">يظهر أثناء التسجيل أو بعد التحويل</p>
+            </div>
+            <span class="output-badge">تفريغ</span>
+          </div>
 
-          <div class="output-block">
-            <label class="output-label" for="outText">النص</label>
-            <textarea id="outText" rows="10" readonly placeholder="النص يظهر هنا أثناء التسجيل أو بعد التحويل..."></textarea>
+          <div class="output-block output-transcript-block">
+            <label class="sr-only" for="outText">النص المفرَّغ</label>
+            <textarea id="outText" rows="8" readonly placeholder="النص يظهر هنا أثناء التسجيل أو بعد التحويل..."></textarea>
           </div>
 
           <div id="liveAudioBar" class="live-audio-bar hidden">
@@ -115,20 +115,59 @@
             <pre id="outSegments" class="segments-text"></pre>
           </details>
 
-          <div class="output-block output-summary-block">
-            <label class="output-label" for="outSummary">التلخيص</label>
-            <textarea id="outSummary" rows="4" readonly placeholder="الملخص..."></textarea>
-            <input type="text" id="outKeywords" readonly placeholder="الكلمات المفتاحية..." class="input">
-            <div class="summary-actions">
-              <label class="inline-label">وضع التلخيص
-                <select id="summaryMode"><option value="ultra" selected>ultra</option><option value="lite">lite</option></select>
-              </label>
-              <button type="button" id="btnSummary" class="btn btn-secondary">تلخيص النص</button>
+          <div id="dlLinks" class="links links-row transcript-exports" aria-label="تحميل ملفات التفريغ"></div>
+        </section>
+
+        <section class="asr-step asr-step-summary" aria-labelledby="summaryTitle">
+          <div class="asr-step-head">
+            <span class="asr-step-num" aria-hidden="true">3</span>
+            <div>
+              <h3 class="asr-step-title-plain">محضر التلخيص</h3>
+              <p class="asr-step-sub">نموذج Ultra · وضع محضر الاجتماعات</p>
             </div>
           </div>
 
-          <div id="dlLinks" class="links"></div>
-        </div>
+          <div class="summary-panel summary-panel-embedded" aria-labelledby="summaryTitle">
+            <div class="summary-panel-head">
+              <div class="summary-panel-titles">
+                <h4 id="summaryTitle" class="summary-title">المحضر</h4>
+                <p class="summary-sub">يُبنى من النص المفرَّغ أعلاه</p>
+              </div>
+              <div class="summary-actions">
+                <button type="button" id="btnSummary" class="btn btn-primary">تلخيص النص</button>
+                <button type="button" id="btnDownloadSummary" class="btn btn-secondary" disabled>تحميل الملخص</button>
+              </div>
+            </div>
+            <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite"></div>
+            <div
+              id="summaryView"
+              class="summary-view is-empty"
+              data-empty="اضغط «تلخيص النص» بعد التفريغ لبناء محضر الاجتماع."
+            ></div>
+            <textarea id="outSummary" hidden readonly tabindex="-1" aria-hidden="true"></textarea>
+            <div class="keywords-block hidden">
+              <div class="keywords-label">كلمات مفتاحية</div>
+              <div id="keywordsChips" class="keywords-chips" data-empty="—"></div>
+              <input type="hidden" id="outKeywords" value="">
+            </div>
+          </div>
+        </section>
+
+        <details class="accordion asr-advanced">
+          <summary>إعدادات متقدمة للتفريغ</summary>
+          <label>اللهجة <select id="whisperMode"><option value="normal">فصحى</option><option value="whisper" selected>عامية سورية</option></select></label>
+          <label>تحسين الصوت <select id="enhance"><option value="off" selected>بدون (أفضل للتفريغ)</option><option value="light">خفيف</option><option value="full">كامل</option></select></label>
+          <label>مستوى التحسين <select id="enhanceLevel"><option value="light">light</option><option value="medium" selected>medium</option><option value="strong">strong</option><option value="aggressive">aggressive</option></select></label>
+          <label>إضافة ترقيم <input type="checkbox" id="punctuate" checked></label>
+          <label>تمييز المتكلمين <input type="checkbox" id="diarize" checked></label>
+          <label>تقدير عدد المتكلمين تلقائياً <input type="checkbox" id="autoK" checked></label>
+          <label>عدد المتكلمين <select id="maxSpeakers"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+          <label>عتبة ربط البصمة <input type="number" id="enrollThreshold" min="0.5" max="0.9" step="0.01" value="0.65" class="input input-sm"></label>
+          <label>الجهاز <select id="deviceSel"><option value="auto">auto</option><option value="cpu">cpu</option><option value="cuda">cuda</option></select></label>
+          <label>الدقة <select id="computeSel"><option value="auto">auto</option><option value="int8">int8</option><option value="float16">float16</option><option value="float32">float32</option></select></label>
+          <p class="hint">خيارات التحسين وتمييز المتكلمين تُطبَّق عند رفع الملفات. التسجيل الحي يستخدم اللهجة والجهاز فقط.</p>
+        </details>
+
       </div>
     </div>
 

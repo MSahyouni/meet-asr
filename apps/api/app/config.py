@@ -5,8 +5,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # تحميل ملف البيئة قبل أي استخدام لـ os.getenv
-ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT.parent / ".env")
+# config.py في apps/api/app → parents[0]=api, [1]=apps, [2]=repo root
+_APP_DIR = Path(__file__).resolve().parent
+_API_DIR = _APP_DIR.parent
+_REPO_ROOT = _APP_DIR.parents[2]
+ROOT = _APP_DIR  # kept for callers that expect app package dir
+# apps/api/.env ثم جذر المشروع (override) حتى تعديلات .env في الجذر تسري
+load_dotenv(_API_DIR / ".env")
+load_dotenv(_REPO_ROOT / ".env", override=True)
 
 import multiprocessing
 
@@ -126,7 +132,7 @@ class Settings:
         # --- NLP & Summarization Models ---
         self.HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
         
-        # mT5 Summarizer (lite mode)
+        # Legacy mT5 path kept for optional tooling; summarization is ultra-only.
         _sum_mt5_dir = self.MODELS_DIR / "summarizers" / "mT5_XLSum"
         self.SUMMARIZER_MODEL = _resolve_model_ref(
             self.BASE_DIR,
@@ -135,11 +141,11 @@ class Settings:
             "csebuetnlp/mT5_multilingual_XLSum",
         )
 
-        # Jais Summarizer (ultra mode)
-        self.ULTRA_MODEL = os.getenv("ULTRA_MODEL", "inceptionai/jais-13b-chat")
+        # Ultra summarizer. Prefer Jais-2-8B when HF gated access is granted.
+        self.ULTRA_MODEL = os.getenv("ULTRA_MODEL", "inceptionai/Jais-2-8B-Chat")
         self.ULTRA_4BIT = os.getenv("ULTRA_4BIT", "1").lower() in ("1", "true", "yes")
         self.ULTRA_TRUST_REMOTE = os.getenv("ULTRA_TRUST_REMOTE", "1").lower() in ("1", "true")
-        self.ULTRA_PROMPT_MODE = os.getenv("ULTRA_PROMPT_MODE", "auto").lower()
+        self.ULTRA_PROMPT_MODE = os.getenv("ULTRA_PROMPT_MODE", "meeting").lower()
         self.HF_DEVICE_ID = int(os.getenv("HF_DEVICE_ID", "-1")) # Transformers pipeline device
 
         # --- Punctuation & NER ---

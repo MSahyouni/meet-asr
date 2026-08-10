@@ -33,7 +33,14 @@ def _clean_utterance(t: str) -> str:
     t = re.sub(r"([.!؟?،,:;])\1+", r"\1", t)
     t = t.replace("?", "؟")
     t = re.sub(r"\b(\w+)(?:\s+\1){2,}\b", r"\1 \1", t)
-    return re.sub(r"\s*([،,:;.!؟])\s*", r"\1 ", t).strip()
+    t = re.sub(r"\s*([،,:;.!؟])\s*", r"\1 ", t).strip()
+    try:
+        from app.nlp.text_utils import polish_transcript_ar
+
+        t = polish_transcript_ar(t)
+    except Exception:
+        pass
+    return t
 
 
 def _persist_source_wav(source_path: str, dest_path: pathlib.Path) -> Optional[str]:
@@ -111,14 +118,16 @@ def process(
     device_sel: str = "auto",
     compute_sel: str = "auto",
     punctuate: bool = False,
-    summary_mode: str = "best",
+    summary_mode: str = "off",
     job_id: Optional[str] = None,
     user_email: Optional[str] = None,
+    warm_ultra: bool = True,
 ):
     """
     Pipeline: AudioAdapter (decode/resample + optional enhance) → ASR → Diarization (optional)
     → Text PostProcess (punctuation, normalization) → Export (txt/srt/vtt).
     enhance_mode: "off" | "light" (normalize+highpass) | "full" (noise reduce+filters).
+    warm_ultra: after success, free Whisper VRAM and preload Jais for faster summarize.
     """
     if not os.path.exists(file_path):
         return err(f"File not found: {file_path}")
@@ -243,6 +252,14 @@ def process(
             extra={"storage_scope": "user" if layout.is_user_scoped() else "global"},
         )
 
+        if warm_ultra:
+            try:
+                from app.nlp.summarization import schedule_warm_ultra_after_asr
+
+                schedule_warm_ultra_after_asr()
+            except Exception:
+                pass
+
         return {
             "text": numbered_text,
             "txt_path": out_path,
@@ -278,6 +295,7 @@ def process_many(file_paths: List[str], **kwargs):
     merge_outputs = kwargs.pop("merge_outputs", True)
     tag_sources = kwargs.pop("tag_sources", True)
     job_id = kwargs.pop("job_id", None) or new_timestamped_id("asr")
+    kwargs.pop("warm_ultra", None)
     per_file_results: List[Dict] = []
     all_text_blocks: List[str] = []
     all_raw_text: List[str] = []
@@ -285,7 +303,7 @@ def process_many(file_paths: List[str], **kwargs):
     cumulative_offset = 0.0
 
     for fp in file_paths:
-        res = process(fp, job_id=None, **kwargs)
+        res = process(fp, job_id=None, warm_ultra=False, **kwargs)
         per_file_results.append(res)
         name = pathlib.Path(fp).stem
         all_text_blocks.append(f"### ملف: {name}\n{res.get('text','')}\n")
@@ -358,6 +376,13 @@ def process_many(file_paths: List[str], **kwargs):
             "batch": True,
         },
     )
+
+    try:
+        from app.nlp.summarization import schedule_warm_ultra_after_asr
+
+        schedule_warm_ultra_after_asr()
+    except Exception:
+        pass
 
     return {
         "text": merged_text,

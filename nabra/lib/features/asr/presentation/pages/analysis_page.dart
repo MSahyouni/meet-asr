@@ -24,12 +24,11 @@ class AnalysisPage extends ConsumerStatefulWidget {
 class _AnalysisPageState extends ConsumerState<AnalysisPage> {
   bool _loading = false;
   String _transcript = '';
-  String _summaryModel = 'light';
+  String _summaryModel = 'ultra';
   bool _autoStarted = false;
 
   final _models = const {
-    'light': 'Light Model (سريع وأخف)',
-    'ultra': 'Ultra Model (أدق وأقوى)',
+    'ultra': 'Ultra Model (محضر اجتماعات)',
   };
 
   @override
@@ -151,34 +150,19 @@ class _AnalysisPageState extends ConsumerState<AnalysisPage> {
                 ),
                 const SizedBox(height: 10),
                 Container(
+                  width: double.infinity,
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
                     color: AppColors.primary,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _summaryModel,
-                      isExpanded: true,
-                      dropdownColor: AppTheme.primaryLight,
-                      iconEnabledColor: Colors.white,
-                      style: AppTheme.text(
-                        color: AppColors.goldSoft,
-                        fontSize: 14,
-                      ),
-                      items: _models.entries
-                          .map(
-                            (e) => DropdownMenuItem(
-                              value: e.key,
-                              child:
-                                  Text(e.value, textAlign: TextAlign.right),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (v) {
-                        if (v != null) setState(() => _summaryModel = v);
-                      },
+                  child: Text(
+                    _models['ultra']!,
+                    textAlign: TextAlign.right,
+                    style: AppTheme.text(
+                      color: AppColors.goldSoft,
+                      fontSize: 14,
                     ),
                   ),
                 ),

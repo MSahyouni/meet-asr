@@ -44,7 +44,11 @@ async def summarize_after(
                 x_api_key = json_body.get("x_api_key")
         except Exception:
             pass  # استمر مع القيم الحالية
-    
+
+    # ultra فقط (lite أُزيل؛ القيم القديمة تُحوَّل تلقائياً داخل nlp)
+    summary_mode = (summary_mode or "ultra").strip().lower()
+    if summary_mode in ("lite", "light", "best", ""):
+        summary_mode = "ultra"    
     auth_error = check_api_key(x_api_key)
     if auth_error:
         return auth_error

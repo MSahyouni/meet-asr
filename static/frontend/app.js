@@ -251,9 +251,16 @@
       });
 
       var html = state.html || {};
-      Object.keys(html).forEach(function (id) {
+      ["dlLinks", "ttsDl"].forEach(function (id) {
         var el = getId(id);
-        if (el) el.innerHTML = html[id] == null ? "" : String(html[id]);
+        if (!el) return;
+        // لا نستعيد أزرار تحميل الملخص القديمة — زر اللوحة يكفي
+        var tmp = document.createElement("div");
+        tmp.innerHTML = html[id] == null ? "" : String(html[id]);
+        Array.prototype.slice.call(tmp.querySelectorAll("button")).forEach(function (btn) {
+          if ((btn.textContent || "").trim() === "تحميل الملخص") btn.remove();
+        });
+        el.innerHTML = tmp.innerHTML || "";
       });
 
       var ttsErrorEl = getId("ttsError");
@@ -273,6 +280,11 @@
       if (speedSliderEl) setTtsSpeed(speedSliderEl.value || "1");
       syncTtsChunkLabel();
       updateTtsEngineUi();
+
+      var restoredSummary = getId("outSummary");
+      var restoredKeywords = getId("outKeywords");
+      setSummaryText(restoredSummary ? restoredSummary.value : "");
+      setKeywordsText(restoredKeywords ? restoredKeywords.value : "");
     } catch (_) {}
   }
 
@@ -689,6 +701,11 @@
     urls = urls || {};
     function addBtn(url, label, fallbackName) {
       if (!url) return;
+      // تجنّب تكرار نفس الزر عند استدعاءات متتالية بدون clearFirst
+      var existing = links.querySelectorAll("button");
+      for (var i = 0; i < existing.length; i++) {
+        if ((existing[i].textContent || "").trim() === label) return;
+      }
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = "btn btn-secondary";
@@ -704,13 +721,13 @@
     addBtn(urls.vtt, "تحميل VTT", "transcript.vtt");
     addBtn(urls.segments, "تحميل segments", "segments.json");
     addBtn(urls.wav, "تحميل WAV", "recording.wav");
-    addBtn(urls.summary, "تحميل الملخص", "summary.txt");
+    // زر تحميل الملخص موجود داخل لوحة المحضر — لا نكرره هنا
   }
 
   function applyTranscribeResult(data) {
     getId("outText").value = data.text || "";
-    getId("outSummary").value = data.summary || "";
-    getId("outKeywords").value = data.keywords || "";
+    setSummaryText(data.summary || "");
+    setKeywordsText(data.keywords || "");
     var segs = data.segments || [];
     if (getId("outSegments")) getId("outSegments").textContent = segText(segs);
     renderDownloadLinks(buildDownloadUrls(data), true);
@@ -718,8 +735,8 @@
   }
 
   function applySummaryResult(data) {
-    getId("outSummary").value = data.summary || "";
-    getId("outKeywords").value = data.keywords || "";
+    setSummaryText(data.summary || "");
+    setKeywordsText(data.keywords || "");
     renderDownloadLinks(buildDownloadUrls(data), false);
     queueUIStateSave();
   }
@@ -758,13 +775,160 @@
 
   var SUMMARY_MESSAGES = {
     needText: "أدخل نصًا أولًا أو قم بالتحويل الصوتي.",
-    loading: "جاري التلخيص...",
+    loading: "جاري التلخيص بنموذج Ultra…",
     busy: "جاري التلخيص...",
     queued: "تم إرسال التلخيص للخلفية. يمكنك تحديث الصفحة ولن تنقطع العملية.",
     bgProcessing: "التلخيص مستمر...",
     restore: "تمت استعادة مهمة التلخيص بعد التحديث...",
     errorPrefix: "خطأ: "
   };
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatInlineMarkdown(escapedLine) {
+    return escapedLine
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|\s)\*(?!\s)(.+?)(?!\s)\*(?=\s|$|[.,،])/g, "$1<em>$2</em>");
+  }
+
+  function renderSummaryHtml(text) {
+    var raw = String(text || "").trim();
+    if (!raw) return "";
+    // أزل التكرار الحرفي لنفس الفقرة (يحصل أحياناً عند النسخ/الاستعادة)
+    var chunks = raw.split(/\n{2,}/).map(function (c) { return c.trim(); }).filter(Boolean);
+    var deduped = [];
+    chunks.forEach(function (c) {
+      if (!deduped.length || deduped[deduped.length - 1] !== c) deduped.push(c);
+    });
+    raw = deduped.join("\n\n");
+
+    var lines = raw.split(/\r?\n/);
+    var html = [];
+    var inList = false;
+    var lastPara = "";
+
+    function closeList() {
+      if (inList) {
+        html.push("</ul>");
+        inList = false;
+      }
+    }
+
+    lines.forEach(function (line) {
+      var trimmed = line.trim();
+      if (!trimmed) {
+        closeList();
+        return;
+      }
+      var heading = trimmed.match(/^\*\*(.+?)\*\*:?\s*$/) || trimmed.match(/^#{1,3}\s+(.+)$/);
+      if (heading) {
+        closeList();
+        lastPara = "";
+        html.push('<div class="sum-section"><h5 class="sum-heading">' + escapeHtml(heading[1].replace(/:$/, "")) + "</h5></div>");
+        return;
+      }
+      var bullet = trimmed.match(/^([*•\-–]|\d+[.)])\s+(.+)$/);
+      if (bullet) {
+        if (!inList) {
+          html.push('<ul class="sum-list">');
+          inList = true;
+        }
+        html.push("<li>" + formatInlineMarkdown(escapeHtml(bullet[2])) + "</li>");
+        lastPara = "";
+        return;
+      }
+      closeList();
+      if (trimmed === lastPara) return;
+      lastPara = trimmed;
+      html.push('<p class="sum-p">' + formatInlineMarkdown(escapeHtml(trimmed)) + "</p>");
+    });
+    closeList();
+    return html.join("");
+  }
+
+  function updateSummaryDownloadBtn() {
+    var btn = getId("btnDownloadSummary");
+    if (!btn) return;
+    var text = (getId("outSummary") && getId("outSummary").value || "").trim();
+    var isStatusOnly = !!(getId("summaryStatus") && !getId("summaryStatus").classList.contains("hidden"));
+    btn.disabled = !text || isStatusOnly;
+  }
+
+  function renderSummaryView(text) {
+    var view = getId("summaryView");
+    if (!view) return;
+    var html = renderSummaryHtml(text);
+    if (!html) {
+      view.innerHTML = "";
+      view.classList.add("is-empty");
+    } else {
+      view.innerHTML = html;
+      view.classList.remove("is-empty");
+    }
+  }
+
+  function renderKeywordChips(keywords) {
+    var wrap = getId("keywordsChips");
+    var block = document.querySelector(".keywords-block");
+    var hidden = getId("outKeywords");
+    var raw = keywords == null ? "" : String(keywords);
+    if (hidden) hidden.value = raw;
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    var stop = {
+      هو: 1, هي: 1, ان: 1, بانه: 1, اليوم: 1, كلام: 1, موضوعنا: 1,
+      بتحويل: 1, اللي: 1, الي: 1, هذا: 1, هذه: 1, على: 1, من: 1, في: 1,
+      مع: 1, عن: 1, ما: 1, لا: 1, لم: 1, إن: 1, أن: 1, نبدا: 1, بسم: 1,
+      الله: 1, الرحمن: 1, الرحيم: 1, الاساسي: 1, البرنامج: 1, تفريغه: 1
+    };
+    var chips = String(raw)
+      .split(/[,،]/)
+      .map(function (part) { return part.trim(); })
+      .filter(function (kw) { return kw && kw.length >= 4 && !stop[kw]; });
+    chips.forEach(function (kw) {
+      var chip = document.createElement("span");
+      chip.className = "keyword-chip";
+      chip.textContent = kw;
+      wrap.appendChild(chip);
+    });
+    if (block) block.classList.toggle("hidden", chips.length < 3);
+  }
+
+  function setSummaryText(text, opts) {
+    opts = opts || {};
+    var raw = text == null ? "" : String(text);
+    var el = getId("outSummary");
+    if (el) el.value = raw;
+    var statusEl = getId("summaryStatus");
+    if (statusEl) {
+      if (opts.isStatus) {
+        statusEl.textContent = raw;
+        statusEl.classList.remove("hidden");
+        statusEl.classList.toggle("is-error", !!opts.isError);
+        statusEl.classList.toggle("is-busy", !!opts.isBusy);
+        renderSummaryView("");
+      } else {
+        statusEl.textContent = "";
+        statusEl.classList.add("hidden");
+        statusEl.classList.remove("is-error", "is-busy");
+        renderSummaryView(raw);
+      }
+    } else {
+      renderSummaryView(opts.isStatus ? "" : raw);
+    }
+    updateSummaryDownloadBtn();
+  }
+
+  function setKeywordsText(keywords) {
+    renderKeywordChips(keywords || "");
+  }
 
   function formatJobStatusLabel(status) {
     var value = String(status || "").toLowerCase();
@@ -860,7 +1024,7 @@
             if (kind === "transcribe") {
               getId("outText").value = ASR_MESSAGES.processingBg + " (" + formatJobStatusLabel(status) + ")";
             } else if (kind === "summary") {
-              getId("outSummary").value = SUMMARY_MESSAGES.bgProcessing + " (" + formatJobStatusLabel(status) + ")";
+              setSummaryText(SUMMARY_MESSAGES.bgProcessing + " (" + formatJobStatusLabel(status) + ")", { isStatus: true, isBusy: true });
             }
             queueUIStateSave();
             pendingPollTimers[kind] = setTimeout(tick, 2000);
@@ -884,7 +1048,7 @@
           if (status === "error") {
             var failedMsg = (job && (job.error || job.detail)) || ASR_MESSAGES.jobFailed;
             if (kind === "transcribe") getId("outText").value = ASR_MESSAGES.errorPrefix + failedMsg;
-            if (kind === "summary") getId("outSummary").value = SUMMARY_MESSAGES.errorPrefix + failedMsg;
+            if (kind === "summary") setSummaryText(SUMMARY_MESSAGES.errorPrefix + failedMsg, { isStatus: true, isError: true });
             clearPendingJob(kind);
             queueUIStateSave();
             return;
@@ -892,7 +1056,7 @@
 
           var errMsg = (job && (job.error || job.detail)) || ASR_MESSAGES.jobFailed;
           if (kind === "transcribe") getId("outText").value = ASR_MESSAGES.errorPrefix + errMsg;
-          if (kind === "summary") getId("outSummary").value = SUMMARY_MESSAGES.errorPrefix + errMsg;
+          if (kind === "summary") setSummaryText(SUMMARY_MESSAGES.errorPrefix + errMsg, { isStatus: true, isError: true });
           clearPendingJob(kind);
           queueUIStateSave();
         })
@@ -901,7 +1065,7 @@
           if (pollFailures >= 12) {
             var failMsg = (e && e.message) ? e.message : ASR_MESSAGES.jobFailed;
             if (kind === "transcribe") getId("outText").value = ASR_MESSAGES.errorPrefix + failMsg;
-            if (kind === "summary") getId("outSummary").value = SUMMARY_MESSAGES.errorPrefix + failMsg;
+            if (kind === "summary") setSummaryText(SUMMARY_MESSAGES.errorPrefix + failMsg, { isStatus: true, isError: true });
             clearPendingJob(kind);
             queueUIStateSave();
             return;
@@ -921,7 +1085,7 @@
       pollJob("transcribe", jobs.transcribe);
     }
     if (jobs.summary && jobs.summary.job_id) {
-      getId("outSummary").value = SUMMARY_MESSAGES.restore;
+      setSummaryText(SUMMARY_MESSAGES.restore, { isStatus: true, isBusy: true });
       pollJob("summary", jobs.summary);
     }
     queueUIStateSave();
@@ -982,8 +1146,8 @@
 
   function resetTranscribeOutput(loadingText) {
     getId("outText").value = loadingText || ASR_MESSAGES.loadingDefault;
-    getId("outSummary").value = "";
-    getId("outKeywords").value = "";
+    setSummaryText("");
+    setKeywordsText("");
     getId("dlLinks").innerHTML = "";
     getId("outSegments").textContent = "";
   }
@@ -1031,22 +1195,22 @@
   // تلخيص النص
   getId("btnSummary").addEventListener("click", function () {
     if (!requireLogin(ACCOUNT_MESSAGES.needLoginFirst)) {
-      getId("outSummary").value = ACCOUNT_MESSAGES.needLoginFirst;
+      setSummaryText(ACCOUNT_MESSAGES.needLoginFirst, { isStatus: true, isError: true });
       return;
     }
     var btnSummary = getId("btnSummary");
     var text = (getId("outText") && getId("outText").value || "").trim();
     if (!text) {
-      getId("outSummary").value = SUMMARY_MESSAGES.needText;
+      setSummaryText(SUMMARY_MESSAGES.needText, { isStatus: true, isError: true });
       return;
     }
-    var mode = getId("summaryMode") ? getId("summaryMode").value : "ultra";
+    var mode = "ultra";
     var fd = new FormData();
     fd.append("text", text);
     fd.append("summary_mode", mode);
     fd.append("async_mode", "true");
     fd.append("user_email", session.email);
-    getId("outSummary").value = SUMMARY_MESSAGES.loading;
+    setSummaryText(SUMMARY_MESSAGES.loading, { isStatus: true, isBusy: true });
     setButtonBusy(btnSummary, true, SUMMARY_MESSAGES.busy);
     var timeout = getId("timeout") ? getId("timeout").value : 300;
     fetchWithTimeout(API.nlp.summarize, { method: "POST", headers: getHeaders(), body: fd }, timeout)
@@ -1060,7 +1224,7 @@
             job_id: data.job_id,
             poll_url: normalizeJobPollUrl(data.poll_url, data.job_id),
           });
-          getId("outSummary").value = SUMMARY_MESSAGES.queued;
+          setSummaryText(SUMMARY_MESSAGES.queued, { isStatus: true, isBusy: true });
           queueUIStateSave();
           pollJob("summary", getPendingJobs().summary);
           return;
@@ -1068,12 +1232,29 @@
         applySummaryResult(data || {});
       })
       .catch(function (e) {
-        getId("outSummary").value = SUMMARY_MESSAGES.errorPrefix + (e.message || String(e));
+        setSummaryText(SUMMARY_MESSAGES.errorPrefix + (e.message || String(e)), { isStatus: true, isError: true });
       })
       .finally(function () {
         setButtonBusy(btnSummary, false);
       });
   });
+
+  var btnDownloadSummary = getId("btnDownloadSummary");
+  if (btnDownloadSummary) {
+    btnDownloadSummary.addEventListener("click", function () {
+      var text = (getId("outSummary") && getId("outSummary").value || "").trim();
+      if (!text) return;
+      var blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "nabra-summary.txt";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+    });
+  }
 
   // تسجيل الميكروفون — شبه-حي (timeslice + /asr/live/*)
   var LIVE_TIMESLICE_MS = 2500;
@@ -1466,8 +1647,8 @@
         liveLastDurationSec = 0;
         hideLiveAudioBar();
         getId("outText").value = "";
-        getId("outSummary").value = "";
-        getId("outKeywords").value = "";
+        setSummaryText("");
+        setKeywordsText("");
         getId("dlLinks").innerHTML = "";
         getId("outSegments").textContent = "";
 

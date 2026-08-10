@@ -256,7 +256,14 @@ def _transcribe_wav(wav_path: pathlib.Path, sess: LiveSession) -> str:
     model = get_model(model_name, device=sess.device, compute_type=sess.compute_type)
     _meta, segments = run_asr(str(wav_path), model, whisper_mode=sess.whisper_mode, multi_speaker=False)
     parts = [(s.get("text") or "").strip() for s in (segments or []) if (s.get("text") or "").strip()]
-    return " ".join(parts).strip()
+    text = " ".join(parts).strip()
+    try:
+        from app.nlp.text_utils import polish_transcript_ar
+
+        text = polish_transcript_ar(text)
+    except Exception:
+        pass
+    return text
 
 
 def ingest_cumulative_audio(sess: LiveSession, audio_bytes: bytes, filename: str = "chunk.webm") -> Dict[str, Any]:
@@ -362,6 +369,12 @@ def finalize_session(sess: LiveSession) -> Dict[str, Any]:
         sess.finalized = True
         sess.touch()
         sess.write_meta()
+        try:
+            from app.nlp.summarization import schedule_warm_ultra_after_asr
+
+            schedule_warm_ultra_after_asr()
+        except Exception:
+            pass
         return {
             "session_id": sess.session_id,
             "text": text,

@@ -1,13 +1,16 @@
 # nlp/rag.py — RAG (FAISS + sentence-transformers)
 import json
-from typing import Optional
 
 import numpy as np
 
 from ..config import settings
 
+faiss = None
+_FAISS_OK = False
 try:
-    # import faiss  # Disabled temporarily for diarization compatibility
+    import faiss as _faiss  # type: ignore
+
+    faiss = _faiss
     _FAISS_OK = True
 except ImportError:
     faiss = None
@@ -15,6 +18,7 @@ except ImportError:
 
 try:
     from sentence_transformers import SentenceTransformer
+
     _ST_OK = True
 except ImportError:
     SentenceTransformer = None
@@ -30,7 +34,7 @@ def _rag_load() -> None:
     global _rag_index, _rag_model, _rag_texts, _rag_dim
     if not settings.RAG_ENABLED or _rag_index is not None:
         return
-    if not (_FAISS_OK and _ST_OK):
+    if not (_FAISS_OK and _ST_OK and faiss is not None):
         print("[RAG] disabled (faiss or sentence-transformers missing).")
         return
     _RAG_INDEX = settings.RAG_DIR / "index.faiss"
