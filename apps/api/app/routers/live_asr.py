@@ -1,6 +1,4 @@
 """Live / pseudo-streaming ASR endpoints (web mic)."""
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Optional
@@ -131,6 +129,10 @@ async def live_finalize(
     request: Request,
     session_id: str = Form(...),
     user_email: str = Form(""),
+    diarize: str = Form("true"),
+    auto_k: str = Form("true"),
+    max_speakers: int = Form(2),
+    enroll_threshold: float = Form(0.65),
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
@@ -142,7 +144,21 @@ async def live_finalize(
         return response_error(404, "session_not_found", "live session expired or missing")
     try:
         live.assert_session_owner(sess, resolved)
-        result = await asyncio.to_thread(live.finalize_session, sess)
+
+        def _flag(v: str, default: bool = True) -> bool:
+            s = (v or "").strip().lower()
+            if not s:
+                return default
+            return s in ("1", "true", "yes", "on")
+
+        result = await asyncio.to_thread(
+            live.finalize_session,
+            sess,
+            diarize=_flag(diarize, True),
+            auto_k=_flag(auto_k, True),
+            max_speakers=max(1, int(max_speakers or 2)),
+            enroll_threshold=float(enroll_threshold or 0.65),
+        )
         return JSONResponse({"ok": True, **result})
     except PermissionError as e:
         return response_error(403, "forbidden", str(e))
