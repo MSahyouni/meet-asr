@@ -10,7 +10,7 @@ import 'package:nabra/core/widgets/nabra_scaffold.dart';
 import 'package:nabra/core/widgets/outlined_action_tile.dart';
 import 'package:nabra/core/widgets/primary_button.dart';
 import 'package:nabra/core/widgets/staggered_entrance.dart';
-import 'package:nabra/features/asr/data/repositories/asr_repository_impl.dart';
+import 'package:nabra/features/asr/infrastructure/repositories/asr_repository_impl.dart';
 import 'package:nabra/features/auth/presentation/providers/auth_provider.dart';
 import 'package:nabra/services/text_saver.dart';
 
