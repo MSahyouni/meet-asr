@@ -199,7 +199,7 @@ def warmup_whisper(
     global _WARMUP_DONE
     from app.asr.whisper import get_model
 
-    model_name = (getattr(settings, "WHISPER_MODEL", None) or "light").strip() or "light"
+    model_name = (getattr(settings, "WHISPER_MODEL", None) or "heavy").strip() or "heavy"
     with _WARMUP_LOCK:
         t0 = time.time()
         get_model(model_name, device=device, compute_type=compute_type)
@@ -252,7 +252,7 @@ def _trim_wav_tail(wav_path: pathlib.Path, max_sec: float) -> pathlib.Path:
 def _transcribe_wav(wav_path: pathlib.Path, sess: LiveSession) -> str:
     from app.asr.whisper import get_model, run_asr
 
-    model_name = (getattr(settings, "WHISPER_MODEL", None) or "light").strip() or "light"
+    model_name = (getattr(settings, "WHISPER_MODEL", None) or "heavy").strip() or "heavy"
     model = get_model(model_name, device=sess.device, compute_type=sess.compute_type)
     _meta, segments = run_asr(str(wav_path), model, whisper_mode=sess.whisper_mode, multi_speaker=False)
     parts = [(s.get("text") or "").strip() for s in (segments or []) if (s.get("text") or "").strip()]
@@ -300,6 +300,21 @@ def _format_diarized_text(seg_rows: list) -> str:
     return _renumber_speakers("\n\n".join(blocks)).strip()
 
 
+def _apply_segment_punctuation(seg_rows: list) -> None:
+    try:
+        from app.nlp.punctuation_ner import restore_punct
+    except Exception:
+        return
+    for s in seg_rows or []:
+        txt = (s.get("text") or "").strip()
+        if not txt:
+            continue
+        try:
+            s["text"] = restore_punct(txt)
+        except Exception:
+            pass
+
+
 def _transcribe_and_diarize(
     wav_path: pathlib.Path,
     sess: LiveSession,
@@ -307,15 +322,17 @@ def _transcribe_and_diarize(
     auto_k: bool = True,
     max_speakers: int = 2,
     enroll_threshold: float = 0.65,
+    punctuate: bool = False,
 ) -> tuple[str, list]:
     """Full-pass ASR + Pyannote (+ enrolled speaker map) for live finalize."""
     from app.asr.whisper import get_model, run_asr
-    from app.asr.diarization import diarize_with_pyannote, map_speakers_to_segments
+    from app.asr.diarization import diarize_with_pyannote, map_speakers_to_segments, pyannote_speaker_params
     from app.asr import diarization as diarization_mod
     from app.asr.speakers import map_generic_to_enrolled_speakers
     from app.asr.common import to_ar_speaker
+    from app.nlp.text_utils import polish_transcript_ar
 
-    model_name = (getattr(settings, "WHISPER_MODEL", None) or "light").strip() or "light"
+    model_name = (getattr(settings, "WHISPER_MODEL", None) or "heavy").strip() or "heavy"
     model = get_model(model_name, device=sess.device, compute_type=sess.compute_type)
     _header, whisper_segments = run_asr(
         str(wav_path),
@@ -334,9 +351,9 @@ def _transcribe_and_diarize(
 
     pyannote_ok = bool(getattr(diarization_mod, "_PYANNOTE_AVAILABLE", False))
     if pyannote_ok:
-        num_spk = 0 if auto_k else max(1, int(max_speakers or 2))
+        params = pyannote_speaker_params(auto_k=auto_k, max_speakers=max_speakers)
         try:
-            speaker_turns = diarize_with_pyannote(str(wav_path), num_speakers=num_spk)
+            speaker_turns = diarize_with_pyannote(str(wav_path), **params)
         except Exception as e:
             logger.warning("live diarization failed, plain transcript: %s", e)
             speaker_turns = []
@@ -358,11 +375,14 @@ def _transcribe_and_diarize(
     for s in seg_rows:
         s["speaker"] = to_ar_speaker(s.get("speaker", ""))
 
+    if punctuate:
+        _apply_segment_punctuation(seg_rows)
+
     text = _format_diarized_text(seg_rows)
     if not text:
-        # Fallback if segments empty
         parts = [(s.get("text") or "").strip() for s in (whisper_segments or []) if (s.get("text") or "").strip()]
         text = " ".join(parts).strip()
+    text = polish_transcript_ar(text)
     return text, seg_rows
 
 
@@ -447,6 +467,7 @@ def finalize_session(
     auto_k: bool = True,
     max_speakers: int = 2,
     enroll_threshold: float = 0.65,
+    punctuate: bool = True,
 ) -> Dict[str, Any]:
     with sess.lock:
         if not sess.wav_path.exists() and not list(sess.dir.glob("latest.*")):
@@ -476,6 +497,7 @@ def finalize_session(
                     auto_k=auto_k,
                     max_speakers=max_speakers,
                     enroll_threshold=enroll_threshold,
+                    punctuate=punctuate,
                 )
                 diarized = bool(segments) and any(
                     (s.get("speaker") or "").strip() for s in segments
@@ -485,8 +507,28 @@ def finalize_session(
                 text = _transcribe_wav(sess.wav_path, sess)
                 segments = []
                 diarized = False
+                if punctuate:
+                    try:
+                        from app.nlp.punctuation_ner import restore_punct
+
+                        text = restore_punct(text)
+                    except Exception:
+                        pass
         else:
             text = _transcribe_wav(sess.wav_path, sess)
+            if punctuate:
+                try:
+                    from app.nlp.punctuation_ner import restore_punct
+
+                    text = restore_punct(text)
+                except Exception:
+                    pass
+            try:
+                from app.nlp.text_utils import polish_transcript_ar
+
+                text = polish_transcript_ar(text)
+            except Exception:
+                pass
 
         sess.committed_text = text
         sess.partial_text = ""

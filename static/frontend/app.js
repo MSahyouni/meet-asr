@@ -1573,6 +1573,7 @@
       fd.append("auto_k", getId("autoK") && getId("autoK").checked ? "true" : "false");
       fd.append("max_speakers", getId("maxSpeakers") ? getId("maxSpeakers").value : "2");
       fd.append("enroll_threshold", getId("enrollThreshold") ? getId("enrollThreshold").value : "0.65");
+      fd.append("punctuate", getId("punctuate") && getId("punctuate").checked ? "true" : "false");
       var timeoutEl = getId("timeout");
       var finTimeout = timeoutEl ? Number(timeoutEl.value) : 900;
       if (!isFinite(finTimeout) || finTimeout < 0) finTimeout = 900;

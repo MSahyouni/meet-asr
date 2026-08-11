@@ -104,7 +104,13 @@ def _load_pyannote_pipeline():
         return None
 
 
-def diarize_with_pyannote(wav_path: str, num_speakers: int = 0) -> List[Dict]:
+def diarize_with_pyannote(
+    wav_path: str,
+    num_speakers: int = 0,
+    *,
+    min_speakers: int = 0,
+    max_speakers: int = 0,
+) -> List[Dict]:
     print(f"[PYANNOTE] بدء تنفيذ diarize_with_pyannote على الملف: {wav_path}")
     pipeline = _load_pyannote_pipeline()
     if not pipeline:
@@ -113,17 +119,36 @@ def diarize_with_pyannote(wav_path: str, num_speakers: int = 0) -> List[Dict]:
     try:
         params = {}
         if num_speakers > 0:
-            params["num_speakers"] = num_speakers
+            params["num_speakers"] = int(num_speakers)
+        else:
+            # Unconstrained auto often collapses short meetings to 1 speaker.
+            if min_speakers > 0:
+                params["min_speakers"] = int(min_speakers)
+            if max_speakers > 0:
+                params["max_speakers"] = int(max_speakers)
+        print(f"[PYANNOTE] params={params or 'auto'}")
         diarization = pipeline(wav_path, **params)
         results = [
             {"start": turn.start, "end": turn.end, "speaker": speaker}
             for turn, _, speaker in diarization.itertracks(yield_label=True)
         ]
-        print(f"[PYANNOTE] عدد النتائج المستخرجة: {len(results)}")
+        uniq = sorted({r["speaker"] for r in results})
+        print(f"[PYANNOTE] عدد المقاطع={len(results)} المتكلمون={uniq}")
         return results
     except Exception as e:
         print(f"[PYANNOTE] Diarization failed: {e}")
         return []
+
+
+def pyannote_speaker_params(*, auto_k: bool, max_speakers: int) -> dict:
+    """Build diarize_with_pyannote kwargs from UI auto_k / max_speakers."""
+    cap = max(1, int(max_speakers or 2))
+    if not auto_k:
+        return {"num_speakers": cap}
+    # Prefer at least 2 speakers when the UI allows it — pure auto often returns K=1
+    # on single-mic meetings even when a second person speaks briefly.
+    floor = 2 if cap >= 2 else 1
+    return {"num_speakers": 0, "min_speakers": floor, "max_speakers": cap}
 
 
 def map_speakers_to_segments(whisper_segments: List[Dict], speaker_turns: List[Dict]) -> List[Dict]:

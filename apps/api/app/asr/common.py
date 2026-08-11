@@ -66,18 +66,22 @@ def safe_filename(p) -> str:
 
 
 def resolve_model(name: str) -> str:
-    """Map UI model names to actual Whisper model names.
-    
-    light -> base (smallest, fastest)
-    heavy/large-v3 -> large-v3 (best quality)
+    """Map UI/env model names to faster-whisper size ids.
+
+    light -> base (fast)
+    medium -> medium
+    heavy / large / large-v3 -> large-v3 (best multilingual quality)
     """
     n = (name or "").strip().lower()
-    if n in ("heavy", "large-v3"):
+    if n in ("heavy", "large", "large-v3", "large_v3"):
         return "large-v3"
-    elif n == "light":
-        return "base"
-    else:
-        return "base"  # Default fallback
+    if n in ("medium",):
+        return "medium"
+    if n in ("light", "base", "small", "tiny"):
+        # Keep light→base; allow explicit small/tiny if requested later
+        return {"light": "base", "base": "base", "small": "small", "tiny": "tiny"}.get(n, "base")
+    # Prefer quality over accidentally falling back to base
+    return "large-v3"
 
 
 def safe_compute(device: Optional[str], compute_type: Optional[str], has_cuda: bool):

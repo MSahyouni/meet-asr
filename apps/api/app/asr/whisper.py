@@ -112,32 +112,48 @@ def run_asr(
 ):
     if whisper_mode == "whisper":
         init_prompt = (
-            "حوار باللهجة السورية العامية، نص واضح ودقيق. "
-            "مصطلحات: تلخيص، تفريغ صوتي، ذكاء اصطناعي، دون اتصال بالإنترنت، محضر اجتماع."
+            "محضر اجتماع باللهجة السورية العامية. اكتب بوضوح مع فواصل طبيعية. "
+            "مفردات شائعة: محضر اجتماع، تمويل، دعم غذائي، وجبات، دولار، صرف، "
+            "عزاء، تسجيل أسماء، قسم، مداخيل، منتجات مصنّعة."
+        )
+        hotwords = (
+            "محضر اجتماع تمويل دعم غذائي وجبات دولار صرف عزاء "
+            "تسجيل أسماء مداخيل منتجات مصنعة"
         )
     else:
         init_prompt = (
             "نص عربي فصيح واضح مع علامات ترقيم مناسبة. "
-            "مصطلحات: تلخيص، تفريغ صوتي، ذكاء اصطناعي، دون اتصال بالإنترنت، محضر اجتماع."
+            "مصطلحات: محضر اجتماع، تمويل، دعم غذائي، تلخيص، تفريغ صوتي."
         )
-    segments_generator, info = model_obj.transcribe(
-        wav_path,
+        hotwords = "محضر اجتماع تمويل دعم غذائي تلخيص تفريغ صوتي"
+    transcribe_kwargs = dict(
         language="ar",
         task="transcribe",
         vad_filter=True,
         vad_parameters={
-            "threshold": 0.45,
-            "min_silence_duration_ms": 400,
-            "speech_pad_ms": 200,
+            "threshold": 0.42,
+            "min_silence_duration_ms": 350,
+            "speech_pad_ms": 220,
         },
         beam_size=8,
+        best_of=5,
         temperature=[0.0, 0.2, 0.4],
         compression_ratio_threshold=2.4,
-        log_prob_threshold=-1.0,
+        log_prob_threshold=-0.9,
         no_speech_threshold=0.5,
         condition_on_previous_text=not multi_speaker,
         initial_prompt=init_prompt,
+        word_timestamps=False,
     )
+    # hotwords مدعوم في faster-whisper الأحدث؛ تجاهل إن رُفض
+    try:
+        segments_generator, info = model_obj.transcribe(
+            wav_path,
+            hotwords=hotwords,
+            **transcribe_kwargs,
+        )
+    except TypeError:
+        segments_generator, info = model_obj.transcribe(wav_path, **transcribe_kwargs)
     seglist = [{"start": s.start, "end": s.end, "text": s.text.strip()} for s in segments_generator]
     meta = f"المدة: {info.duration:.1f}s | اللغة: {info.language} | ثقة: {info.language_probability:.2f}"
     return meta, seglist

@@ -133,6 +133,7 @@ async def live_finalize(
     auto_k: str = Form("true"),
     max_speakers: int = Form(2),
     enroll_threshold: float = Form(0.65),
+    punctuate: str = Form("true"),
     authorization: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
@@ -158,6 +159,7 @@ async def live_finalize(
             auto_k=_flag(auto_k, True),
             max_speakers=max(1, int(max_speakers or 2)),
             enroll_threshold=float(enroll_threshold or 0.65),
+            punctuate=_flag(punctuate, True),
         )
         return JSONResponse({"ok": True, **result})
     except PermissionError as e:

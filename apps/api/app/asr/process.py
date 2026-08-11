@@ -173,8 +173,10 @@ def process(
 
         t0 = time.perf_counter()
         if diarize and getattr(diarization_mod, "_PYANNOTE_AVAILABLE", False):
-            num_spk = max_speakers if not auto_k else 0
-            speaker_turns = diarize_with_pyannote(wav, num_speakers=num_spk)
+            from .diarization import pyannote_speaker_params
+
+            params = pyannote_speaker_params(auto_k=auto_k, max_speakers=max_speakers)
+            speaker_turns = diarize_with_pyannote(wav, **params)
             seg_rows = map_speakers_to_segments(whisper_segments, speaker_turns)
         else:
             seg_rows = map_speakers_to_segments(whisper_segments, [])

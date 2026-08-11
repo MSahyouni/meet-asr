@@ -156,13 +156,13 @@
           <label>مستوى التحسين <select id="enhanceLevel"><option value="light">خفيف</option><option value="medium" selected>متوسط</option><option value="strong">قوي</option><option value="aggressive">عدواني</option></select></label>
           <label>إضافة ترقيم <input type="checkbox" id="punctuate" checked></label>
           <label>تمييز المتكلمين <input type="checkbox" id="diarize" checked></label>
-          <label>تقدير عدد المتكلمين تلقائياً <input type="checkbox" id="autoK" checked></label>
+          <label>تقدير عدد المتكلمين تلقائياً <input type="checkbox" id="autoK"></label>
           <label>عدد المتكلمين <select id="maxSpeakers"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
           <label>عتبة ربط البصمة <input type="number" id="enrollThreshold" min="0.5" max="0.9" step="0.01" value="0.65" class="input input-sm"></label>
           <label>الجهاز <select id="deviceSel"><option value="auto">تلقائي</option><option value="cpu">CPU</option><option value="cuda">GPU</option></select></label>
           <label>الدقة <select id="computeSel"><option value="auto">تلقائي</option><option value="int8">int8</option><option value="float16">float16</option><option value="float32">float32</option></select></label>
           <label>مهلة الطلب (ثوانٍ) <input type="number" id="timeout" class="input input-sm" value="900" min="0" step="30"></label>
-          <p class="hint">المهلة: 0 = بلا حد. زدها للملفات الطويلة (مثلاً 1800). التسجيل الحي يطبّق تمييز المتكلمين عند الإيقاف (حسب الخيار أعلاه).</p>
+          <p class="hint">المهلة: 0 = بلا حد. زدها للملفات الطويلة (مثلاً 1800). التسجيل الحي يطبّق تمييز المتكلمين عند الإيقاف. المتكلم غير المسجّل يظهر كـ (متكلم_02) وليس باسم؛ سجّل بصمته من تبويب البصمات لربط الاسم.</p>
         </details>
 
       </div>

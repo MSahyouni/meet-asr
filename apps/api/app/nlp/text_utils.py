@@ -56,6 +56,19 @@ _ASR_LOAN_FIXES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"كنت عم"), "كنت"),
     (re.compile(r"بعدين"), "بعد ذلك"),
     (re.compile(r"تفريغه كلام(?!ي)"), "تفريغه كلامياً"),
+    # أخطاء شائعة في اجتماعات/لهجة شامية (تفريغ Whisper)
+    (re.compile(r"الرزائي|الغزائي|الرذائي"), "الغذائي"),
+    (re.compile(r"دعم\s+الرزائي"), "الدعم الغذائي"),
+    (re.compile(r"وجبهات"), "وجبات"),
+    (re.compile(r"الثلاث[ةه]\s+وجبات"), "الثلاث وجبات"),
+    (re.compile(r"فبدايه"), "فبداية"),
+    (re.compile(r"احياناً?"), "أحياناً"),
+    (re.compile(r"(?<![\u0621-\u064A])ياتي(?![\u0621-\u064A])"), "يأتي"),
+    (re.compile(r"مضروبين\s+ب"), "مضروبة بـ"),
+    (re.compile(r"نضرب\s+(\d+)\s+ضرب\s+"), r"نضرب \1 × "),
+    (re.compile(r"ادارة\s+الصرف"), "إدارة الصرف"),
+    (re.compile(r"منتجات\s+مصنعه"), "منتجات مصنّعة"),
+    (re.compile(r"مصاريف\s+زايده"), "مصاريف زائدة"),
 )
 
 
@@ -71,13 +84,52 @@ def normalize_asr_loanwords(text: str) -> str:
     return out
 
 
+def _light_sentence_breaks_ar(text: str) -> str:
+    """فواصل خفيفة عند منعطفات الحوار دون نموذج ترقيم ثقيل."""
+    out = text or ""
+    for pat in (
+        r"فبدايةً?",
+        r"فبداية",
+        r"اليوم\s+نحن",
+        r"وهذا\s+الموضوع",
+        r"وهذا\s+الشيء",
+        r"أهلا\s+",
+        r"الحمد\s+لله",
+        r"لازم\s+ندور",
+    ):
+        out = re.sub(rf"(?<![.!?؟\n:…])\s+({pat})", r". \1", out, count=3)
+    out = re.sub(r"([.!?؟،:;])(\S)", r"\1 \2", out)
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\.\s*\.", ".", out)
+    return out.strip()
+
+
 def polish_transcript_ar(text: str) -> str:
     """تنظيف خفيف لنص التفريغ المعروض وللتلخيص اللاحق."""
     out = (text or "").strip()
     if not out:
         return ""
-    out = normalize_asr_loanwords(out)
-    out = re.sub(r"[ \t]{2,}", " ", out)
+    # لمّع أسطر المحتوى مع الإبقاء على تسميات المتكلمين
+    parts = re.split(r"(?=\([^)]+\)\n)", out)
+    polished: list[str] = []
+    for part in parts:
+        if not part.strip():
+            continue
+        m = re.match(r"^(\([^)]+\)\n+)([\s\S]*)$", part)
+        if m:
+            label, body = m.group(1), m.group(2)
+            body = normalize_asr_loanwords(body)
+            body = re.sub(r"[ \t]{2,}", " ", body)
+            body = re.sub(r"\b(يعني|هيك|تمام)\s+(\1\s+)+", r"\1 ", body)
+            body = _light_sentence_breaks_ar(body)
+            polished.append(f"{label}{body.strip()}")
+        else:
+            piece = normalize_asr_loanwords(part)
+            piece = re.sub(r"[ \t]{2,}", " ", piece)
+            piece = re.sub(r"\b(يعني|هيك|تمام)\s+(\1\s+)+", r"\1 ", piece)
+            piece = _light_sentence_breaks_ar(piece)
+            polished.append(piece.strip())
+    out = "\n\n".join(p for p in polished if p)
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
 
