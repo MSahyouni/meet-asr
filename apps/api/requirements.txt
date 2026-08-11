@@ -11,7 +11,7 @@ httpx==0.27.2
 faster-whisper==1.2.0
 
 # ==== Diarization (Pyannote & SpeechBrain for Enrollment) ====
-pyannote.audio==3.1.1
+pyannote.audio==3.3.2
 speechbrain==1.0.0
 --extra-index-url https://download.pytorch.org/whl/cu124
 torch==2.5.1
