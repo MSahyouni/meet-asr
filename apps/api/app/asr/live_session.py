@@ -268,33 +268,43 @@ def _transcribe_wav(wav_path: pathlib.Path, sess: LiveSession) -> str:
 
 def _format_diarized_text(seg_rows: list) -> str:
     """Compact speaker-labeled transcript for the live text box + summarizer."""
-    from app.asr.common import to_ar_speaker
+    from app.asr.common import to_ar_speaker, speaker_id_from_label, ensure_segment_speaker_id
     from app.asr.process import _clean_utterance, _renumber_speakers
 
     blocks: list[str] = []
     cur_spk = None
+    cur_sid = None
     cur_parts: list[str] = []
 
     def flush() -> None:
-        nonlocal cur_spk, cur_parts
+        nonlocal cur_spk, cur_sid, cur_parts
         if not cur_parts:
             return
-        spk = to_ar_speaker(cur_spk or "")
         body = " ".join(cur_parts).strip()
         if body:
-            blocks.append(f"({spk})\n{body}")
+            name = to_ar_speaker(cur_spk or "")
+            sid = (cur_sid or "").strip() or speaker_id_from_label(cur_spk or "")
+            header = f"({name})"
+            if sid:
+                header = f"({name}) [{sid}]"
+            blocks.append(f"{header}\n{body}")
         cur_parts = []
 
     for s in seg_rows or []:
+        ensure_segment_speaker_id(s)
         txt = _clean_utterance((s.get("text") or "").strip())
         if not txt:
             continue
         spk = s.get("speaker") or ""
+        sid = s.get("speaker_id") or ""
+        key = sid or spk
         if cur_spk is None:
             cur_spk = spk
-        if spk != cur_spk:
+            cur_sid = sid
+        if key != (cur_sid or cur_spk):
             flush()
             cur_spk = spk
+            cur_sid = sid
         cur_parts.append(txt)
     flush()
     return _renumber_speakers("\n\n".join(blocks)).strip()
@@ -373,6 +383,9 @@ def _transcribe_and_diarize(
         logger.warning("live speaker enrollment map failed: %s", e)
 
     for s in seg_rows:
+        from app.asr.common import ensure_segment_speaker_id
+
+        ensure_segment_speaker_id(s)
         s["speaker"] = to_ar_speaker(s.get("speaker", ""))
 
     if punctuate:

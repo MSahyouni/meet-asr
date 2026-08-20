@@ -391,22 +391,20 @@ async def run_summary_job(
                 "summary": "",
                 "keywords": "",
                 "summary_path": None,
+                "summary_docx_path": None,
                 "summary_source": "off",
             }
         else:
-            try:
-                sum_path = str(out_base_path.with_suffix(".summary.txt"))
-                pathlib.Path(sum_path).write_text(
-                    s_text
-                    + (("\n\nالكلمات المفتاحية: " + (kw_csv or "")) if kw_csv else ""),
-                    encoding="utf-8",
-                )
-            except Exception:
-                sum_path = None
+            from app.asr.docx_export import write_summary_artifacts
+
+            sum_path, sum_docx_path = write_summary_artifacts(
+                out_base_path, s_text, kw_csv or ""
+            )
             result = {
                 "summary": s_text,
                 "keywords": kw_csv or "",
                 "summary_path": sum_path,
+                "summary_docx_path": sum_docx_path,
                 "summary_source": nlp_core.get_summary_source(),
             }
         set_job(job_id, status="done", user_email=user_email, result=result)
@@ -444,6 +442,7 @@ async def run_transcribe_batch_job(
             merged_sum = result.get("summary", "") or ""
             keywords = result.get("keywords", "") or ""
             merged_sum_path = result.get("summary_path")
+            merged_sum_docx_path = result.get("summary_docx_path")
 
             summary_mode = str(kwargs.get("summary_mode") or "off").lower()
             if summary_mode != "off":
@@ -452,13 +451,13 @@ async def run_transcribe_batch_job(
                     merged_sum, keywords = s_text, kw_csv
                 try:
                     if (merged_sum or "").strip() and merged_path:
-                        sum_p = pathlib.Path(merged_path).with_suffix(".summary.txt")
-                        sum_p.write_text(
-                            merged_sum
-                            + (("\n\nالكلمات المفتاحية: " + (keywords or "")) if keywords else ""),
-                            encoding="utf-8",
+                        from app.asr.docx_export import write_summary_artifacts
+
+                        sum_path, sum_docx_path = write_summary_artifacts(
+                            merged_path, merged_sum, keywords or ""
                         )
-                        merged_sum_path = str(sum_p)
+                        merged_sum_path = sum_path
+                        merged_sum_docx_path = sum_docx_path
                 except Exception:
                     pass
             else:
@@ -468,6 +467,7 @@ async def run_transcribe_batch_job(
             payload_result["summary"] = merged_sum
             payload_result["keywords"] = keywords
             payload_result["summary_path"] = merged_sum_path
+            payload_result["summary_docx_path"] = merged_sum_docx_path
 
             set_job(
                 job_id,

@@ -2,7 +2,7 @@
 import pathlib
 from typing import List, Dict, Optional
 
-from .common import to_ar_speaker
+from .common import format_speaker_display, ensure_segment_speaker_id
 
 
 def _fmt_ts(t: float) -> str:
@@ -18,7 +18,8 @@ def segments_to_srt(segments: List[Dict], base_path: str, out_path: Optional[str
     with open(p, "w", encoding="utf-8", newline="\n") as f:
         rlm = "\u200F"
         for i, seg in enumerate(segments, 1):
-            spk = to_ar_speaker(seg.get("speaker", ""))
+            ensure_segment_speaker_id(seg)
+            spk = format_speaker_display(seg)
             f.write(f"{i}\n{_fmt_ts(seg['start'])} --> {_fmt_ts(seg['end'])}\n{rlm}{spk}: {seg['text']}\n\n")
     return str(p)
 
@@ -29,8 +30,9 @@ def segments_to_vtt(segments: List[Dict], base_path: str, out_path: Optional[str
         f.write("WEBVTT\n\n")
         rlm = "\u200F"
         for seg in segments:
+            ensure_segment_speaker_id(seg)
             st = _fmt_ts(seg["start"]).replace(",", ".")
             en = _fmt_ts(seg["end"]).replace(",", ".")
-            spk = to_ar_speaker(seg.get("speaker", ""))
+            spk = format_speaker_display(seg)
             f.write(f"{st} --> {en}\n{rlm}{spk}: {seg['text']}\n\n")
     return str(p)

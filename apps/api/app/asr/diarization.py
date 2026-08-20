@@ -13,7 +13,7 @@ except ImportError:
     _PYANNOTE_AVAILABLE = False
     Pipeline = None
 
-from .common import speaker_label, to_ar_speaker
+from .common import speaker_label, to_ar_speaker, speaker_id_from_label, ensure_segment_speaker_id
 from app.infrastructure.download_retry import run_with_download_retry
 
 _HF_TOKEN = None
@@ -154,6 +154,7 @@ def pyannote_speaker_params(*, auto_k: bool, max_speakers: int) -> dict:
 def map_speakers_to_segments(whisper_segments: List[Dict], speaker_turns: List[Dict]) -> List[Dict]:
     if not speaker_turns:
         for seg in whisper_segments:
+            seg["speaker_id"] = "spk_00"
             seg["speaker"] = speaker_label(0)
         return whisper_segments
     for seg in whisper_segments:
@@ -164,8 +165,10 @@ def map_speakers_to_segments(whisper_segments: List[Dict], speaker_turns: List[D
             o = max(0.0, min(seg_end, turn_end) - max(seg_start, turn_start))
             if o > 0:
                 overlap[turn["speaker"]] += o
-        ar_label = max(overlap, key=overlap.get) if overlap else speaker_label(0)
-        seg["speaker"] = to_ar_speaker(ar_label)
+        raw_label = max(overlap, key=overlap.get) if overlap else "SPEAKER_00"
+        seg["speaker_id"] = speaker_id_from_label(raw_label)
+        seg["speaker"] = to_ar_speaker(raw_label)
+        ensure_segment_speaker_id(seg)
     return whisper_segments
 
 

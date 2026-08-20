@@ -82,6 +82,7 @@ from .speakers import (
     map_generic_to_enrolled_speakers as _map_generic_to_enrolled_speakers,
 )
 from .subtitles import segments_to_srt, segments_to_vtt
+from .docx_export import write_transcript_docx, write_summary_docx, write_summary_artifacts
 from .process import process, process_many, cleanup_temp_files
 
 # للتوافق مع asr_core: أسماء يُتوقعها المستدعون
@@ -106,6 +107,9 @@ __all__ = [
     "enroll_voice",
     "segments_to_srt",
     "segments_to_vtt",
+    "write_transcript_docx",
+    "write_summary_docx",
+    "write_summary_artifacts",
     "process",
     "process_many",
     "cleanup_temp_files",

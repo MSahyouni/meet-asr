@@ -243,6 +243,10 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                       itemBuilder: (context, index) {
                         final segment = transcriptionSegments[index];
                         final speaker = segment['speaker'] ?? '';
+                        final speakerId = (segment['speaker_id'] ?? '').toString();
+                        final speakerLabel = speakerId.isNotEmpty && speakerId != speaker
+                            ? '$speaker [$speakerId]'
+                            : speaker;
                         final text = segment['text'] ?? '';
 
                         //  أنيميشن لكل عنصر ListView
@@ -272,7 +276,7 @@ class _AnalysisAudioScreenState extends State<AnalysisAudioScreen> {
                                   : CrossAxisAlignment.end,
                               children: [
                                 Text(
-                                  speaker,
+                                  speakerLabel,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                     color: Colors.white,

@@ -17,13 +17,14 @@ from app import nlp_core
 from app.config import settings
 from app.storage.asr_layout import resolve_asr_storage, write_job_manifest
 from app.storage.naming import new_timestamped_id
-from .common import err, safe_filename, to_ar_speaker, OUTPUTS_DIR, DEFAULT_MODEL
+from .common import err, safe_filename, to_ar_speaker, format_speaker_display, ensure_segment_speaker_id, OUTPUTS_DIR, DEFAULT_MODEL
 from .audio import to_wav16k, to_wav16k_enhanced
 from .whisper import get_model, run_asr
 from .diarization import diarize_with_pyannote, map_speakers_to_segments
 from . import diarization as diarization_mod
 from .speakers import map_generic_to_enrolled_speakers
 from .subtitles import segments_to_srt, segments_to_vtt
+from .docx_export import write_transcript_docx
 
 
 def _clean_utterance(t: str) -> str:
@@ -204,7 +205,8 @@ def process(
         LRM = "\u200E"
         lines = []
         for s in seg_rows:
-            spk = to_ar_speaker(s.get("speaker", ""))
+            ensure_segment_speaker_id(s)
+            spk = format_speaker_display(s)
             st = f"{LRM}{s['start']:.2f}{LRM}"
             en = f"{LRM}{s['end']:.2f}{LRM}"
             txt = _clean_utterance(s["text"])
@@ -220,8 +222,13 @@ def process(
 
         out_path = str(job_dir / "transcript.txt")
         pathlib.Path(out_path).write_text(full_txt, encoding="utf-8")
+        try:
+            docx_path = write_transcript_docx(full_txt, job_dir / "transcript.docx")
+        except Exception:
+            docx_path = None
 
         for s in seg_rows:
+            ensure_segment_speaker_id(s)
             s["speaker"] = to_ar_speaker(s.get("speaker", ""))
         srt_path = segments_to_srt(seg_rows, out_path)
         vtt_path = segments_to_vtt(seg_rows, out_path)
@@ -265,8 +272,10 @@ def process(
         return {
             "text": numbered_text,
             "txt_path": out_path,
+            "docx_path": docx_path,
             "summary": "",
             "summary_path": None,
+            "summary_docx_path": None,
             "keywords": keywords,
             "segments": seg_rows,
             "srt_path": srt_path,
@@ -330,6 +339,10 @@ def process_many(file_paths: List[str], **kwargs):
 
     merged_txt_path = str(job_dir / "transcript.txt")
     pathlib.Path(merged_txt_path).write_text(merged_text, encoding="utf-8")
+    try:
+        merged_docx_path = write_transcript_docx(merged_text, job_dir / "transcript.docx")
+    except Exception:
+        merged_docx_path = None
     saved_wavs: List[str] = []
     for fp, res in zip(file_paths, per_file_results):
         stem = safe_filename(pathlib.Path(fp).stem) or f"recording_{len(saved_wavs)}"
@@ -389,8 +402,10 @@ def process_many(file_paths: List[str], **kwargs):
     return {
         "text": merged_text,
         "txt_path": merged_txt_path,
+        "docx_path": merged_docx_path,
         "summary": "",
         "summary_path": None,
+        "summary_docx_path": None,
         "keywords": merged_keywords,
         "segments": all_segments if merge_outputs else [],
         "srt_path": merged_srt_path,

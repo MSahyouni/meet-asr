@@ -44,7 +44,11 @@ def download_txt(
             return response_error(404, "file_not_found", p.as_posix())
         if p.suffix.lower() not in settings.DOWNLOAD_ALLOW:
             return response_error(403, "forbidden_extension", p.suffix.lower())
-        media_types = {".wav": "audio/wav", ".mp3": "audio/mpeg"}
+        media_types = {
+            ".wav": "audio/wav",
+            ".mp3": "audio/mpeg",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }
         media_type = media_types.get(p.suffix.lower(), "text/plain")
         return FileResponse(p.as_posix(), media_type=media_type, filename=p.name)
     except Exception as e:

@@ -127,7 +127,7 @@ class Settings:
 
         # --- File Types ---
         self.ALLOWED_EXT = {".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".flac", ".webm", ".aac", ".3gp", ".opus"}
-        self.DOWNLOAD_ALLOW = {".txt", ".srt", ".vtt", ".json", ".wav"}
+        self.DOWNLOAD_ALLOW = {".txt", ".srt", ".vtt", ".json", ".wav", ".docx"}
 
         # --- NLP & Summarization Models ---
         self.HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None

@@ -28,12 +28,40 @@ def speaker_label(i: int) -> str:
     return f"متكلم_{i:02d}"
 
 
+def speaker_id_from_label(label: str) -> str:
+    """معرّف تقني ثابت للمتكلم داخل الجلسة (spk_00, spk_01, ...)."""
+    s = str(label or "").strip()
+    if not s:
+        return "spk_00"
+    u = s.upper()
+    if u.startswith("SPK_"):
+        m = re.search(r"(\d+)$", u)
+        if m:
+            return f"spk_{int(m.group(1)):02d}"
+        return "spk_00"
+    if u.startswith("SPEAKER"):
+        m = re.search(r"(\d+)$", u)
+        if m:
+            return f"spk_{int(m.group(1)):02d}"
+        return "spk_00"
+    if s.startswith("متكلم"):
+        m = re.search(r"(\d+)$", s)
+        if m:
+            return f"spk_{int(m.group(1)):02d}"
+        return "spk_00"
+    if re.fullmatch(r"\d+", s):
+        return f"spk_{int(s):02d}"
+    # اسم مسجّل أو تسمية أخرى — لا تُحوَّل إلى رقم؛ تبقى مرتبطة عبر speaker_id الأصلي إن وُجد
+    slug = re.sub(r"[^\w\u0600-\u06FF]+", "_", s, flags=re.UNICODE).strip("_")
+    return f"spk_{slug[:40]}" if slug else "spk_00"
+
+
 def to_ar_speaker(label: str) -> str:
     s = str(label or "").strip()
     if not s:
         return speaker_label(0)
     u = s.upper()
-    if u.startswith("SPEAKER"):
+    if u.startswith("SPEAKER") or u.startswith("SPK_"):
         m = re.search(r"(\d+)$", u)
         if m:
             return speaker_label(int(m.group(1)))
@@ -43,10 +71,28 @@ def to_ar_speaker(label: str) -> str:
     return s
 
 
+def format_speaker_display(seg: Dict) -> str:
+    """تسمية العرض مع المعرّف الثابت إن وُجد."""
+    name = to_ar_speaker(seg.get("speaker", ""))
+    sid = str(seg.get("speaker_id") or "").strip()
+    if not sid:
+        sid = speaker_id_from_label(seg.get("speaker", ""))
+    if sid and sid not in name:
+        return f"{name} [{sid}]"
+    return name
+
+
+def ensure_segment_speaker_id(seg: Dict) -> Dict:
+    """اضمن وجود speaker_id على المقطع دون المساس بالاسم المعروض."""
+    if not str(seg.get("speaker_id") or "").strip():
+        seg["speaker_id"] = speaker_id_from_label(seg.get("speaker", ""))
+    return seg
+
+
 def err(msg: str) -> Dict:
     return {
-        "text": "", "txt_path": None,
-        "summary": "", "summary_path": None,
+        "text": "", "txt_path": None, "docx_path": None,
+        "summary": "", "summary_path": None, "summary_docx_path": None,
         "keywords": "", "segments": [],
         "srt_path": None, "vtt_path": None,
         "error": msg,

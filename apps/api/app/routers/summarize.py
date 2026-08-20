@@ -79,17 +79,18 @@ async def summarize_after(
         s_text, kw_csv = nlp_core.summarize(body, mode=summary_mode)
         if not s_text.strip():
             nlp_core.set_summary_source("off")
-            return JSONResponse({"summary": "", "keywords": "", "summary_path": None, "summary_source": "off"})
-        try:
-            sum_path = str(out_base_path.with_suffix(".summary.txt"))
-            pathlib.Path(sum_path).write_text(
-                s_text + (("\n\nالكلمات المفتاحية: " + (kw_csv or "")) if kw_csv else ""),
-                encoding="utf-8",
-            )
-        except Exception:
-            sum_path = None
+            return JSONResponse({
+                "summary": "",
+                "keywords": "",
+                "summary_path": None,
+                "summary_docx_path": None,
+                "summary_source": "off",
+            })
+        from app.asr.docx_export import write_summary_artifacts
+        sum_path, sum_docx_path = write_summary_artifacts(out_base_path, s_text, kw_csv or "")
         from urllib.parse import quote
         summary_url = f"/download?path={quote(sum_path)}" if sum_path else None
+        summary_docx_url = f"/download?path={quote(sum_docx_path)}" if sum_docx_path else None
         if user_email:
             try:
                 DashboardService.record_activity(
@@ -104,8 +105,12 @@ async def summarize_after(
             "summary": s_text,
             "keywords": kw_csv or "",
             "summary_path": sum_path,
+            "summary_docx_path": sum_docx_path,
             "summary_source": nlp_core.get_summary_source(),
-            "download_urls": {"summary": summary_url},
+            "download_urls": {
+                "summary": summary_url,
+                "summary_docx": summary_docx_url,
+            },
         })
 
     job_id = new_timestamped_id("nlp")

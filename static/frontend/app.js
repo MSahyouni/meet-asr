@@ -673,7 +673,10 @@
   function segText(segments) {
     var segs = Array.isArray(segments) ? segments : [];
     return segs.map(function (x) {
-      var spk = x && x.speaker !== undefined ? " [" + ((x.speaker || "?")) + "] " : " ";
+      var name = (x && x.speaker) ? String(x.speaker) : "?";
+      var sid = (x && x.speaker_id) ? String(x.speaker_id) : "";
+      var spk = sid && sid !== name ? (" [" + name + " | " + sid + "] ") : (" [" + name + "] ");
+      if (!(x && (x.speaker !== undefined || x.speaker_id))) spk = " ";
       var start = (x && typeof x.start === "number") ? x.start : 0;
       return start.toFixed(1) + "s" + spk + ((x && x.text) || "");
     }).join("\n");
@@ -681,12 +684,14 @@
 
   function buildDownloadUrls(data) {
     var urls = (data && data.download_urls) ? data.download_urls : {};
-    if (urls.txt || urls.srt || urls.vtt || urls.summary || urls.segments || urls.wav) return urls;
+    if (urls.txt || urls.docx || urls.srt || urls.vtt || urls.summary || urls.summary_docx || urls.segments || urls.wav) return urls;
     var out = {};
     if (data && data.txt_path) out.txt = API.asr.download + "?path=" + encodeURIComponent(data.txt_path);
+    if (data && data.docx_path) out.docx = API.asr.download + "?path=" + encodeURIComponent(data.docx_path);
     if (data && data.srt_path) out.srt = API.asr.download + "?path=" + encodeURIComponent(data.srt_path);
     if (data && data.vtt_path) out.vtt = API.asr.download + "?path=" + encodeURIComponent(data.vtt_path);
     if (data && data.summary_path) out.summary = API.asr.download + "?path=" + encodeURIComponent(data.summary_path);
+    if (data && data.summary_docx_path) out.summary_docx = API.asr.download + "?path=" + encodeURIComponent(data.summary_docx_path);
     if (data && data.segments_path) out.segments = API.asr.download + "?path=" + encodeURIComponent(data.segments_path);
     if (data && data.wav_path) out.wav = API.asr.download + "?path=" + encodeURIComponent(data.wav_path);
     return out;
@@ -715,11 +720,21 @@
       links.appendChild(document.createTextNode(" "));
     }
     addBtn(urls.txt, "تحميل TXT", "transcript.txt");
+    addBtn(urls.docx, "تحميل Word", "transcript.docx");
     addBtn(urls.srt, "تحميل SRT", "transcript.srt");
     addBtn(urls.vtt, "تحميل VTT", "transcript.vtt");
     addBtn(urls.segments, "تحميل segments", "segments.json");
     addBtn(urls.wav, "تحميل WAV", "recording.wav");
     // زر تحميل الملخص موجود داخل لوحة المحضر — لا نكرره هنا
+  }
+
+  var lastSummaryDownloads = { txt: null, docx: null };
+
+  function rememberSummaryDownloads(data) {
+    var urls = buildDownloadUrls(data || {});
+    if (urls.summary) lastSummaryDownloads.txt = urls.summary;
+    if (urls.summary_docx) lastSummaryDownloads.docx = urls.summary_docx;
+    updateSummaryDownloadBtn();
   }
 
   function applyTranscribeResult(data) {
@@ -728,6 +743,7 @@
     setKeywordsText(data.keywords || "");
     var segs = data.segments || [];
     if (getId("outSegments")) getId("outSegments").textContent = segText(segs);
+    rememberSummaryDownloads(data);
     renderDownloadLinks(buildDownloadUrls(data), true);
     queueUIStateSave();
   }
@@ -735,6 +751,7 @@
   function applySummaryResult(data) {
     setSummaryText(data.summary || "");
     setKeywordsText(data.keywords || "");
+    rememberSummaryDownloads(data);
     renderDownloadLinks(buildDownloadUrls(data), false);
     queueUIStateSave();
   }
@@ -853,11 +870,13 @@
   }
 
   function updateSummaryDownloadBtn() {
-    var btn = getId("btnDownloadSummary");
-    if (!btn) return;
     var text = (getId("outSummary") && getId("outSummary").value || "").trim();
     var isStatusOnly = !!(getId("summaryStatus") && !getId("summaryStatus").classList.contains("hidden"));
-    btn.disabled = !text || isStatusOnly;
+    var enabled = !!(text && !isStatusOnly);
+    var btn = getId("btnDownloadSummary");
+    if (btn) btn.disabled = !enabled;
+    var btnDocx = getId("btnDownloadSummaryDocx");
+    if (btnDocx) btnDocx.disabled = !(enabled && lastSummaryDownloads.docx);
   }
 
   function renderSummaryView(text) {
@@ -1254,6 +1273,10 @@
   var btnDownloadSummary = getId("btnDownloadSummary");
   if (btnDownloadSummary) {
     btnDownloadSummary.addEventListener("click", function () {
+      if (lastSummaryDownloads.txt) {
+        triggerAuthenticatedDownload(lastSummaryDownloads.txt, "nabra-summary.txt");
+        return;
+      }
       var text = (getId("outSummary") && getId("outSummary").value || "").trim();
       if (!text) return;
       var blob = new Blob([text], { type: "text/plain;charset=utf-8" });
@@ -1265,6 +1288,14 @@
       a.click();
       a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+    });
+  }
+
+  var btnDownloadSummaryDocx = getId("btnDownloadSummaryDocx");
+  if (btnDownloadSummaryDocx) {
+    btnDownloadSummaryDocx.addEventListener("click", function () {
+      if (!lastSummaryDownloads.docx) return;
+      triggerAuthenticatedDownload(lastSummaryDownloads.docx, "nabra-summary.docx");
     });
   }
 

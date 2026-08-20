@@ -22,7 +22,7 @@ from huggingface_hub import snapshot_download
 from app.config import settings
 from app.infrastructure.download_retry import run_with_download_retry
 from app.storage.user_paths import speaker_enrollment_dir, user_speakers_root
-from .common import speaker_label, to_ar_speaker, safe_filename
+from .common import speaker_label, to_ar_speaker, safe_filename, ensure_segment_speaker_id
 from .audio import wav_read_mono, to_wav16k
 
 MODELS_DIR = None
@@ -267,11 +267,15 @@ def map_generic_to_enrolled_speakers(
         return seg_rows
     try:
         y, sr = wav_read_mono(wav_path, 16000)
+        for seg in seg_rows:
+            ensure_segment_speaker_id(seg)
         speaker_audio_chunks = defaultdict(list)
         for seg in seg_rows:
             start_sample = int(seg["start"] * sr)
             end_sample = int(seg["end"] * sr)
-            speaker_audio_chunks[seg["speaker"]].append(y[start_sample:end_sample])
+            # اجمع بالصوت حسب المعرّف الثابت إن وُجد، وإلا الاسم
+            group_key = seg.get("speaker_id") or seg["speaker"]
+            speaker_audio_chunks[group_key].append(y[start_sample:end_sample])
         speaker_mapping = {}
         used_enrolled_names = set()
         single_speaker_audio = len(speaker_audio_chunks) == 1
@@ -316,9 +320,11 @@ def map_generic_to_enrolled_speakers(
                     effective_threshold,
                 )
         for seg in seg_rows:
-            g = seg["speaker"]
-            if g in speaker_mapping:
-                seg["speaker"] = speaker_mapping[g]
+            ensure_segment_speaker_id(seg)
+            key = seg.get("speaker_id") or seg["speaker"]
+            if key in speaker_mapping:
+                # احتفظ بـ speaker_id العنقودي؛ غيّر اسم العرض فقط
+                seg["speaker"] = speaker_mapping[key]
         return seg_rows
     except Exception as e:
         _log.exception("failed to map enrolled speakers: %s", e)

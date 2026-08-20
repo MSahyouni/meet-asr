@@ -131,7 +131,8 @@
             <div class="summary-panel-head">
               <div class="summary-actions">
                 <button type="button" id="btnSummary" class="btn btn-primary">تلخيص النص</button>
-                <button type="button" id="btnDownloadSummary" class="btn btn-secondary" disabled>تحميل الملخص</button>
+                <button type="button" id="btnDownloadSummary" class="btn btn-secondary" disabled>تحميل الملخص TXT</button>
+                <button type="button" id="btnDownloadSummaryDocx" class="btn btn-secondary" disabled>تحميل الملخص Word</button>
               </div>
             </div>
             <div id="summaryStatus" class="summary-status hidden" role="status" aria-live="polite"></div>
@@ -162,7 +163,7 @@
           <label>الجهاز <select id="deviceSel"><option value="auto">تلقائي</option><option value="cpu">CPU</option><option value="cuda">GPU</option></select></label>
           <label>الدقة <select id="computeSel"><option value="auto">تلقائي</option><option value="int8">int8</option><option value="float16">float16</option><option value="float32">float32</option></select></label>
           <label>مهلة الطلب (ثوانٍ) <input type="number" id="timeout" class="input input-sm" value="900" min="0" step="30"></label>
-          <p class="hint">المهلة: 0 = بلا حد. زدها للملفات الطويلة (مثلاً 1800). التسجيل الحي يطبّق تمييز المتكلمين عند الإيقاف. المتكلم غير المسجّل يظهر كـ (متكلم_02) وليس باسم؛ سجّل بصمته من تبويب البصمات لربط الاسم.</p>
+          <p class="hint">المهلة: 0 = بلا حد. زدها للملفات الطويلة (مثلاً 1800). التسجيل الحي يطبّق تمييز المتكلمين عند الإيقاف. كل متكلم يحصل على معرّف ثابت مثل spk_00 / spk_01؛ غير المسجّل يظهر كـ متكلم_00 [spk_00]، وبعد تسجيل البصمة يبقى نفس المعرّف مع الاسم.</p>
         </details>
 
       </div>

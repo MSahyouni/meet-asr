@@ -255,6 +255,8 @@ async def _transcribe_common(
                     wav_path=result.get("wav_path"),
                     job_id=result.get("job_id", sync_job_id),
                     timings_ms=result.get("timings_ms"),
+                    docx_path=result.get("docx_path"),
+                    summary_docx_path=result.get("summary_docx_path"),
                 )
             finally:
                 try:
@@ -421,20 +423,21 @@ async def _transcribe_common(
         merged_sum = result.get("summary", "") or ""
         keywords = result.get("keywords", "") or ""
         merged_sum_path = result.get("summary_path")
+        merged_sum_docx_path = result.get("summary_docx_path")
 
         if summary_mode and summary_mode.lower() != "off":
             if not (merged_sum or "").strip():
                 s_text, kw_csv = nlp_core.summarize(merged_text, mode=summary_mode)
                 merged_sum, keywords = s_text, kw_csv
             try:
-                if (merged_sum or "").strip():
-                    sum_p = pathlib.Path(merged_path).with_suffix(".summary.txt")
-                    sum_p.write_text(
-                        merged_sum
-                        + (("\n\nالكلمات المفتاحية: " + (keywords or "")) if keywords else ""),
-                        encoding="utf-8",
+                if (merged_sum or "").strip() and merged_path:
+                    from app.asr.docx_export import write_summary_artifacts
+
+                    sum_path, sum_docx_path = write_summary_artifacts(
+                        merged_path, merged_sum, keywords or ""
                     )
-                    merged_sum_path = str(sum_p)
+                    merged_sum_path = sum_path
+                    merged_sum_docx_path = sum_docx_path
             except Exception as write_error:
                 logger.warning("[WRITE_SUMMARY_BATCH] %s", write_error)
         else:
@@ -457,6 +460,8 @@ async def _transcribe_common(
             wav_path=result.get("wav_path"),
             job_id=result.get("job_id", batch_job_id),
             timings_ms=result.get("timings_ms"),
+            docx_path=result.get("docx_path"),
+            summary_docx_path=merged_sum_docx_path,
         )
     except HTTPException:
         raise

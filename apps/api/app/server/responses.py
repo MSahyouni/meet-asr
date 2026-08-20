@@ -22,6 +22,8 @@ def response_ok(
     wav_path: Optional[str] = None,
     job_id: Optional[str] = None,
     timings_ms: Optional[dict] = None,
+    docx_path: Optional[str] = None,
+    summary_docx_path: Optional[str] = None,
 ) -> JSONResponse:
     data = {
         "text": text or "",
@@ -30,7 +32,9 @@ def response_ok(
         "request_id": request_id_var.get(),
         "job_id": job_id,
         "txt_path": txt_path,
+        "docx_path": docx_path,
         "summary_path": summary_path,
+        "summary_docx_path": summary_docx_path,
         "summary_source": nlp_core.get_summary_source(),
         "segments": segments or [],
         "srt_path": srt_path,
@@ -40,14 +44,25 @@ def response_ok(
     }
     if timings_ms is not None:
         data["timings_ms"] = timings_ms
-    if txt_path or srt_path or vtt_path or summary_path or segments_path or wav_path:
+    if (
+        txt_path
+        or docx_path
+        or srt_path
+        or vtt_path
+        or summary_path
+        or summary_docx_path
+        or segments_path
+        or wav_path
+    ):
         def _u(p):
             return f"/download?path={quote(p)}" if p else None
         data["download_urls"] = {
             "txt": _u(txt_path),
+            "docx": _u(docx_path),
             "srt": _u(srt_path),
             "vtt": _u(vtt_path),
             "summary": _u(summary_path),
+            "summary_docx": _u(summary_docx_path),
             "segments": _u(segments_path),
             "wav": _u(wav_path),
         }
@@ -63,12 +78,22 @@ def response_error(code: int, err: str, detail: Optional[str] = None) -> JSONRes
         "summary": "",
         "keywords": "",
         "txt_path": None,
+        "docx_path": None,
         "summary_path": None,
+        "summary_docx_path": None,
         "summary_source": nlp_core.get_summary_source(),
         "segments": [],
         "srt_path": None,
         "vtt_path": None,
         "segments_path": None,
-        "download_urls": {"txt": None, "srt": None, "vtt": None, "summary": None, "wav": None},
+        "download_urls": {
+            "txt": None,
+            "docx": None,
+            "srt": None,
+            "vtt": None,
+            "summary": None,
+            "summary_docx": None,
+            "wav": None,
+        },
     }
     return JSONResponse(payload, status_code=code)
