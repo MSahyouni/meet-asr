@@ -515,6 +515,17 @@ def finalize_session(
                 diarized = bool(segments) and any(
                     (s.get("speaker") or "").strip() for s in segments
                 )
+                # إذا لم ينتج نصاً (صمت/فشل جزئي) ارجع للتفريغ العادي
+                if not (text or "").strip():
+                    text = _transcribe_wav(sess.wav_path, sess)
+                    if punctuate and (text or "").strip():
+                        try:
+                            from app.nlp.punctuation_ner import restore_punct
+
+                            text = restore_punct(text)
+                        except Exception:
+                            pass
+                    diarized = False
             except Exception as e:
                 logger.warning("live diarized finalize failed, falling back: %s", e)
                 text = _transcribe_wav(sess.wav_path, sess)

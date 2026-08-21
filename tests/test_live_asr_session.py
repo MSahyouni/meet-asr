@@ -52,7 +52,7 @@ def test_save_requires_finalize_and_lands_in_recordings(live_mod, tmp_path, monk
         live_mod.save_session_audio(sess)
 
     monkeypatch.setattr(live_mod, "_transcribe_wav", lambda wav, s: "نص تجريبي")
-    result = live_mod.finalize_session(sess)
+    result = live_mod.finalize_session(sess, diarize=False, punctuate=False)
     assert result["text"] == "نص تجريبي"
     assert result["audio_available"] is True
     assert sess.finalized is True
@@ -74,7 +74,7 @@ def test_dismiss_without_save_leaves_no_recording(live_mod, tmp_path, monkeypatc
     sess = live_mod.create_session("discard@example.com")
     _write_silence_wav(sess.wav_path, seconds=0.25)
     monkeypatch.setattr(live_mod, "_transcribe_wav", lambda wav, s: "مؤقت")
-    live_mod.finalize_session(sess)
+    live_mod.finalize_session(sess, diarize=False, punctuate=False)
     sid = sess.session_id
     live_mod.delete_session(sid)
 
