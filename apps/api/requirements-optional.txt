@@ -7,3 +7,7 @@
 # Note: this project also uses transformers>=5 for Jais-2 ultra; do not pin an older
 # transformers here or summarization will break.
 habibi-tts
+
+# Windows only: direct Word.Application COM from Python (otherwise PowerShell COM is used).
+#   pip install pywin32
+# pywin32; sys_platform == "win32"
