@@ -1,0 +1,93 @@
+name: nabra
+description: "A new Flutter project."
+
+publish_to: 'none' 
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  gap: ^3.0.1
+  go_router: ^16.2.5
+  http: ^1.6.0
+  path_provider: ^2.1.5
+  voice_note_kit: ^1.3.3
+  animated_splash_screen: ^1.3.0
+  just_audio: ^0.10.5
+  icons_launcher: ^3.0.0
+  audioplayers: ^6.8.1
+  shared_preferences: ^2.5.3
+  equatable: ^2.1.0
+  google_fonts: ^8.2.0
+  http_parser: ^4.1.2
+  flutter_riverpod: ^3.4.2
+  
+dependency_overrides:
+  path_provider_android: 2.2.23
+
+
+
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+
+  flutter_lints: ^6.0.0
+
+flutter:
+
+  uses-material-design: true
+
+
+  assets:
+    - assets/images/background_pattern.png
+    - assets/images/image_5.png
+    - assets/images/image_4.png
+    - assets/images/image_1.png
+    - assets/images/image_2.png
+    - assets/images/image_3.png
+    - assets/images/logo.png
+    - assets/images/icon_file.png
+    - assets/images/logo_gradient.png
+
+  fonts:
+    - family: Qomra
+      fonts:
+        - asset: fonts/itfQomraArabic-Light.ttf
+          weight: 300
+        - asset: fonts/itfQomraArabic-Regular.ttf
+          weight: 400
+        - asset: fonts/itfQomraArabic-Medium.ttf
+          weight: 500
+        - asset: fonts/itfQomraArabic-Bold.ttf
+          weight: 700
+        - asset: fonts/itfQomraArabic-Black.ttf
+          weight: 900
+
+icons_launcher:
+  image_path: 'assets/images/logo.png'
+  platforms:
+    android:
+      enable: true
+    web:
+      enable: true
+
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+
