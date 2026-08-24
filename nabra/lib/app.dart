@@ -8,7 +8,7 @@ import 'package:nabra/features/auth/presentation/pages/register_page.dart';
 import 'package:nabra/features/home/presentation/pages/home_page.dart';
 import 'package:nabra/features/splash/presentation/pages/splash_page.dart';
 import 'package:nabra/features/summary/presentation/pages/summary_page.dart';
-import 'package:nabra/features/tts/presentation/pages/tts_page.dart';
+
 
 final GoRouter appRouter = GoRouter(
   initialLocation: '/splash',
@@ -30,15 +30,9 @@ final GoRouter appRouter = GoRouter(
         );
       },
     ),
-    GoRoute(
-      path: '/tts',
-      builder: (context, state) {
-        final extra = state.extra as Map<String, dynamic>?;
-        return TtsPage(apiUrl: extra?['apiUrl']?.toString() ?? '');
-      },
-    ),
+   
     GoRoute(path: '/analysis_audio', redirect: (context, state) => '/analysis'),
-    GoRoute(path: '/text_to_speech', redirect: (context, state) => '/tts'),
+  
     GoRoute(path: '/create_account', redirect: (context, state) => '/register'),
   ],
 );

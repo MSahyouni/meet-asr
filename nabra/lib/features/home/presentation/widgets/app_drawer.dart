@@ -31,12 +31,14 @@ class AppDrawer extends ConsumerWidget {
                       width: 52,
                       height: 52,
                       errorBuilder: (context, error, stackTrace) => const Icon(
-                        Icons.shield_moon_outlined,
+                        Icons.graphic_eq_rounded,
                         color: AppTheme.gold,
                         size: 44,
                       ),
                     ),
+
                     const SizedBox(width: 12),
+
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -49,11 +51,15 @@ class AppDrawer extends ConsumerWidget {
                               fontWeight: FontWeight.w800,
                             ),
                           ),
+
+                          const SizedBox(height: 2),
+
                           Text(
-                            'تحويل الصوت إلى نص والنص إلى صوت',
+                            'تحويل الصوت إلى نص وتحليل المحتوى',
                             style: AppTheme.text(
                               color: AppTheme.textSecondary,
                               fontSize: 12,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
@@ -61,9 +67,15 @@ class AppDrawer extends ConsumerWidget {
                     ),
                   ],
                 ),
+
                 const SizedBox(height: 20),
-                Divider(color: AppTheme.cardBorder.withValues(alpha: 0.9)),
+
+                Divider(
+                  color: AppTheme.cardBorder.withValues(alpha: 0.9),
+                ),
+
                 const SizedBox(height: 16),
+
                 Text(
                   'الوصف',
                   textAlign: TextAlign.right,
@@ -73,9 +85,11 @@ class AppDrawer extends ConsumerWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
+
                 const SizedBox(height: 8),
+
                 Text(
-                  'تطبيق ذكي يعتمد على تقنيات الذكاء الاصطناعي لتحويل الصوت إلى نص بدقة عالية، وتحويل النص إلى صوت طبيعي، مع تحليل التسجيلات وتلخيصها بسهولة.',
+                  'تطبيق ذكي يعتمد على تقنيات الذكاء الاصطناعي لتحويل الصوت إلى نص بدقة عالية، مع إمكانية تفريغ التسجيلات الصوتية وتحليل محتواها وتلخيصها بسهولة.',
                   textAlign: TextAlign.right,
                   style: AppTheme.text(
                     color: AppTheme.textPrimary,
@@ -84,7 +98,9 @@ class AppDrawer extends ConsumerWidget {
                     height: 1.65,
                   ),
                 ),
+
                 const Spacer(),
+
                 if (state.isLoggedIn) ...[
                   Text(
                     state.user?.fullName?.isNotEmpty == true
@@ -96,7 +112,9 @@ class AppDrawer extends ConsumerWidget {
                       fontSize: 13,
                     ),
                   ),
+
                   const SizedBox(height: 12),
+
                   PrimaryButton(
                     label: 'تسجيل خروج',
                     icon: Icons.logout_rounded,
@@ -104,9 +122,16 @@ class AppDrawer extends ConsumerWidget {
                     backgroundColor: AppTheme.error,
                     onPressed: () async {
                       await ref.read(authProvider.notifier).logout();
+
                       if (!context.mounted) return;
+
                       Navigator.of(context).pop();
-                      AppSnackbar.show(context, message: 'تم تسجيل الخروج');
+
+                      AppSnackbar.show(
+                        context,
+                        message: 'تم تسجيل الخروج',
+                      );
+
                       context.go('/home');
                     },
                   ),
@@ -119,7 +144,9 @@ class AppDrawer extends ConsumerWidget {
                       context.push('/login');
                     },
                   ),
+
                   const SizedBox(height: 10),
+
                   PrimaryButton(
                     label: 'إنشاء حساب جديد',
                     icon: Icons.person_add_alt_1_rounded,

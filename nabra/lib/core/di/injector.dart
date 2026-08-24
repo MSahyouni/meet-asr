@@ -4,7 +4,6 @@ import 'package:nabra/features/auth/infrastructure/datasources/session_local_dat
 import 'package:nabra/features/auth/infrastructure/repositories/auth_repository_impl.dart';
 import 'package:nabra/features/auth/domain/usecases/auth_usecases.dart';
 import 'package:nabra/features/summary/infrastructure/repositories/summary_repository_impl.dart';
-import 'package:nabra/features/tts/infrastructure/repositories/tts_repository_impl.dart';
 
 /// Manual DI for data/domain layers. Presentation state uses Riverpod.
 class AppInjector {
@@ -24,5 +23,5 @@ class AppInjector {
 
   static final asrRepository = AsrRepositoryImpl();
   static final summaryRepository = SummaryRepositoryImpl();
-  static final ttsRepository = TtsRepositoryImpl();
+ 
 }

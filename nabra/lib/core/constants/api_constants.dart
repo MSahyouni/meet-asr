@@ -73,8 +73,6 @@ abstract final class ApiConstants {
 
   static const String asrTranscribe = '/asr/transcribe';
   static const String nlpSummarize = '/nlp/summarize';
-  static const String tts = '/tts';
-  static const String ttsVoices = '/tts/voices';
-  static const String download = '/download';
+
   static const String health = '/health';
 }
